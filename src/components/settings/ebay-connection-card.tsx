@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 
 type EbayStatus = {
   env: string;
+  clientKind?: string;
+  ruNameKind?: string;
+  warnings?: string[];
   hasClientId: boolean;
   hasClientSecret: boolean;
   hasRuName: boolean;
@@ -110,6 +113,17 @@ export function EbayConnectionCard() {
           }
         >
           {banner.text}
+        </div>
+      ) : null}
+
+      {status?.warnings?.length ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+          <p className="font-medium">Configuration mismatch</p>
+          <ul className="mt-2 list-inside list-disc space-y-1">
+            {status.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
