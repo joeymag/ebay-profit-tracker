@@ -189,6 +189,20 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["products"]["Insert"]>;
         Relationships: [];
       };
+      ebay_oauth: {
+        Row: {
+          id: string;
+          refresh_token: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          refresh_token: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["ebay_oauth"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
