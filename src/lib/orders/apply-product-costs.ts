@@ -123,6 +123,8 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
           row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,
         ebayFeesActual:
           row.ebay_fees_actual != null ? Number(row.ebay_fees_actual) : null,
+        ebayAdsFeeActual:
+          row.ebay_ads_fee_actual != null ? Number(row.ebay_ads_fee_actual) : null,
         ebayFeesSyncedAt: row.ebay_fees_synced_at ?? null,
         productCost:
           row.product_cost_manual && row.product_cost != null

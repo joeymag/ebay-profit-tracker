@@ -119,6 +119,9 @@ function normalizeLegacyOrder(order: StoredOrder & { shipping?: number }): Store
   if (order.ebayFeesActual === undefined) {
     order.ebayFeesActual = null;
   }
+  if (order.ebayAdsFeeActual === undefined) {
+    order.ebayAdsFeeActual = null;
+  }
   if (order.ebayFeesSyncedAt === undefined) {
     order.ebayFeesSyncedAt = null;
   }
@@ -189,6 +192,8 @@ async function saveOrdersToJson(
             previous?.ebayAdsFeeRate ?? order.ebayAdsFeeRate ?? null,
           ebayFeesActual:
             previous?.ebayFeesActual ?? order.ebayFeesActual ?? null,
+          ebayAdsFeeActual:
+            previous?.ebayAdsFeeActual ?? order.ebayAdsFeeActual ?? null,
           ebayFeesSyncedAt:
             previous?.ebayFeesSyncedAt ?? order.ebayFeesSyncedAt ?? null,
           shippingLabelCost:

@@ -9,6 +9,7 @@ export type CostCompletenessInput = Pick<
   | "ebayFeeRate"
   | "ebayAdsFeeRate"
   | "ebayFeesActual"
+  | "ebayAdsFeeActual"
 >;
 
 export type OrderCostFieldStatus = {
@@ -25,6 +26,8 @@ export function getOrderCostFieldStatus(
   const isEbay = getSalesChannel(order.tags) === "eBay";
   const hasActualEbayFees =
     order.ebayFeesActual != null && order.ebayFeesActual >= 0;
+  const hasActualEbayAdsFees =
+    order.ebayAdsFeeActual != null && order.ebayAdsFeeActual >= 0;
 
   return {
     isEbay,
@@ -32,7 +35,10 @@ export function getOrderCostFieldStatus(
     postageMissing: order.shippingLabelCost == null,
     ebayFeeMissing: isEbay && !hasActualEbayFees && order.ebayFeeRate == null,
     ebayAdsFeeMissing:
-      isEbay && !hasActualEbayFees && order.ebayAdsFeeRate == null,
+      isEbay &&
+      !hasActualEbayFees &&
+      !hasActualEbayAdsFees &&
+      order.ebayAdsFeeRate == null,
   };
 }
 

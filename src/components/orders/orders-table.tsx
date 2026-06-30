@@ -308,7 +308,17 @@ export function OrdersTable({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   <EbayFeeCell
-                    actualAmount={order.ebayFeesActual}
+                    actualAmount={
+                      hasActualEbayFees
+                        ? order.ebayFeesActual != null &&
+                          order.ebayAdsFeeActual != null
+                          ? Math.max(
+                              0,
+                              order.ebayFeesActual - order.ebayAdsFeeActual,
+                            )
+                          : order.ebayFeesActual
+                        : null
+                    }
                     rate={order.ebayFeeRate}
                     currency={order.currency}
                     missing={costStatus.ebayFeeMissing}
@@ -317,12 +327,13 @@ export function OrdersTable({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {hasActualEbayFees ? (
-                    <span
-                      className="text-muted-foreground"
-                      title="Included in synced eBay fee total"
-                    >
-                      incl.
-                    </span>
+                    <EbayFeeCell
+                      actualAmount={order.ebayAdsFeeActual ?? 0}
+                      rate={null}
+                      currency={order.currency}
+                      missing={false}
+                      notApplicable={!costStatus.isEbay}
+                    />
                   ) : (
                     <FeePercentCell
                       rate={order.ebayAdsFeeRate}

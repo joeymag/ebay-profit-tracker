@@ -55,8 +55,13 @@ export type EbayTransaction = {
   orderId?: string;
   transactionType?: string;
   transactionDate?: string;
+  feeType?: string;
   amount?: { value?: string; currency?: string };
   totalFeeAmount?: { value?: string; currency?: string };
+  references?: Array<{
+    referenceId?: string;
+    referenceType?: string;
+  }>;
   orderLineItems?: Array<{
     marketplaceFees?: Array<{
       feeType?: string;

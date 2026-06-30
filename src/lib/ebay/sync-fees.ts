@@ -64,13 +64,14 @@ export async function syncEbayFeesFromFinancesApi(options?: {
 
   for (const row of ebayOrders) {
     const ebayOrderId = row.ebay_order_id.trim();
-    const feeTotal = feesByOrderId.get(ebayOrderId);
-    if (feeTotal == null) {
+    const feeBreakdown = feesByOrderId.get(ebayOrderId);
+    if (!feeBreakdown) {
       continue;
     }
 
     matched += 1;
-    const ebayFeesActual = roundMoney(feeTotal);
+    const ebayFeesActual = roundMoney(feeBreakdown.total);
+    const ebayAdsFeeActual = roundMoney(feeBreakdown.ads);
 
     const order: StoredOrder = {
       shopifyId: row.shopify_id,
@@ -104,6 +105,7 @@ export async function syncEbayFeesFromFinancesApi(options?: {
       ebayAdsFeeRate:
         row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,
       ebayFeesActual,
+      ebayAdsFeeActual,
       ebayFeesSyncedAt: syncedAt,
       productCost: row.product_cost != null ? Number(row.product_cost) : null,
       productCostManual: row.product_cost_manual ?? false,
@@ -125,6 +127,7 @@ export async function syncEbayFeesFromFinancesApi(options?: {
       .from("orders")
       .update({
         ebay_fees_actual: ebayFeesActual,
+        ebay_ads_fee_actual: ebayAdsFeeActual,
         ebay_fees_synced_at: syncedAt,
         cost: computed.cost,
         profit: computed.profit,

@@ -134,6 +134,7 @@ function normalizeOrder(order: ShopifyOrder): StoredOrder {
     amazonDeliverByAt: parseAmazonDeliverByAtFromNoteAttributes(order.note_attributes),
     ebayDeliverByAt: parseEbayDeliverByAtFromNoteAttributes(order.note_attributes),
     ebayFeesActual: null,
+    ebayAdsFeeActual: null,
     ebayFeesSyncedAt: null,
     ebayFeeRate: null,
     ebayAdsFeeRate: null,

@@ -115,6 +115,7 @@ export function OrderDetailView({
         order.ebayFeeRate,
         order.ebayAdsFeeRate,
         order.ebayFeesActual,
+        order.ebayAdsFeeActual,
       )
     : null;
   const hasActualEbayFees =
@@ -393,6 +394,7 @@ export function OrderDetailView({
           initialPostageCost={order.shippingLabelCost}
           initialProductCostExVat={order.productCost}
           ebayFeesActual={order.ebayFeesActual}
+          ebayAdsFeeActual={order.ebayAdsFeeActual}
           ebayFeesSyncedAt={order.ebayFeesSyncedAt}
         />
       ) : isAmazon ? (
@@ -477,10 +479,26 @@ export function OrderDetailView({
                 <DetailRow label="Product cost" value="—" />
               )}
               {hasActualEbayFees ? (
-                <DetailRow
-                  label="eBay fees (from eBay API)"
-                  value={formatMoney(order.ebayFeesActual!, currency)}
-                />
+                <>
+                  <DetailRow
+                    label="eBay selling fees (from eBay API)"
+                    value={formatMoney(
+                      ebayFees?.sellingFee ?? order.ebayFeesActual!,
+                      currency,
+                    )}
+                  />
+                  {order.ebayAdsFeeActual != null &&
+                  order.ebayAdsFeeActual > 0 ? (
+                    <DetailRow
+                      label="eBay ads fee (from eBay API)"
+                      value={formatMoney(order.ebayAdsFeeActual, currency)}
+                    />
+                  ) : null}
+                  <DetailRow
+                    label="eBay fees total (from eBay API)"
+                    value={formatMoney(order.ebayFeesActual!, currency)}
+                  />
+                </>
               ) : null}
               {!hasActualEbayFees && isEbay && ebayFees ? (
                 <DetailRow

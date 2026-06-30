@@ -5,6 +5,10 @@ import type { StoredOrder } from "@/lib/orders/types";
 /** Amazon marketplace fee applied to order revenue. */
 export const AMAZON_FEE_RATE = 0.185;
 
+function roundEbayMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 /** eBay Final Value Fee threshold (GBP order total). */
 export const EBAY_FINAL_VALUE_FEE_THRESHOLD = Number(
   process.env.EBAY_FINAL_VALUE_FEE_THRESHOLD ?? 10,
@@ -93,16 +97,25 @@ export function computeEbayFees(
   ebayFeeRate?: number | null,
   ebayAdsFeeRate?: number | null,
   ebayFeesActual?: number | null,
+  ebayAdsFeeActual?: number | null,
 ): EbayFees {
   if (ebayFeesActual != null && Number.isFinite(ebayFeesActual) && ebayFeesActual >= 0) {
+    const ads =
+      ebayAdsFeeActual != null &&
+      Number.isFinite(ebayAdsFeeActual) &&
+      ebayAdsFeeActual >= 0
+        ? ebayAdsFeeActual
+        : 0;
+    const selling = Math.max(0, roundEbayMoney(ebayFeesActual - ads));
+
     return {
       finalValueFee: 0,
       sellingFeeExVat: null,
       sellingFeeVat: null,
-      sellingFee: ebayFeesActual,
+      sellingFee: selling,
       adsFeeExVat: null,
       adsFeeVat: null,
-      adsFee: null,
+      adsFee: ads > 0 ? ads : null,
       total: ebayFeesActual,
     };
   }
@@ -139,7 +152,12 @@ export type EbayDashboardFeeStats = {
 export function aggregateEbayDashboardFees(
   orders: Pick<
     StoredOrder,
-    "revenue" | "tags" | "ebayFeeRate" | "ebayAdsFeeRate" | "ebayFeesActual"
+    | "revenue"
+    | "tags"
+    | "ebayFeeRate"
+    | "ebayAdsFeeRate"
+    | "ebayFeesActual"
+    | "ebayAdsFeeActual"
   >[],
 ): EbayDashboardFeeStats {
   let ebaySellingFees = 0;
@@ -157,9 +175,17 @@ export function aggregateEbayDashboardFees(
     ebayOrders += 1;
 
     if (order.ebayFeesActual != null && order.ebayFeesActual > 0) {
-      ebaySellingFees += order.ebayFeesActual;
+      const ads =
+        order.ebayAdsFeeActual != null && order.ebayAdsFeeActual > 0
+          ? order.ebayAdsFeeActual
+          : 0;
+      ebaySellingFees += order.ebayFeesActual - ads;
+      ebayAdsFees += ads;
       ebayOrdersWithActualFees += 1;
       ebayOrdersWithSellingFee += 1;
+      if (ads > 0) {
+        ebayOrdersWithAdsFee += 1;
+      }
       continue;
     }
 
@@ -196,6 +222,7 @@ export function computePlatformFee(
   ebayFeeRate?: number | null,
   ebayAdsFeeRate?: number | null,
   ebayFeesActual?: number | null,
+  ebayAdsFeeActual?: number | null,
 ): number | null {
   const channel = getSalesChannel(tags);
 
@@ -209,6 +236,7 @@ export function computePlatformFee(
       ebayFeeRate,
       ebayAdsFeeRate,
       ebayFeesActual,
+      ebayAdsFeeActual,
     ).total;
   }
 

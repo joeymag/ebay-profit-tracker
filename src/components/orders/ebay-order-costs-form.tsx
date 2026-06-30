@@ -26,6 +26,7 @@ type EbayOrderCostsFormProps = {
   initialPostageCost: number | null;
   initialProductCostExVat: number | null;
   ebayFeesActual?: number | null;
+  ebayAdsFeeActual?: number | null;
   ebayFeesSyncedAt?: string | null;
 };
 
@@ -66,6 +67,7 @@ export function EbayOrderCostsForm({
   initialPostageCost,
   initialProductCostExVat,
   ebayFeesActual,
+  ebayAdsFeeActual,
   ebayFeesSyncedAt,
 }: EbayOrderCostsFormProps) {
   const hasActualEbayFees =
@@ -241,8 +243,11 @@ export function EbayOrderCostsForm({
         <p className="text-base font-semibold text-foreground">eBay costs</p>
         {hasActualEbayFees ? (
           <p className="mt-1 text-sm text-muted-foreground">
-            eBay fees ({formatMoney(ebayFeesActual, currency)}) are pulled from
-            your connected eBay seller account
+            eBay fees ({formatMoney(ebayFeesActual, currency)} total
+            {ebayAdsFeeActual != null && ebayAdsFeeActual > 0
+              ? ` · ${formatMoney(ebayAdsFeeActual, currency)} ads`
+              : ""}
+            ) are pulled from your connected eBay seller account
             {ebayFeesSyncedAt
               ? ` · last synced ${new Date(ebayFeesSyncedAt).toLocaleDateString("en-GB")}`
               : ""}
