@@ -1,5 +1,6 @@
 import { getEbayApplicationAccessToken } from "@/lib/ebay/auth";
 import { getEbayConfig } from "@/lib/ebay/config";
+import { normalizeEbaySigningMaterial } from "@/lib/ebay/normalize-signing-key";
 import type { EbaySigningKeyMaterial } from "@/lib/ebay/signing-key-store";
 
 type CreateSigningKeyResponse = {
@@ -35,9 +36,9 @@ export async function createEbaySigningKey(): Promise<EbaySigningKeyMaterial> {
     throw new Error("eBay did not return signing key material.");
   }
 
-  return {
+  return normalizeEbaySigningMaterial({
     privateKey: data.privateKey,
     jwe: data.jwe,
     signingKeyId: data.signingKeyId ?? null,
-  };
+  });
 }

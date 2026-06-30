@@ -56,6 +56,15 @@ export function EbayConnectionCard() {
   }, [loadStatus]);
 
   useEffect(() => {
+    function onStatusChanged() {
+      void loadStatus();
+    }
+
+    window.addEventListener("ebay-status-changed", onStatusChanged);
+    return () => window.removeEventListener("ebay-status-changed", onStatusChanged);
+  }, [loadStatus]);
+
+  useEffect(() => {
     const ebayParam = searchParams.get("ebay");
     const message = searchParams.get("message");
 

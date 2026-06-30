@@ -3,6 +3,10 @@ import {
   hasSupabaseServiceRoleKey,
   isSupabaseConfigured,
 } from "@/lib/supabase/config";
+import {
+  normalizeEbayPrivateKeyToPem,
+  normalizeEbaySigningMaterial,
+} from "@/lib/ebay/normalize-signing-key";
 
 const TOKEN_ROW_ID = "default";
 
@@ -13,7 +17,7 @@ export type EbaySigningKeyMaterial = {
 };
 
 function normalizePem(value: string): string {
-  return value.includes("\\n") ? value.replace(/\\n/g, "\n") : value;
+  return normalizeEbayPrivateKeyToPem(value);
 }
 
 function readFromEnv(): EbaySigningKeyMaterial | null {
@@ -100,7 +104,7 @@ export async function saveEbaySigningKey(material: EbaySigningKeyMaterial): Prom
   const { error } = await supabase
     .from("ebay_oauth")
     .update({
-      signing_private_key: material.privateKey,
+      signing_private_key: normalizeEbayPrivateKeyToPem(material.privateKey),
       signing_jwe: material.jwe,
       signing_key_id: material.signingKeyId ?? null,
       updated_at: new Date().toISOString(),

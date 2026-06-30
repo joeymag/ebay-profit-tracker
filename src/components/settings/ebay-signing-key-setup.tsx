@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -16,6 +17,7 @@ type SigningKeyResult =
   | { ok: false; error: string };
 
 export function EbaySigningKeySetup() {
+  const router = useRouter();
   const [hasSigningKey, setHasSigningKey] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -55,6 +57,8 @@ export function EbaySigningKeySetup() {
 
       setHasSigningKey(true);
       setMessage(data.message);
+      router.refresh();
+      window.dispatchEvent(new CustomEvent("ebay-status-changed"));
     } catch {
       setError("Could not reach the signing key endpoint.");
     } finally {
