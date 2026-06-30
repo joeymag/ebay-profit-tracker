@@ -50,17 +50,34 @@ async function writeTokenToSupabase(refreshToken: string): Promise<boolean> {
     return false;
   }
 
-  const supabase = createSupabaseAdmin();
-  const { error } = await supabase.from("ebay_oauth").upsert(
-    {
-      id: TOKEN_ROW_ID,
-      refresh_token: refreshToken,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "id" },
-  );
+  try {
+    const supabase = createSupabaseAdmin();
+    const { error } = await supabase.from("ebay_oauth").upsert(
+      {
+        id: TOKEN_ROW_ID,
+        refresh_token: refreshToken,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    );
 
-  return !error;
+    if (error) {
+      console.error("Failed to save eBay token to Supabase:", error.message);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(
+      "Failed to save eBay token to Supabase:",
+      error instanceof Error ? error.message : error,
+    );
+    return false;
+  }
+}
+
+async function canWriteLocalTokenFile(): boolean {
+  return !process.env.VERCEL;
 }
 
 async function writeTokenToFile(refreshToken: string): Promise<boolean> {
@@ -97,13 +114,17 @@ export async function saveEbayRefreshToken(refreshToken: string): Promise<void> 
     return;
   }
 
-  const savedToFile = await writeTokenToFile(refreshToken);
-  if (savedToFile) {
-    return;
+  if (await canWriteLocalTokenFile()) {
+    const savedToFile = await writeTokenToFile(refreshToken);
+    if (savedToFile) {
+      return;
+    }
   }
 
   throw new Error(
-    "Could not store eBay refresh token. Configure Supabase or set EBAY_REFRESH_TOKEN.",
+    process.env.VERCEL
+      ? "Could not store eBay refresh token in Supabase. Add SUPABASE_SERVICE_ROLE_KEY to Vercel and redeploy."
+      : "Could not store eBay refresh token. Configure Supabase or set EBAY_REFRESH_TOKEN.",
   );
 }
 

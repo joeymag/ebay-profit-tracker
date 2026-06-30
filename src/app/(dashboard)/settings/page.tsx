@@ -82,8 +82,9 @@ export default function SettingsPage() {
             <CardTitle>eBay Finances API</CardTitle>
             <CardDescription>
               Connect your eBay seller account to pull actual fees from eBay
-              (separate from Shopify). Use your Sandbox app credentials in{" "}
-              <code className="text-xs">.env.local</code>, then authorize once.
+              (separate from Shopify). Add credentials to{" "}
+              <code className="text-xs">.env.local</code> / Vercel, then
+              authorize once.
             </CardDescription>
           </CardHeader>
           <CardContent>
