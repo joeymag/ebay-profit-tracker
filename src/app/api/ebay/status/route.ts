@@ -44,6 +44,8 @@ export async function GET() {
     clientKind,
     ruNameKind,
     warnings,
+    deployVersion: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local",
+    tokenStorage: "supabase",
     hasClientId: Boolean(config.clientId),
     hasClientSecret: Boolean(config.clientSecret),
     hasRuName: Boolean(config.ruName),
