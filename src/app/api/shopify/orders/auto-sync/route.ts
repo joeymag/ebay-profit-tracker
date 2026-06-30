@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { getLastOrderSyncCompletedAt } from "@/lib/shopify/sync-state";
+import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
 
 export async function GET() {
-  const lastSyncAt = await getLastOrderSyncCompletedAt();
-  const autoSyncEnabled = Boolean(process.env.CRON_SECRET?.trim());
+  const status = await getAutoSyncStatus();
 
   return NextResponse.json({
     ok: true,
-    autoSyncEnabled,
-    schedule: "Every 15 minutes (Vercel cron)",
-    lastSyncAt,
+    ...status,
   });
 }

@@ -21,6 +21,7 @@ import {
   getStoredOrdersForRange,
   summarizeOrders,
 } from "@/lib/orders/filtered-orders";
+import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
 import { OrdersFilterSummary } from "@/components/orders/orders-filter-summary";
 
 type OrdersPageProps = {
@@ -43,6 +44,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     ordersBeforeProductFilter,
     repeatEbayUsernames,
   } = await getStoredOrdersForRange(params);
+  const autoSyncStatus = await getAutoSyncStatus();
 
   const currency = orders[0]?.currency ?? "GBP";
   const summary = summarizeOrders(orders, currency, range, allOrders);
@@ -70,7 +72,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     <>
       <DashboardHeader title="Orders" description={countHint} />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
-        <AutoSyncStatusCard />
+        <AutoSyncStatusCard status={autoSyncStatus} />
         <div className="surface-card flex flex-col gap-4 p-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <SyncOrdersButton />

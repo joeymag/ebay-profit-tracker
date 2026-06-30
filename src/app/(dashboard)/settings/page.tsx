@@ -8,6 +8,7 @@ import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button"
 import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
 import { ShopifyConnectionTest } from "@/components/settings/shopify-connection-test";
 import { getStorageBackend } from "@/lib/orders/store";
+import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
 import {
   Card,
   CardContent,
@@ -16,8 +17,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
   const storageBackend = getStorageBackend();
+  const autoSyncStatus = await getAutoSyncStatus();
 
   return (
     <>
@@ -80,7 +82,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <AutoSyncStatusCard />
+        <AutoSyncStatusCard status={autoSyncStatus} />
 
         <Card className="surface-card">
           <CardHeader>
