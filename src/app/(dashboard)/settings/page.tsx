@@ -2,6 +2,7 @@ import { Suspense } from "react";
 
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { DatabaseStatus } from "@/components/settings/database-status";
+import { AutoSyncStatusCard } from "@/components/orders/auto-sync-status-card";
 import { EbayConnectionCard } from "@/components/settings/ebay-connection-card";
 import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button";
 import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
@@ -78,6 +79,8 @@ export default function SettingsPage() {
             <ShopifyConnectionTest />
           </CardContent>
         </Card>
+
+        <AutoSyncStatusCard />
 
         <Card className="surface-card">
           <CardHeader>

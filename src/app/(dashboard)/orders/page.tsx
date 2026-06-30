@@ -70,8 +70,8 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     <>
       <DashboardHeader title="Orders" description={countHint} />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
+        <AutoSyncStatusCard />
         <div className="surface-card flex flex-col gap-4 p-5">
-          <AutoSyncStatusCard />
           <div className="flex flex-wrap items-center justify-between gap-4">
             <SyncOrdersButton />
             {syncedAt ? (
