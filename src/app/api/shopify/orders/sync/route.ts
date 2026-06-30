@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { geocodePendingOrders } from "@/lib/geocoding/geocode";
 import { withComputedFinancials } from "@/lib/orders/financials";
 import { isOrderCancelled } from "@/lib/orders/order-status";
 import { deleteStoredOrder, getStorageBackend, saveOrders } from "@/lib/orders/store";
@@ -13,9 +12,81 @@ import { fetchFulfillmentsForOrders } from "@/lib/shopify/fulfillments";
 import { enrichStoredOrderWithFulfillments } from "@/lib/shopify/shipping";
 import { fetchShippingLabelCostsForOrders } from "@/lib/shopify/shipping-labels";
 import { getShopifyConfig } from "@/lib/shopify/config";
+import type { StoredOrder } from "@/lib/orders/types";
 
-export async function POST() {
+/** Vercel Pro allows up to 300s; full sync can still exceed Hobby limits. */
+export const maxDuration = 300;
+
+type SyncMode = "quick" | "full";
+
+function parseSyncMode(request: Request): SyncMode {
+  const url = new URL(request.url);
+  return url.searchParams.get("mode") === "full" ? "full" : "quick";
+}
+
+async function enrichOrdersForFullSync(orders: StoredOrder[]): Promise<{
+  orders: StoredOrder[];
+  withPostage: number;
+  withTracking: number;
+}> {
+  const ordersWithImages = await enrichOrdersWithLineItemImages(orders, {
+    concurrency: 5,
+  });
+
+  const fulfilledIds = ordersWithImages
+    .filter(
+      (o) =>
+        o.fulfillmentStatus === "fulfilled" ||
+        o.fulfillmentStatus === "partial",
+    )
+    .map((o) => o.shopifyId);
+
+  const fulfillmentsMap = await fetchFulfillmentsForOrders(fulfilledIds, {
+    concurrency: 8,
+  });
+
+  const labelLookupIds = [
+    ...new Set([...fulfilledIds, ...fulfillmentsMap.keys()]),
+  ];
+
+  const labelCosts = await fetchShippingLabelCostsForOrders(labelLookupIds, {
+    concurrency: 3,
+  });
+
+  const ordersEnriched = ordersWithImages.map((order) => {
+    const fulfillmentData = fulfillmentsMap.get(order.shopifyId);
+    const fulfillments = fulfillmentData?.fulfillments;
+    let next = order;
+    if (fulfillments?.length) {
+      next = enrichStoredOrderWithFulfillments(
+        order,
+        fulfillments,
+        fulfillmentData?.deliveredAt ?? null,
+      );
+    }
+    const labelCost = labelCosts.get(order.shopifyId);
+    if (labelCost != null) {
+      next = withComputedFinancials({
+        ...next,
+        shippingLabelCost: labelCost,
+      });
+    }
+    return next;
+  });
+
+  const withPostage = ordersEnriched.filter(
+    (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
+  ).length;
+  const withTracking = ordersEnriched.filter(
+    (o) => o.trackingNumbers.length > 0,
+  ).length;
+
+  return { orders: ordersEnriched, withPostage, withTracking };
+}
+
+export async function POST(request: Request) {
   const config = getShopifyConfig();
+  const mode = parseSyncMode(request);
 
   if (!config.isConfigured) {
     return NextResponse.json(
@@ -26,58 +97,17 @@ export async function POST() {
 
   try {
     const orders = await fetchAllShopifyOrders();
-    const ordersWithImages = await enrichOrdersWithLineItemImages(orders, {
-      concurrency: 5,
-    });
 
-    const fulfilledIds = ordersWithImages
-      .filter(
-        (o) =>
-          o.fulfillmentStatus === "fulfilled" ||
-          o.fulfillmentStatus === "partial",
-      )
-      .map((o) => o.shopifyId);
+    let ordersEnriched = orders;
+    let withPostage = 0;
+    let withTracking = orders.filter((o) => o.trackingNumbers.length > 0).length;
 
-    const fulfillmentsMap = await fetchFulfillmentsForOrders(fulfilledIds, {
-      concurrency: 8,
-    });
-
-    // Postage: check fulfilled orders + any with fulfillments (label events are per-order)
-    const labelLookupIds = [
-      ...new Set([...fulfilledIds, ...fulfillmentsMap.keys()]),
-    ];
-
-    const labelCosts = await fetchShippingLabelCostsForOrders(labelLookupIds, {
-      concurrency: 3,
-    });
-
-    const ordersEnriched = ordersWithImages.map((order) => {
-      const fulfillmentData = fulfillmentsMap.get(order.shopifyId);
-      const fulfillments = fulfillmentData?.fulfillments;
-      let next = order;
-      if (fulfillments?.length) {
-        next = enrichStoredOrderWithFulfillments(
-          order,
-          fulfillments,
-          fulfillmentData?.deliveredAt ?? null,
-        );
-      }
-      const labelCost = labelCosts.get(order.shopifyId);
-      if (labelCost != null) {
-        next = withComputedFinancials({
-          ...next,
-          shippingLabelCost: labelCost,
-        });
-      }
-      return next;
-    });
-
-    const withPostage = ordersEnriched.filter(
-      (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
-    ).length;
-    const withTracking = ordersEnriched.filter(
-      (o) => o.trackingNumbers.length > 0,
-    ).length;
+    if (mode === "full") {
+      const enriched = await enrichOrdersForFullSync(orders);
+      ordersEnriched = enriched.orders;
+      withPostage = enriched.withPostage;
+      withTracking = enriched.withTracking;
+    }
 
     let removedCancelled = 0;
     for (const order of ordersEnriched) {
@@ -99,24 +129,27 @@ export async function POST() {
       trackingFound: withTracking,
     });
 
-    const productsSync = await syncProductsFromOrders();
+    const productsSync =
+      mode === "full" ? await syncProductsFromOrders() : null;
     const ordersRecalculated = await recalculateAllOrderProductCosts();
-    const geocodeStats = await geocodePendingOrders();
 
     return NextResponse.json({
       ok: true,
-      imported: ordersWithImages.length,
+      mode,
+      imported: orders.length,
       total: database.orders.length,
       postageLabelsFound: withPostage,
       trackingFound: withTracking,
       syncedAt: database.syncedAt,
       storage: getStorageBackend(),
-      productsImported: productsSync.imported,
-      productsTotal: productsSync.total,
+      productsImported: productsSync?.imported ?? 0,
+      productsTotal: productsSync?.total ?? 0,
       ordersWithCostsUpdated: ordersRecalculated,
-      geocoded: geocodeStats.geocoded,
-      geocodeFailed: geocodeStats.failed,
       removedCancelled,
+      hint:
+        mode === "quick"
+          ? "Quick sync updates order fields (e.g. eBay order IDs). Run full sync locally for postage labels and images."
+          : undefined,
     });
   } catch (error) {
     if (error instanceof ShopifyApiError) {
