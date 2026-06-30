@@ -2,7 +2,10 @@ import fs from "fs/promises";
 import path from "path";
 
 import { createSupabaseAdmin } from "@/lib/supabase/client";
-import { isSupabaseConfigured } from "@/lib/supabase/config";
+import {
+  hasSupabaseServiceRoleKey,
+  isSupabaseConfigured,
+} from "@/lib/supabase/config";
 
 const TOKEN_ROW_ID = "default";
 const TOKEN_FILE = path.join(process.cwd(), "data", "ebay-oauth.json");
@@ -47,6 +50,13 @@ async function readTokenFromSupabase(): Promise<string | null> {
 
 async function writeTokenToSupabase(refreshToken: string): Promise<boolean> {
   if (!isSupabaseConfigured()) {
+    return false;
+  }
+
+  if (!hasSupabaseServiceRoleKey()) {
+    console.error(
+      "Cannot save eBay token: SUPABASE_SERVICE_ROLE_KEY is missing.",
+    );
     return false;
   }
 
@@ -123,8 +133,12 @@ export async function saveEbayRefreshToken(refreshToken: string): Promise<void> 
 
   throw new Error(
     process.env.VERCEL
-      ? "Could not store eBay refresh token in Supabase. Add SUPABASE_SERVICE_ROLE_KEY to Vercel and redeploy."
-      : "Could not store eBay refresh token. Configure Supabase or set EBAY_REFRESH_TOKEN.",
+      ? hasSupabaseServiceRoleKey()
+        ? "Could not store eBay refresh token in Supabase. Check Supabase logs and redeploy."
+        : "Add SUPABASE_SERVICE_ROLE_KEY to Vercel (Supabase → Settings → API → service_role), then redeploy and connect again."
+      : hasSupabaseServiceRoleKey()
+        ? "Could not store eBay refresh token in Supabase."
+        : "Add SUPABASE_SERVICE_ROLE_KEY to .env.local, or set EBAY_REFRESH_TOKEN manually.",
   );
 }
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getEbayConfig } from "@/lib/ebay/config";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
+import { hasSupabaseServiceRoleKey } from "@/lib/supabase/config";
 
 function credentialKind(value: string | undefined): "production" | "sandbox" | "unknown" {
   const normalized = value?.toUpperCase() ?? "";
@@ -37,6 +38,11 @@ export async function GET() {
   if (config.env === "sandbox" && ruNameKind === "production") {
     warnings.push("EBAY_RU_NAME looks like a Production RuName but EBAY_ENV is sandbox.");
   }
+  if (process.env.VERCEL && !hasSupabaseServiceRoleKey()) {
+    warnings.push(
+      "SUPABASE_SERVICE_ROLE_KEY is missing on Vercel. eBay OAuth cannot save the refresh token.",
+    );
+  }
 
   return NextResponse.json({
     ok: true,
@@ -49,6 +55,7 @@ export async function GET() {
     hasClientId: Boolean(config.clientId),
     hasClientSecret: Boolean(config.clientSecret),
     hasRuName: Boolean(config.ruName),
+    hasSupabaseServiceRoleKey: hasSupabaseServiceRoleKey(),
     isConfigured: config.isConfigured,
     isConnected: Boolean(refreshToken),
   });

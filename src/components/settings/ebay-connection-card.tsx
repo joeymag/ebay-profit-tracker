@@ -17,6 +17,7 @@ type EbayStatus = {
   hasClientId: boolean;
   hasClientSecret: boolean;
   hasRuName: boolean;
+  hasSupabaseServiceRoleKey?: boolean;
   isConfigured: boolean;
   isConnected: boolean;
 };
@@ -146,6 +147,12 @@ export function EbayConnectionCard() {
         <li>
           <code className="text-xs">EBAY_RU_NAME</code>{" "}
           {status?.hasRuName ? "✓" : "— missing (RuName from User Tokens)"}
+        </li>
+        <li>
+          <code className="text-xs">SUPABASE_SERVICE_ROLE_KEY</code>{" "}
+          {status?.hasSupabaseServiceRoleKey
+            ? "✓"
+            : "— missing on Vercel (required to save eBay token)"}
         </li>
       </ul>
 
