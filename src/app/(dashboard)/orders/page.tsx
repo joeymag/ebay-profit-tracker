@@ -75,7 +75,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         <AutoSyncStatusCard status={autoSyncStatus} />
         <div className="surface-card flex flex-col gap-4 p-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <SyncOrdersButton />
+            <SyncOrdersButton autoSyncStatus={autoSyncStatus} />
             {syncedAt ? (
               <p className="text-base text-muted-foreground">
                 Last synced: {formatOrderDate(syncedAt)} ·{" "}

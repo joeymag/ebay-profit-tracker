@@ -41,8 +41,20 @@ export function AutoSyncStatusCard({ status }: AutoSyncStatusCardProps) {
         {!status.autoSyncEnabled ? (
           <p>
             Add <code className="text-xs">CRON_SECRET</code> in Vercel environment
-            variables (and <code className="text-xs">.env.local</code> for local
-            testing), then redeploy to enable scheduled sync every 15 minutes.
+            variables, then set up a free cron at{" "}
+            <a
+              href="https://cron-job.org"
+              className="font-medium text-primary underline underline-offset-4"
+              target="_blank"
+              rel="noreferrer"
+            >
+              cron-job.org
+            </a>{" "}
+            to POST{" "}
+            <code className="text-xs">/api/cron/sync-orders</code> every 15 minutes
+            with header{" "}
+            <code className="text-xs">Authorization: Bearer YOUR_CRON_SECRET</code>.
+            (Vercel Hobby cannot run 15-minute crons — that blocks deploys.)
           </p>
         ) : (
           <p>Schedule: {status.schedule}</p>

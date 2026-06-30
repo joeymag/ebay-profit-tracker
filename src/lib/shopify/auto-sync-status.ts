@@ -11,7 +11,8 @@ export async function getAutoSyncStatus(): Promise<AutoSyncStatus> {
 
   return {
     autoSyncEnabled: Boolean(process.env.CRON_SECRET?.trim()),
-    schedule: "Every 15 minutes (Vercel cron)",
+    schedule:
+      "Every 15 minutes via external cron (e.g. cron-job.org) calling /api/cron/sync-orders",
     lastSyncAt,
   };
 }

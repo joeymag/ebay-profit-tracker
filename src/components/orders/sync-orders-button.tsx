@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import type { AutoSyncStatus } from "@/lib/shopify/auto-sync-status";
 
 type SyncResult =
   | {
@@ -20,7 +21,11 @@ type SyncResult =
     }
   | { ok: false; error: string; hint?: string };
 
-export function SyncOrdersButton() {
+export function SyncOrdersButton({
+  autoSyncStatus,
+}: {
+  autoSyncStatus?: AutoSyncStatus;
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -67,6 +72,21 @@ export function SyncOrdersButton() {
 
   return (
     <div className="flex flex-col gap-3">
+      {autoSyncStatus ? (
+        <div className="rounded-lg border border-primary/40 bg-primary/10 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold">Automatic order import</p>
+            <Badge variant={autoSyncStatus.autoSyncEnabled ? "default" : "secondary"}>
+              {autoSyncStatus.autoSyncEnabled ? "Ready" : "Set up CRON_SECRET"}
+            </Badge>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {autoSyncStatus.autoSyncEnabled
+              ? autoSyncStatus.schedule
+              : "Add CRON_SECRET in Vercel, then use cron-job.org to call /api/cron/sync-orders every 15 min."}
+          </p>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <Button
           onClick={() => syncOrders("quick")}
