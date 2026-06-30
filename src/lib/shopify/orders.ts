@@ -168,6 +168,19 @@ function normalizeOrder(order: ShopifyOrder): StoredOrder {
 }
 
 export async function fetchAllShopifyOrders(): Promise<StoredOrder[]> {
+  return fetchShopifyOrdersPages(null);
+}
+
+/** Orders created or updated in Shopify after `updatedAtMin` (ISO 8601). */
+export async function fetchShopifyOrdersUpdatedSince(
+  updatedAtMin: string,
+): Promise<StoredOrder[]> {
+  return fetchShopifyOrdersPages(updatedAtMin);
+}
+
+async function fetchShopifyOrdersPages(
+  updatedAtMin: string | null,
+): Promise<StoredOrder[]> {
   const byId = new Map<number, StoredOrder>();
   let pageInfo: string | null = null;
   let pages = 0;
@@ -178,6 +191,9 @@ export async function fetchAllShopifyOrders(): Promise<StoredOrder[]> {
       params.set("page_info", pageInfo);
     } else {
       params.set("status", "any");
+      if (updatedAtMin) {
+        params.set("updated_at_min", updatedAtMin);
+      }
     }
 
     const { data, linkHeader } = await shopifyAdminFetchWithLink<ShopifyOrdersResponse>(

@@ -5,6 +5,7 @@ import { ChannelFilterBar } from "@/components/filters/channel-filter-bar";
 import { DateRangeFilterBar } from "@/components/filters/date-range-filter-bar";
 import { ProductFilterBar } from "@/components/filters/product-filter-bar";
 import { OrdersPageClient } from "@/components/orders/orders-page-client";
+import { AutoSyncStatusCard } from "@/components/orders/auto-sync-status-card";
 import { SyncOrdersButton } from "@/components/orders/sync-orders-button";
 import {
   Card,
@@ -70,6 +71,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
       <DashboardHeader title="Orders" description={countHint} />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <div className="surface-card flex flex-col gap-4 p-5">
+          <AutoSyncStatusCard />
           <div className="flex flex-wrap items-center justify-between gap-4">
             <SyncOrdersButton />
             {syncedAt ? (

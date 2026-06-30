@@ -94,9 +94,9 @@ export function SyncOrdersButton() {
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Quick sync updates existing orders (eBay order IDs, tags, addresses) without
-        duplicates. Full sync also fetches postage labels and product images — use
-        locally; it can take several minutes.
+        Manual sync still available below. With auto-import enabled on Vercel,
+        new eBay orders (via Shopify) appear every ~15 minutes. Quick sync
+        updates all orders; full sync adds postage labels and images.
       </p>
       {message ? (
         <Badge variant="secondary" className="font-normal">
