@@ -25,6 +25,8 @@ type EbayOrderCostsFormProps = {
   initialAdsFeeRatePercent: number | null;
   initialPostageCost: number | null;
   initialProductCostExVat: number | null;
+  ebayFeesActual?: number | null;
+  ebayFeesSyncedAt?: string | null;
 };
 
 function parsePercent(value: string): number | null {
@@ -63,7 +65,11 @@ export function EbayOrderCostsForm({
   initialAdsFeeRatePercent,
   initialPostageCost,
   initialProductCostExVat,
+  ebayFeesActual,
+  ebayFeesSyncedAt,
 }: EbayOrderCostsFormProps) {
+  const hasActualEbayFees =
+    ebayFeesActual != null && Number.isFinite(ebayFeesActual) && ebayFeesActual >= 0;
   const router = useRouter();
   const [feePercent, setFeePercent] = useState(
     initialFeeRatePercent != null ? String(initialFeeRatePercent) : "",
@@ -182,20 +188,35 @@ export function EbayOrderCostsForm({
       return;
     }
 
+    if (
+      hasActualEbayFees &&
+      !feePercent.trim() &&
+      !adsFeePercent.trim() &&
+      postageUnchanged &&
+      productUnchanged
+    ) {
+      return;
+    }
+
     setSaving(true);
     setError(null);
     setSaved(false);
 
     try {
+      const body: Record<string, number | null> = {
+        shippingLabelCost: postage,
+        productCost,
+      };
+
+      if (!hasActualEbayFees) {
+        body.ebayFeeRatePercent = feeRatePercent;
+        body.ebayAdsFeeRatePercent = adsFeeRatePercent;
+      }
+
       const res = await fetch(`/api/orders/${shopifyId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ebayFeeRatePercent: feeRatePercent,
-          ebayAdsFeeRatePercent: adsFeeRatePercent,
-          shippingLabelCost: postage,
-          productCost,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
 
@@ -218,16 +239,36 @@ export function EbayOrderCostsForm({
     <div className="space-y-4 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4">
       <div>
         <p className="text-base font-semibold text-foreground">eBay costs</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Set eBay selling fee % (ex-VAT), ads fee % (ex-VAT), product cost
-          (ex-VAT), and postage. Final Value Fee is {formatEbayFinalValueFeeSchedule()}{" "}
-          per eBay order automatically. Selling fee, product cost, and ads fee
-          each add {(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}% VAT for profit
-          calculations.
-        </p>
+        {hasActualEbayFees ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            eBay fees ({formatMoney(ebayFeesActual, currency)}) are pulled from
+            your connected eBay seller account
+            {ebayFeesSyncedAt
+              ? ` · last synced ${new Date(ebayFeesSyncedAt).toLocaleDateString("en-GB")}`
+              : ""}
+            . Enter product cost and postage below — profit uses the real eBay
+            fee total.
+          </p>
+        ) : (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Set eBay selling fee % (ex-VAT), ads fee % (ex-VAT), product cost
+            (ex-VAT), and postage — or sync fees from eBay in Settings. Final
+            Value Fee is {formatEbayFinalValueFeeSchedule()} per eBay order
+            automatically when using manual fee %.
+          </p>
+        )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div
+        className={cn(
+          "grid gap-4",
+          hasActualEbayFees
+            ? "sm:grid-cols-2"
+            : "sm:grid-cols-2 lg:grid-cols-4",
+        )}
+      >
+        {!hasActualEbayFees ? (
+        <>
         <div className="space-y-2">
           <label
             htmlFor={`ebay-fee-${shopifyId}`}
@@ -297,6 +338,8 @@ export function EbayOrderCostsForm({
             </p>
           ) : null}
         </div>
+        </>
+        ) : null}
 
         <div className="space-y-2">
           <label

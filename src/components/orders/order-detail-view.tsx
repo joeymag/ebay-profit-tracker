@@ -392,6 +392,8 @@ export function OrderDetailView({
           }
           initialPostageCost={order.shippingLabelCost}
           initialProductCostExVat={order.productCost}
+          ebayFeesActual={order.ebayFeesActual}
+          ebayFeesSyncedAt={order.ebayFeesSyncedAt}
         />
       ) : isAmazon ? (
         <AmazonOrderCostsForm
