@@ -162,6 +162,7 @@ export function summarizeOrders(
     ebayOrders: ebayFees.ebayOrders,
     ebayOrdersWithSellingFee: ebayFees.ebayOrdersWithSellingFee,
     ebayOrdersWithAdsFee: ebayFees.ebayOrdersWithAdsFee,
+    ebayOrdersWithActualFees: ebayFees.ebayOrdersWithActualFees,
     amazonSubscription,
     amazonSubscriptionHint: amazonSubscriptionHint(range, amazonSubscription),
     orderCosts,

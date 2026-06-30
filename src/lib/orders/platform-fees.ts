@@ -92,7 +92,21 @@ export function computeEbayFees(
   revenue: number,
   ebayFeeRate?: number | null,
   ebayAdsFeeRate?: number | null,
+  ebayFeesActual?: number | null,
 ): EbayFees {
+  if (ebayFeesActual != null && Number.isFinite(ebayFeesActual) && ebayFeesActual >= 0) {
+    return {
+      finalValueFee: 0,
+      sellingFeeExVat: null,
+      sellingFeeVat: null,
+      sellingFee: ebayFeesActual,
+      adsFeeExVat: null,
+      adsFeeVat: null,
+      adsFee: null,
+      total: ebayFeesActual,
+    };
+  }
+
   const sellingBreakdown = getEbayPercentFeeBreakdown(revenue, ebayFeeRate);
   const adsBreakdown = getEbayPercentFeeBreakdown(revenue, ebayAdsFeeRate);
   const finalValueFee = computeEbayFinalValueFee(revenue);
@@ -118,13 +132,14 @@ export type EbayDashboardFeeStats = {
   ebayOrders: number;
   ebayOrdersWithSellingFee: number;
   ebayOrdersWithAdsFee: number;
+  ebayOrdersWithActualFees: number;
 };
 
 /** Sum eBay selling fees (incl VAT + FVF) and ads fees (incl VAT) for dashboard totals. */
 export function aggregateEbayDashboardFees(
   orders: Pick<
     StoredOrder,
-    "revenue" | "tags" | "ebayFeeRate" | "ebayAdsFeeRate"
+    "revenue" | "tags" | "ebayFeeRate" | "ebayAdsFeeRate" | "ebayFeesActual"
   >[],
 ): EbayDashboardFeeStats {
   let ebaySellingFees = 0;
@@ -132,6 +147,7 @@ export function aggregateEbayDashboardFees(
   let ebayOrders = 0;
   let ebayOrdersWithSellingFee = 0;
   let ebayOrdersWithAdsFee = 0;
+  let ebayOrdersWithActualFees = 0;
 
   for (const order of orders) {
     if (getSalesChannel(order.tags) !== "eBay") {
@@ -139,6 +155,14 @@ export function aggregateEbayDashboardFees(
     }
 
     ebayOrders += 1;
+
+    if (order.ebayFeesActual != null && order.ebayFeesActual > 0) {
+      ebaySellingFees += order.ebayFeesActual;
+      ebayOrdersWithActualFees += 1;
+      ebayOrdersWithSellingFee += 1;
+      continue;
+    }
+
     const fees = computeEbayFees(
       order.revenue,
       order.ebayFeeRate,
@@ -162,6 +186,7 @@ export function aggregateEbayDashboardFees(
     ebayOrders,
     ebayOrdersWithSellingFee,
     ebayOrdersWithAdsFee,
+    ebayOrdersWithActualFees,
   };
 }
 
@@ -170,6 +195,7 @@ export function computePlatformFee(
   tags: string | null | undefined,
   ebayFeeRate?: number | null,
   ebayAdsFeeRate?: number | null,
+  ebayFeesActual?: number | null,
 ): number | null {
   const channel = getSalesChannel(tags);
 
@@ -178,7 +204,12 @@ export function computePlatformFee(
   }
 
   if (channel === "eBay") {
-    return computeEbayFees(revenue, ebayFeeRate, ebayAdsFeeRate).total;
+    return computeEbayFees(
+      revenue,
+      ebayFeeRate,
+      ebayAdsFeeRate,
+      ebayFeesActual,
+    ).total;
   }
 
   return null;

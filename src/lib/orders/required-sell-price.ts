@@ -21,6 +21,7 @@ export type PricingOrderInput = Pick<
   | "tags"
   | "ebayFeeRate"
   | "ebayAdsFeeRate"
+  | "ebayFeesActual"
   | "revenue"
 >;
 
@@ -181,6 +182,7 @@ export function computeRequiredSellPrice(
     tags: order.tags,
     ebayFeeRate: order.ebayFeeRate,
     ebayAdsFeeRate: order.ebayAdsFeeRate,
+    ebayFeesActual: order.ebayFeesActual,
   });
 
   const platformFees = financials.platformFee ?? 0;
@@ -225,6 +227,7 @@ export function getSellPriceComparison(
     tags: order.tags,
     ebayFeeRate: order.ebayFeeRate,
     ebayAdsFeeRate: order.ebayAdsFeeRate,
+    ebayFeesActual: order.ebayFeesActual,
   });
 
   const difference = order.revenue - requiredSellPrice;

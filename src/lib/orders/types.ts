@@ -64,6 +64,10 @@ export type StoredOrder = {
   ebayFeeRate: number | null;
   /** eBay promoted listings / ads fee rate (decimal). */
   ebayAdsFeeRate: number | null;
+  /** Actual total eBay fees from Finances API (GBP, incl VAT where applicable). */
+  ebayFeesActual: number | null;
+  /** When eBay fees were last synced from Finances API. */
+  ebayFeesSyncedAt: string | null;
   /** Product/unit cost (ex-VAT from catalog or manual entry). */
   productCost: number | null;
   /** When true, product cost was set manually and should not be overwritten by catalog. */

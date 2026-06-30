@@ -44,6 +44,8 @@ export type Database = {
           shipping_label_cost: number | null;
           ebay_fee_rate: number | null;
           ebay_ads_fee_rate: number | null;
+          ebay_fees_actual: number | null;
+          ebay_fees_synced_at: string | null;
           product_cost: number | null;
           product_cost_manual: boolean;
           shipping_service: string | null;
@@ -92,6 +94,8 @@ export type Database = {
           shipping_label_cost?: number | null;
           ebay_fee_rate?: number | null;
           ebay_ads_fee_rate?: number | null;
+          ebay_fees_actual?: number | null;
+          ebay_fees_synced_at?: string | null;
           product_cost?: number | null;
           product_cost_manual?: boolean;
           shipping_service?: string | null;

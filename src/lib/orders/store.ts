@@ -116,6 +116,12 @@ function normalizeLegacyOrder(order: StoredOrder & { shipping?: number }): Store
   if (order.ebayAdsFeeRate === undefined) {
     order.ebayAdsFeeRate = null;
   }
+  if (order.ebayFeesActual === undefined) {
+    order.ebayFeesActual = null;
+  }
+  if (order.ebayFeesSyncedAt === undefined) {
+    order.ebayFeesSyncedAt = null;
+  }
   for (const item of order.lineItems ?? []) {
     if (item.productId === undefined) {
       item.productId = null;
@@ -181,6 +187,10 @@ async function saveOrdersToJson(
           ebayFeeRate: previous?.ebayFeeRate ?? order.ebayFeeRate ?? null,
           ebayAdsFeeRate:
             previous?.ebayAdsFeeRate ?? order.ebayAdsFeeRate ?? null,
+          ebayFeesActual:
+            previous?.ebayFeesActual ?? order.ebayFeesActual ?? null,
+          ebayFeesSyncedAt:
+            previous?.ebayFeesSyncedAt ?? order.ebayFeesSyncedAt ?? null,
           shippingLabelCost:
             order.shippingLabelCost ?? previous?.shippingLabelCost ?? null,
         },

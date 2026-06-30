@@ -12,6 +12,7 @@ export function computeOrderFinancials(
     | "tags"
     | "ebayFeeRate"
     | "ebayAdsFeeRate"
+    | "ebayFeesActual"
   >,
 ): Pick<StoredOrder, "platformFee" | "cost" | "profit"> {
   const platformFee = computePlatformFee(
@@ -19,6 +20,7 @@ export function computeOrderFinancials(
     order.tags,
     order.ebayFeeRate,
     order.ebayAdsFeeRate,
+    order.ebayFeesActual,
   );
 
   if (isOrderCostsIncomplete(order)) {

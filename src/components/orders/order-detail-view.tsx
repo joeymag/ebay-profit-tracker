@@ -110,8 +110,15 @@ export function OrderDetailView({
   const cancelled = isOrderCancelled(order.financialStatus);
 
   const ebayFees = isEbay
-    ? computeEbayFees(order.revenue, order.ebayFeeRate, order.ebayAdsFeeRate)
+    ? computeEbayFees(
+        order.revenue,
+        order.ebayFeeRate,
+        order.ebayAdsFeeRate,
+        order.ebayFeesActual,
+      )
     : null;
+  const hasActualEbayFees =
+    isEbay && order.ebayFeesActual != null && order.ebayFeesActual >= 0;
 
   const platformFeeLabel =
     order.platformFee != null && order.platformFee > 0 && !isEbay
@@ -467,43 +474,49 @@ export function OrderDetailView({
               ) : (
                 <DetailRow label="Product cost" value="—" />
               )}
-              {isEbay && ebayFees ? (
+              {hasActualEbayFees ? (
+                <DetailRow
+                  label="eBay fees (from eBay API)"
+                  value={formatMoney(order.ebayFeesActual!, currency)}
+                />
+              ) : null}
+              {!hasActualEbayFees && isEbay && ebayFees ? (
                 <DetailRow
                   label={formatEbayFinalValueFeeLabel(order.revenue)}
                   value={formatMoney(ebayFees.finalValueFee, currency)}
                 />
               ) : null}
-              {ebayFees?.sellingFeeExVat != null && order.ebayFeeRate != null ? (
+              {!hasActualEbayFees && ebayFees?.sellingFeeExVat != null && order.ebayFeeRate != null ? (
                 <DetailRow
                   label={formatEbayFeeLabel(order.ebayFeeRate)}
                   value={formatMoney(ebayFees.sellingFeeExVat, currency)}
                 />
               ) : null}
-              {ebayFees?.sellingFeeVat != null ? (
+              {!hasActualEbayFees && ebayFees?.sellingFeeVat != null ? (
                 <DetailRow
                   label={formatEbaySellingFeeVatLabel()}
                   value={formatMoney(ebayFees.sellingFeeVat, currency)}
                 />
               ) : null}
-              {ebayFees?.sellingFee != null && order.ebayFeeRate != null ? (
+              {!hasActualEbayFees && ebayFees?.sellingFee != null && order.ebayFeeRate != null ? (
                 <DetailRow
                   label="eBay selling fee (incl VAT)"
                   value={formatMoney(ebayFees.sellingFee, currency)}
                 />
               ) : null}
-              {ebayFees?.adsFeeExVat != null && order.ebayAdsFeeRate != null ? (
+              {!hasActualEbayFees && ebayFees?.adsFeeExVat != null && order.ebayAdsFeeRate != null ? (
                 <DetailRow
                   label={formatEbayAdsFeeLabel(order.ebayAdsFeeRate)}
                   value={formatMoney(ebayFees.adsFeeExVat, currency)}
                 />
               ) : null}
-              {ebayFees?.adsFeeVat != null ? (
+              {!hasActualEbayFees && ebayFees?.adsFeeVat != null ? (
                 <DetailRow
                   label={formatEbayAdsFeeVatLabel()}
                   value={formatMoney(ebayFees.adsFeeVat, currency)}
                 />
               ) : null}
-              {ebayFees?.adsFee != null && order.ebayAdsFeeRate != null ? (
+              {!hasActualEbayFees && ebayFees?.adsFee != null && order.ebayAdsFeeRate != null ? (
                 <DetailRow
                   label="eBay ads fee (incl VAT)"
                   value={formatMoney(ebayFees.adsFee, currency)}

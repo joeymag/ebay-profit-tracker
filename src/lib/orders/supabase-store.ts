@@ -53,6 +53,8 @@ function orderToRow(order: StoredOrder, syncedAt: string): OrderRow {
     shipping_label_cost: order.shippingLabelCost,
     ebay_fee_rate: order.ebayFeeRate,
     ebay_ads_fee_rate: order.ebayAdsFeeRate,
+    ebay_fees_actual: order.ebayFeesActual,
+    ebay_fees_synced_at: order.ebayFeesSyncedAt,
     product_cost: order.productCost,
     product_cost_manual: order.productCostManual,
     shipping_service: order.shippingService,
@@ -108,6 +110,9 @@ function rowToOrder(
     ebayFeeRate: row.ebay_fee_rate != null ? Number(row.ebay_fee_rate) : null,
     ebayAdsFeeRate:
       row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,
+    ebayFeesActual:
+      row.ebay_fees_actual != null ? Number(row.ebay_fees_actual) : null,
+    ebayFeesSyncedAt: row.ebay_fees_synced_at ?? null,
     productCost: row.product_cost != null ? Number(row.product_cost) : null,
     productCostManual: row.product_cost_manual ?? false,
     shippingService: row.shipping_service,
@@ -290,7 +295,7 @@ export async function saveOrdersToSupabase(
   const { data: existingRows } = await supabase
     .from("orders")
     .select(
-      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, amazon_deliver_by_at, ebay_deliver_by_at, product_cost, product_cost_manual, shipping_label_cost, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
+      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
     );
 
   const existingById = new Map(
@@ -338,6 +343,10 @@ export async function saveOrdersToSupabase(
           order.amazonDeliverByAt ?? previous?.amazon_deliver_by_at ?? null,
         ebayDeliverByAt:
           order.ebayDeliverByAt ?? previous?.ebay_deliver_by_at ?? null,
+        ebayFeesActual:
+          order.ebayFeesActual ?? previous?.ebay_fees_actual ?? null,
+        ebayFeesSyncedAt:
+          order.ebayFeesSyncedAt ?? previous?.ebay_fees_synced_at ?? null,
         shippingAddress,
         shippingLabelCost:
           order.shippingLabelCost ??

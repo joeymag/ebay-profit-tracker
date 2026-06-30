@@ -96,6 +96,7 @@ export function CostBreakdownCard({
     ebayOrders,
     ebayOrdersWithSellingFee,
     ebayOrdersWithAdsFee,
+    ebayOrdersWithActualFees,
     amazonSubscription,
     totalCost,
     profit,
@@ -141,9 +142,11 @@ export function CostBreakdownCard({
             label: "eBay fees",
             amount: ebaySellingFees,
             hint:
-              ebayOrdersWithSellingFee > 0
-                ? `Selling fees incl. VAT + tiered FVF (${formatEbayFinalValueFeeSchedule()}) · ${ebayOrdersWithSellingFee} of ${ebayOrders} eBay orders`
-                : `${ebayOrders} eBay orders · add selling fee % on orders to include percentage fees`,
+              ebayOrdersWithActualFees > 0
+                ? `Actual fees from eBay Finances API · ${ebayOrdersWithActualFees} of ${ebayOrders} eBay orders`
+                : ebayOrdersWithSellingFee > 0
+                  ? `Selling fees incl. VAT + tiered FVF (${formatEbayFinalValueFeeSchedule()}) · ${ebayOrdersWithSellingFee} of ${ebayOrders} eBay orders`
+                  : `${ebayOrders} eBay orders · add selling fee % on orders to include percentage fees`,
             barClass: "bg-sky-500",
             emphasize: "cost" as const,
           },

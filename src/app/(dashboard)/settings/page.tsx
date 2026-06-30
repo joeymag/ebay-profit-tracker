@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { DatabaseStatus } from "@/components/settings/database-status";
 import { EbayConnectionCard } from "@/components/settings/ebay-connection-card";
+import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button";
 import { ShopifyConnectionTest } from "@/components/settings/shopify-connection-test";
 import { getStorageBackend } from "@/lib/orders/store";
 import {
@@ -89,7 +90,10 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
-              <EbayConnectionCard />
+              <div className="space-y-6">
+                <EbayConnectionCard />
+                <EbayFeesSyncButton />
+              </div>
             </Suspense>
           </CardContent>
         </Card>

@@ -60,7 +60,41 @@ export type EbayTransaction = {
 export type EbayTransactionsResponse = {
   transactions?: EbayTransaction[];
   total?: number;
+  next?: string;
 };
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function fetchEbayTransactionsInRange(
+  start: Date,
+  end: Date,
+): Promise<EbayTransaction[]> {
+  const transactions: EbayTransaction[] = [];
+  const limit = 200;
+  let offset = 0;
+  const filter = encodeURIComponent(
+    `transactionDate:[${start.toISOString()}..${end.toISOString()}]`,
+  );
+
+  while (true) {
+    const data = await ebayFinancesFetch<EbayTransactionsResponse>(
+      `/transaction?filter=${filter}&limit=${limit}&offset=${offset}`,
+    );
+    const batch = data.transactions ?? [];
+    transactions.push(...batch);
+
+    if (batch.length < limit) {
+      break;
+    }
+
+    offset += limit;
+    await sleep(150);
+  }
+
+  return transactions;
+}
 
 export async function getEbayTransactionsForOrder(
   ebayOrderId: string,
