@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { syncEbayFeesFromFinancesApi } from "@/lib/ebay/sync-fees";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
@@ -20,6 +20,31 @@ function isAuthorizedCron(request: Request): boolean {
   return auth === `Bearer ${secret}`;
 }
 
+async function runAutoSync(): Promise<void> {
+  const orderResult = await runOrderSync({
+    mode: "quick",
+    incremental: true,
+    skipRecalculateCosts: true,
+  });
+
+  const refreshToken = await getStoredEbayRefreshToken();
+  if (refreshToken && orderResult.imported > 0) {
+    try {
+      await syncEbayFeesFromFinancesApi({ days: 30 });
+    } catch (error) {
+      console.error("[cron/sync-orders] eBay fee sync failed:", error);
+    }
+  }
+
+  console.info(
+    "[cron/sync-orders] completed",
+    JSON.stringify({
+      imported: orderResult.imported,
+      updatedSince: orderResult.updatedSince,
+    }),
+  );
+}
+
 export async function GET(request: Request) {
   if (!isAuthorizedCron(request)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -33,45 +58,26 @@ export async function GET(request: Request) {
     );
   }
 
-  try {
-    const orderResult = await runOrderSync({
-      mode: "quick",
-      incremental: true,
-    });
-
-    let ebayFees: Awaited<ReturnType<typeof syncEbayFeesFromFinancesApi>> | null =
-      null;
-
-    const refreshToken = await getStoredEbayRefreshToken();
-    if (refreshToken && orderResult.imported > 0) {
-      try {
-        ebayFees = await syncEbayFeesFromFinancesApi({ days: 30 });
-      } catch {
-        // Order sync succeeded; fee sync can retry on the next run.
+  after(async () => {
+    try {
+      await runAutoSync();
+    } catch (error) {
+      if (isShopifyApiSyncError(error)) {
+        console.error("[cron/sync-orders] Shopify error:", error.message);
+        return;
       }
-    }
 
-    return NextResponse.json({
-      ok: true,
-      orders: orderResult,
-      ebayFees,
-    });
-  } catch (error) {
-    if (isShopifyApiSyncError(error)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: error.message,
-          status: error.status,
-          details: error.body?.slice(0, 500),
-        },
-        { status: 502 },
+      console.error(
+        "[cron/sync-orders] failed:",
+        error instanceof Error ? error.message : error,
       );
     }
+  });
 
-    const message =
-      error instanceof Error ? error.message : "Auto-sync failed";
-
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
-  }
+  return NextResponse.json({
+    ok: true,
+    status: "started",
+    message:
+      "Auto-sync started. cron-job.org only needs this quick response; sync continues on the server.",
+  });
 }

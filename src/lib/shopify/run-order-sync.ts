@@ -21,6 +21,8 @@ export type RunOrderSyncOptions = {
   mode?: OrderSyncMode;
   /** Only fetch orders updated since last sync (for scheduled runs). */
   incremental?: boolean;
+  /** Skip full DB cost recalc (saveOrders already updates imported rows). */
+  skipRecalculateCosts?: boolean;
 };
 
 export type RunOrderSyncResult = {
@@ -159,7 +161,10 @@ export async function runOrderSync(
   });
 
   const productsSync = mode === "full" ? await syncProductsFromOrders() : null;
-  const ordersRecalculated = await recalculateAllOrderProductCosts();
+  const ordersRecalculated =
+    options.skipRecalculateCosts || incremental
+      ? 0
+      : await recalculateAllOrderProductCosts();
 
   return {
     ok: true,
