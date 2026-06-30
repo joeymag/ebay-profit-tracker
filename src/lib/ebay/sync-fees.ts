@@ -72,10 +72,6 @@ export async function syncEbayFeesFromFinancesApi(options?: {
     matched += 1;
     const ebayFeesActual = roundMoney(feeTotal);
 
-    if (row.ebay_fees_actual != null && Number(row.ebay_fees_actual) === ebayFeesActual) {
-      continue;
-    }
-
     const order: StoredOrder = {
       shopifyId: row.shopify_id,
       orderNumber: "",

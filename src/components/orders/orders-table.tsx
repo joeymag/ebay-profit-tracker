@@ -24,6 +24,7 @@ import {
 } from "@/lib/orders/ebay-buyer";
 import { isOrderCostsIncomplete, getOrderCostFieldStatus } from "@/lib/orders/cost-completeness";
 import {
+  EbayFeeCell,
   FeePercentCell,
   ProductCostCell,
 } from "@/components/orders/missing-value-cell";
@@ -108,7 +109,7 @@ export function OrdersTable({
           <TableHead className="text-right">Revenue</TableHead>
           <TableHead className="text-right">Product cost</TableHead>
           <TableHead className="text-right">Postage</TableHead>
-          <TableHead className="text-right">eBay fee</TableHead>
+          <TableHead className="text-right">eBay fees</TableHead>
           <TableHead className="text-right">Ads fee</TableHead>
           <TableHead className="text-right">Total cost</TableHead>
           <TableHead className="pr-6 text-right">Profit</TableHead>
@@ -129,6 +130,10 @@ export function OrdersTable({
           orders.map((order, i) => {
             const costsIncomplete = isOrderCostsIncomplete(order);
             const costStatus = getOrderCostFieldStatus(order);
+            const hasActualEbayFees =
+              costStatus.isEbay &&
+              order.ebayFeesActual != null &&
+              order.ebayFeesActual >= 0;
             const isSelected = selectedIds?.has(order.shopifyId) ?? false;
             const productDisplay = getOrderProductDisplay(order, productFilter);
             const customerKey = getCustomerKey(order);
@@ -302,18 +307,29 @@ export function OrdersTable({
                   />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  <FeePercentCell
+                  <EbayFeeCell
+                    actualAmount={order.ebayFeesActual}
                     rate={order.ebayFeeRate}
+                    currency={order.currency}
                     missing={costStatus.ebayFeeMissing}
                     notApplicable={!costStatus.isEbay}
                   />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  <FeePercentCell
-                    rate={order.ebayAdsFeeRate}
-                    missing={costStatus.ebayAdsFeeMissing}
-                    notApplicable={!costStatus.isEbay}
-                  />
+                  {hasActualEbayFees ? (
+                    <span
+                      className="text-muted-foreground"
+                      title="Included in synced eBay fee total"
+                    >
+                      incl.
+                    </span>
+                  ) : (
+                    <FeePercentCell
+                      rate={order.ebayAdsFeeRate}
+                      missing={costStatus.ebayAdsFeeMissing}
+                      notApplicable={!costStatus.isEbay}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
                   <MoneyCell

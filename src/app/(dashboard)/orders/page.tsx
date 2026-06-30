@@ -121,10 +121,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             </CardTitle>
             <CardDescription>
               Select orders with the checkboxes to bulk-edit costs and fees.
-              Red values are missing — product cost, postage, eBay fee, or ads
-              fee. New eBay orders copy fees and postage from your last order with
-              the same SKU on sync; set unit cost once on Products. Click an order
-              number for details.
+              Red values are missing — product cost, postage, or eBay fees (synced
+              amounts from eBay or manual fee %). New eBay orders copy fees and
+              postage from your last order with the same SKU on sync; set unit cost
+              once on Products. Click an order number for details.
             </CardDescription>
           </CardHeader>
           <CardContent className="px-0 pb-0 pt-0 sm:px-0">

@@ -55,3 +55,34 @@ export function FeePercentCell({
     </MissingValueCell>
   );
 }
+
+export function EbayFeeCell({
+  actualAmount,
+  rate,
+  currency,
+  missing,
+  notApplicable,
+}: {
+  actualAmount: number | null;
+  rate: number | null;
+  currency: string;
+  missing: boolean;
+  notApplicable?: boolean;
+}) {
+  const hasActual =
+    actualAmount != null && Number.isFinite(actualAmount) && actualAmount >= 0;
+
+  return (
+    <MissingValueCell missing={missing} notApplicable={notApplicable}>
+      {hasActual ? (
+        <span title="Synced from eBay Finances API">
+          {formatMoney(actualAmount, currency)}
+        </span>
+      ) : rate != null ? (
+        `${(rate * 100).toFixed(1)}%`
+      ) : (
+        "—"
+      )}
+    </MissingValueCell>
+  );
+}
