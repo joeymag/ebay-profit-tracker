@@ -197,11 +197,17 @@ export type Database = {
         Row: {
           id: string;
           refresh_token: string;
+          signing_jwe: string | null;
+          signing_key_id: string | null;
+          signing_private_key: string | null;
           updated_at: string;
         };
         Insert: {
           id: string;
           refresh_token: string;
+          signing_jwe?: string | null;
+          signing_key_id?: string | null;
+          signing_private_key?: string | null;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["ebay_oauth"]["Insert"]>;

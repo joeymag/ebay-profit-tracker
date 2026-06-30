@@ -4,6 +4,7 @@ import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { DatabaseStatus } from "@/components/settings/database-status";
 import { EbayConnectionCard } from "@/components/settings/ebay-connection-card";
 import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button";
+import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
 import { ShopifyConnectionTest } from "@/components/settings/shopify-connection-test";
 import { getStorageBackend } from "@/lib/orders/store";
 import {
@@ -92,6 +93,7 @@ export default function SettingsPage() {
             <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
               <div className="space-y-6">
                 <EbayConnectionCard />
+                <EbaySigningKeySetup />
                 <EbayFeesSyncButton />
               </div>
             </Suspense>

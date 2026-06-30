@@ -1,4 +1,8 @@
-import { EBAY_FINANCES_SCOPE, getEbayConfig } from "@/lib/ebay/config";
+import {
+  EBAY_APPLICATION_SCOPE,
+  EBAY_FINANCES_SCOPE,
+  getEbayConfig,
+} from "@/lib/ebay/config";
 import {
   getStoredEbayRefreshToken,
   saveEbayRefreshToken,
@@ -10,9 +14,11 @@ type TokenCache = {
 };
 
 let tokenCache: TokenCache | null = null;
+let appTokenCache: TokenCache | null = null;
 
 export function clearEbayTokenCache() {
   tokenCache = null;
+  appTokenCache = null;
 }
 
 function basicAuthHeader(clientId: string, clientSecret: string): string {
@@ -129,6 +135,27 @@ export async function getEbayAccessToken(): Promise<string> {
   if (data.refresh_token) {
     await saveEbayRefreshToken(data.refresh_token);
   }
+
+  return data.access_token;
+}
+
+export async function getEbayApplicationAccessToken(): Promise<string> {
+  const now = Date.now();
+  if (appTokenCache && appTokenCache.expiresAt > now + 60_000) {
+    return appTokenCache.accessToken;
+  }
+
+  const data = await requestToken(
+    new URLSearchParams({
+      grant_type: "client_credentials",
+      scope: EBAY_APPLICATION_SCOPE,
+    }),
+  );
+
+  appTokenCache = {
+    accessToken: data.access_token,
+    expiresAt: now + data.expires_in * 1000,
+  };
 
   return data.access_token;
 }

@@ -18,6 +18,7 @@ type EbayStatus = {
   hasClientSecret: boolean;
   hasRuName: boolean;
   hasSupabaseServiceRoleKey?: boolean;
+  hasSigningKey?: boolean;
   isConfigured: boolean;
   isConnected: boolean;
 };
@@ -153,6 +154,10 @@ export function EbayConnectionCard() {
           {status?.hasSupabaseServiceRoleKey
             ? "✓"
             : "— missing on Vercel (required to save eBay token)"}
+        </li>
+        <li>
+          <code className="text-xs">Signing key</code>{" "}
+          {status?.hasSigningKey ? "✓" : "— generate below (required for fee sync)"}
         </li>
       </ul>
 

@@ -1,5 +1,6 @@
 import { getEbayAccessToken } from "@/lib/ebay/auth";
 import { getEbayConfig } from "@/lib/ebay/config";
+import { buildFinancesSignatureHeaders } from "@/lib/ebay/digital-signature";
 
 export class EbayApiError extends Error {
   constructor(
@@ -19,6 +20,12 @@ export async function ebayFinancesFetch<T>(
   const { financesBaseUrl } = getEbayConfig();
   const accessToken = await getEbayAccessToken();
   const url = `${financesBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const requestUrl = new URL(url);
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const signatureHeaders = await buildFinancesSignatureHeaders(
+    requestUrl,
+    method,
+  );
 
   const response = await fetch(url, {
     ...init,
@@ -26,6 +33,7 @@ export async function ebayFinancesFetch<T>(
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...signatureHeaders,
       ...(init?.headers ?? {}),
     },
   });

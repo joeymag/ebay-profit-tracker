@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getEbayConfig } from "@/lib/ebay/config";
+import { hasEbaySigningKey } from "@/lib/ebay/signing-key-store";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
 import { hasSupabaseServiceRoleKey } from "@/lib/supabase/config";
 
@@ -56,6 +57,7 @@ export async function GET() {
     hasClientSecret: Boolean(config.clientSecret),
     hasRuName: Boolean(config.ruName),
     hasSupabaseServiceRoleKey: hasSupabaseServiceRoleKey(),
+    hasSigningKey: await hasEbaySigningKey(),
     isConfigured: config.isConfigured,
     isConnected: Boolean(refreshToken),
   });

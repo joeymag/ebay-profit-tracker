@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { EbayApiError } from "@/lib/ebay/client";
+import { EbaySigningKeyMissingError } from "@/lib/ebay/digital-signature";
 import { getEbayConfig } from "@/lib/ebay/config";
 import { syncEbayFeesFromFinancesApi } from "@/lib/ebay/sync-fees";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
@@ -36,6 +37,10 @@ export async function POST(request: Request) {
     const result = await syncEbayFeesFromFinancesApi({ days });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof EbaySigningKeyMissingError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+    }
+
     if (error instanceof EbayApiError) {
       return NextResponse.json(
         {

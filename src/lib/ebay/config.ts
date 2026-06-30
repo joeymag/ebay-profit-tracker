@@ -3,6 +3,8 @@ export type EbayEnvironment = "sandbox" | "production";
 export const EBAY_FINANCES_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.finances";
 
+export const EBAY_APPLICATION_SCOPE = "https://api.ebay.com/oauth/api_scope";
+
 export function getEbayConfig() {
   const clientId = process.env.EBAY_CLIENT_ID?.trim();
   const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim();
@@ -29,5 +31,9 @@ export function getEbayConfig() {
     financesBaseUrl: isSandbox
       ? "https://apiz.sandbox.ebay.com/sell/finances/v1"
       : "https://apiz.ebay.com/sell/finances/v1",
+    keyManagementBaseUrl: isSandbox
+      ? "https://apiz.sandbox.ebay.com/developer/key_management/v1"
+      : "https://apiz.ebay.com/developer/key_management/v1",
+    financesAuthority: isSandbox ? "apiz.sandbox.ebay.com" : "apiz.ebay.com",
   };
 }
