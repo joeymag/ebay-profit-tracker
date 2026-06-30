@@ -76,7 +76,7 @@ async function writeTokenToSupabase(refreshToken: string): Promise<boolean> {
   }
 }
 
-async function canWriteLocalTokenFile(): boolean {
+function canWriteLocalTokenFile(): boolean {
   return !process.env.VERCEL;
 }
 
@@ -114,7 +114,7 @@ export async function saveEbayRefreshToken(refreshToken: string): Promise<void> 
     return;
   }
 
-  if (await canWriteLocalTokenFile()) {
+  if (canWriteLocalTokenFile()) {
     const savedToFile = await writeTokenToFile(refreshToken);
     if (savedToFile) {
       return;
