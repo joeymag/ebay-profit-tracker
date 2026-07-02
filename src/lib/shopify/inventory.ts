@@ -42,20 +42,6 @@ const VARIANT_BY_SKU_QUERY = `
           inventoryItem {
             id
             tracked
-            inventoryLevels(first: 20) {
-              edges {
-                node {
-                  location {
-                    id
-                    name
-                  }
-                  quantities(names: ["available"]) {
-                    name
-                    quantity
-                  }
-                }
-              }
-            }
           }
         }
       }
@@ -78,14 +64,6 @@ type VariantBySkuResponse = {
         inventoryItem: {
           id: string;
           tracked: boolean;
-          inventoryLevels: {
-            edges: {
-              node: {
-                location: { id: string; name: string };
-                quantities: { name: string; quantity: number }[];
-              };
-            }[];
-          };
         };
       };
     }[];
@@ -115,23 +93,12 @@ export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup |
   }
 
   const inventoryItemId = parseShopifyGid(match.inventoryItem.id);
-  let locations: StockLocationLevel[] = match.inventoryItem.inventoryLevels.edges.map(
-    (edge) => ({
-      locationId: parseShopifyGid(edge.node.location.id),
-      locationName: edge.node.location.name,
-      available:
-        edge.node.quantities.find((q) => q.name === "available")?.quantity ?? 0,
-    }),
-  );
-
-  if (locations.length === 0) {
-    const levels = await getShopifyInventoryLevels(inventoryItemId);
-    locations = levels.map((level) => ({
-      locationId: level.location_id,
-      locationName: `Location ${level.location_id}`,
-      available: level.available ?? 0,
-    }));
-  }
+  const levels = await getShopifyInventoryLevels(inventoryItemId);
+  const locations: StockLocationLevel[] = levels.map((level) => ({
+    locationId: level.location_id,
+    locationName: `Location ${level.location_id}`,
+    available: level.available ?? 0,
+  }));
 
   return {
     sku: match.sku,
