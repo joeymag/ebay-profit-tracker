@@ -9,6 +9,7 @@ import {
   LineChart,
   Map,
   Package,
+  ScanBarcode,
   Settings,
   ShoppingBag,
   Store,
@@ -43,6 +44,7 @@ const iconMap = {
   store: Store,
   map: Map,
   package: Package,
+  "scan-barcode": ScanBarcode,
   settings: Settings,
 } as const;
 

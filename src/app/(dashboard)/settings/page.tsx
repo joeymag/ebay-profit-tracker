@@ -72,9 +72,13 @@ export default async function SettingsPage() {
               </li>
             </ul>
             <p className="pt-2">
-              Required <strong>Admin API</strong> scope:{" "}
+              Required <strong>Admin API</strong> scopes:{" "}
               <code className="text-xs">read_orders</code> (optional:{" "}
-              <code className="text-xs">read_all_orders</code>).{" "}
+              <code className="text-xs">read_all_orders</code>). For stock
+              control also add{" "}
+              <code className="text-xs">read_inventory</code> and{" "}
+              <code className="text-xs">write_inventory</code>, then release
+              the app version and reinstall on your store.{" "}
               <code className="text-xs">customer_read_orders</code> is a
               different API and will not work for order sync.
             </p>
