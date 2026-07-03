@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, Loader2 } from "lucide-react";
 
+import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -27,6 +28,7 @@ import {
   formatPercent,
   type ListingTrafficReport,
 } from "@/lib/ebay/traffic-report-types";
+import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type TrafficApiResponse =
@@ -44,6 +46,34 @@ function formatCount(value: number | null): string {
   }
 
   return value.toLocaleString("en-GB");
+}
+
+function formatPrice(
+  price: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (price == null) {
+    return "—";
+  }
+
+  return formatMoney(price, currency ?? "GBP");
+}
+
+function availabilityBadge(status: string | null | undefined) {
+  if (!status) {
+    return null;
+  }
+
+  const normalized = status.toUpperCase();
+  if (normalized === "OUT_OF_STOCK") {
+    return <Badge variant="destructive">Out of stock</Badge>;
+  }
+
+  if (normalized === "IN_STOCK") {
+    return <Badge variant="secondary">In stock</Badge>;
+  }
+
+  return <Badge variant="outline">{status.replaceAll("_", " ").toLowerCase()}</Badge>;
 }
 
 export function EbayAnalyticsPanel() {
@@ -89,7 +119,7 @@ export function EbayAnalyticsPanel() {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        Loading listing traffic from eBay…
+        Loading listing traffic and product details from eBay…
       </div>
     );
   }
@@ -193,7 +223,7 @@ export function EbayAnalyticsPanel() {
               <CardTitle>Listing performance</CardTitle>
               <CardDescription>
                 {report.rangeLabel} · {report.marketplaceId} · up to 200 listings
-                sorted by views
+                with photos and prices · sorted by views
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -223,6 +253,8 @@ export function EbayAnalyticsPanel() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Listing</TableHead>
+                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead className="text-right">Qty</TableHead>
                   <TableHead className="text-right">Search impr.</TableHead>
                   <TableHead className="text-right">All impr.</TableHead>
                   <TableHead className="text-right">Views</TableHead>
@@ -234,21 +266,49 @@ export function EbayAnalyticsPanel() {
               <TableBody>
                 {report.listings.map((row) => (
                   <TableRow key={row.listingId}>
-                    <TableCell className="max-w-xs">
-                      <div className="space-y-1">
-                        <p className="line-clamp-2 font-medium leading-snug">
-                          {row.title ?? `Listing ${row.listingId}`}
-                        </p>
-                        <a
-                          href={ebayListingUrl(row.listingId, report.marketplaceId)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          {row.listingId}
-                          <ExternalLink className="size-3" />
-                        </a>
+                    <TableCell className="max-w-sm">
+                      <div className="flex gap-3">
+                        <LineItemImage
+                          src={row.imageUrl}
+                          alt={row.title ?? row.listingId}
+                          className="size-14"
+                        />
+                        <div className="min-w-0 space-y-1">
+                          <p className="line-clamp-2 font-medium leading-snug">
+                            {row.title ?? `Listing ${row.listingId}`}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {row.sku ? (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                SKU {row.sku}
+                              </span>
+                            ) : null}
+                            {row.condition ? (
+                              <span className="text-xs text-muted-foreground">
+                                {row.condition}
+                              </span>
+                            ) : null}
+                            {availabilityBadge(row.availabilityStatus)}
+                          </div>
+                          <a
+                            href={row.itemWebUrl ?? ebayListingUrl(row.listingId, report.marketplaceId)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            {row.listingId}
+                            <ExternalLink className="size-3" />
+                          </a>
+                        </div>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatPrice(row.price, row.currency)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.quantityAvailable != null
+                        ? row.quantityAvailable.toLocaleString("en-GB")
+                        : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatCount(row.searchImpressions)}
@@ -292,10 +352,10 @@ export function EbayAnalyticsPanel() {
       ) : null}
 
       <p className="text-sm text-muted-foreground">
-        eBay does not expose search rank position (e.g. #3 in results). These
-        metrics show visibility (impressions), engagement (views, CTR), and
-        conversion instead. Reconnect eBay in Settings if you connected before
-        this page was added.
+        Listing photos, prices, and stock come from the eBay Browse API (public
+        listing data). eBay does not expose search rank position (e.g. #3 in
+        results). These metrics show visibility (impressions), engagement
+        (views, CTR), and conversion instead.
       </p>
     </div>
   );

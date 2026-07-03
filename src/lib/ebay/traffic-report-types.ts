@@ -1,6 +1,14 @@
 export type ListingTrafficRow = {
   listingId: string;
   title: string | null;
+  imageUrl?: string | null;
+  price?: number | null;
+  currency?: string | null;
+  condition?: string | null;
+  quantityAvailable?: number | null;
+  availabilityStatus?: string | null;
+  itemWebUrl?: string | null;
+  sku?: string | null;
   searchImpressions: number | null;
   totalImpressions: number | null;
   allImpressions: number | null;

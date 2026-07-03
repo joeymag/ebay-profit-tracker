@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { EbayApiError } from "@/lib/ebay/client";
+import { enrichListingTrafficRows } from "@/lib/ebay/listing-enrichment";
 import { getEbayConfig } from "@/lib/ebay/config";
 import { fetchListingTrafficReport } from "@/lib/ebay/traffic-report";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
+
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   const config = getEbayConfig();
@@ -32,7 +35,31 @@ export async function GET(request: Request) {
 
   try {
     const report = await fetchListingTrafficReport({ range });
-    return NextResponse.json({ ok: true, report });
+    let listings = report.listings;
+    let listingEnrichmentWarning: string | null = null;
+
+    try {
+      listings = await enrichListingTrafficRows(
+        report.listings,
+        report.marketplaceId,
+      );
+    } catch (enrichError) {
+      listingEnrichmentWarning =
+        enrichError instanceof Error
+          ? enrichError.message
+          : "Could not load listing photos and prices.";
+    }
+
+    return NextResponse.json({
+      ok: true,
+      report: {
+        ...report,
+        listings,
+        warnings: listingEnrichmentWarning
+          ? [...report.warnings, listingEnrichmentWarning]
+          : report.warnings,
+      },
+    });
   } catch (error) {
     if (error instanceof EbayApiError) {
       const needsReconnect =
