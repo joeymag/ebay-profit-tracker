@@ -137,6 +137,8 @@ export function ListingTitleExperimentPanel({
             notes,
             sku: experiment?.currentListing.sku,
             imageUrl: experiment?.currentListing.imageUrl,
+            isItemGroup: experiment?.currentListing.isItemGroup,
+            memberSkus: experiment?.currentListing.memberSkus,
             applyToEbay: true,
           }),
         },
@@ -240,12 +242,25 @@ export function ListingTitleExperimentPanel({
                   <span className="block">SKU {experiment.currentListing.sku}</span>
                 ) : null}
                 {experiment.currentListing.isItemGroup ? (
-                  <Badge variant="outline" className="mt-1">
-                    Multi-variation listing
-                    {experiment.currentListing.variationCount
-                      ? ` · ${experiment.currentListing.variationCount} variants`
-                      : ""}
-                  </Badge>
+                  <div className="space-y-1">
+                    <Badge variant="outline" className="mt-1">
+                      Multi-variation listing
+                      {experiment.currentListing.variationCount
+                        ? ` · ${experiment.currentListing.variationCount} variants`
+                        : ""}
+                    </Badge>
+                    {experiment.currentListing.inventoryItemGroupKey ? (
+                      <p className="text-xs text-muted-foreground">
+                        Item group{" "}
+                        <span className="font-mono">
+                          {experiment.currentListing.inventoryItemGroupKey}
+                        </span>
+                        {experiment.currentListing.memberSkus.length
+                          ? ` · ${experiment.currentListing.memberSkus.length} SKUs linked`
+                          : ""}
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
                 {experiment.currentListing.price != null ? (
                   <span className="block">
@@ -308,7 +323,8 @@ export function ListingTitleExperimentPanel({
           <CardTitle>Edit listing title</CardTitle>
           <CardDescription>
             Each save closes the previous title period and starts tracking sales
-            from today. Compare periods below to see if keyword changes helped.
+            from today. Multi-variation listings update the eBay inventory item
+            group title and all variation SKUs when connected with sell.inventory.
           </CardDescription>
         </CardHeader>
         <CardContent>

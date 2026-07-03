@@ -15,6 +15,7 @@ export type BrowseItemDetails = {
   sku: string | null;
   isItemGroup: boolean;
   variationCount: number | null;
+  memberSkus: string[];
 };
 
 type BrowseItemResponse = {
@@ -45,7 +46,11 @@ type ItemGroupResponse = {
 function parseBrowseItem(
   listingId: string,
   data: BrowseItemResponse,
-  options?: { isItemGroup?: boolean; variationCount?: number | null },
+  options?: {
+    isItemGroup?: boolean;
+    variationCount?: number | null;
+    memberSkus?: string[];
+  },
 ): BrowseItemDetails {
   const availability = data.estimatedAvailabilities?.[0];
   const priceValue = data.price?.value
@@ -69,6 +74,7 @@ function parseBrowseItem(
     sku: data.sku?.trim() || null,
     isItemGroup: options?.isItemGroup ?? false,
     variationCount: options?.variationCount ?? null,
+    memberSkus: options?.memberSkus ?? (data.sku?.trim() ? [data.sku.trim()] : []),
   };
 }
 
@@ -138,9 +144,18 @@ async function fetchBrowseItemGroupById(
   }
 
   const primary = items[0]!;
+  const memberSkus = [
+    ...new Set(
+      items
+        .map((item) => item.sku?.trim())
+        .filter((sku): sku is string => Boolean(sku)),
+    ),
+  ];
+
   return parseBrowseItem(listingId, primary, {
     isItemGroup: true,
     variationCount: items.length,
+    memberSkus,
   });
 }
 

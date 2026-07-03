@@ -4,7 +4,7 @@ import {
 } from "@/lib/ebay/analytics-date-range";
 import { fetchBrowseItemByLegacyId } from "@/lib/ebay/browse-client";
 import { getEbayConfig } from "@/lib/ebay/config";
-import { updateInventoryItemTitle } from "@/lib/ebay/inventory-client";
+import { updateEbayListingTitle, resolveInventoryGroupFromMemberSku } from "@/lib/ebay/inventory-group";
 import { fetchListingTrafficMetrics } from "@/lib/ebay/listing-traffic-metrics";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
@@ -55,6 +55,8 @@ export type ListingTitleExperiment = {
     itemWebUrl: string | null;
     isItemGroup: boolean;
     variationCount: number | null;
+    memberSkus: string[];
+    inventoryItemGroupKey: string | null;
   };
   periods: TitlePeriodRecord[];
   comparisons: TitlePeriodComparison[];
@@ -152,6 +154,18 @@ export async function getListingTitleExperiment(
     () => null,
   );
 
+  let inventoryItemGroupKey: string | null = null;
+  if (browse?.isItemGroup && browse.memberSkus[0]) {
+    try {
+      const resolved = await resolveInventoryGroupFromMemberSku(
+        browse.memberSkus[0],
+      );
+      inventoryItemGroupKey = resolved?.groupKey ?? null;
+    } catch {
+      inventoryItemGroupKey = null;
+    }
+  }
+
   await ensureInitialPeriod(
     normalizedId,
     browse?.title ?? null,
@@ -224,6 +238,8 @@ export async function getListingTitleExperiment(
       itemWebUrl: browse?.itemWebUrl ?? null,
       isItemGroup: browse?.isItemGroup ?? false,
       variationCount: browse?.variationCount ?? null,
+      memberSkus: browse?.memberSkus ?? [],
+      inventoryItemGroupKey,
     },
     periods,
     comparisons,
@@ -237,6 +253,8 @@ export async function saveListingTitleChange(input: {
   sku?: string | null;
   imageUrl?: string | null;
   applyToEbay?: boolean;
+  isItemGroup?: boolean;
+  memberSkus?: string[];
 }): Promise<{ period: TitlePeriodRecord; ebayUpdateError: string | null }> {
   if (!isSupabaseConfigured()) {
     throw new Error("Supabase is required for title experiments.");
@@ -282,21 +300,22 @@ export async function saveListingTitleChange(input: {
   let ebayUpdateError: string | null = null;
   const sku = input.sku?.trim() || active?.sku?.trim() || null;
 
-  if (input.applyToEbay !== false && sku) {
-    const result = await updateInventoryItemTitle(sku, title);
-    appliedToEbay = result.ok;
-    if (!result.ok) {
-      ebayUpdateError = result.error;
-    }
-  } else if (input.applyToEbay !== false && !sku) {
+  if (input.applyToEbay !== false) {
     const { marketplaceId } = getEbayConfig();
     const browseDetails = await fetchBrowseItemByLegacyId(
       listingId,
       marketplaceId,
     ).catch(() => null);
-    ebayUpdateError = browseDetails?.isItemGroup
-      ? "Multi-variation listing — title saved for tracking. Update the listing group title on eBay Seller Hub (Inventory API needs the item group SKU)."
-      : "No SKU linked to this listing — title saved for tracking only. Update on eBay manually or reconnect with Inventory API access.";
+
+    const ebayResult = await updateEbayListingTitle({
+      title,
+      sku: sku ?? browseDetails?.sku ?? null,
+      memberSkus: input.memberSkus ?? browseDetails?.memberSkus ?? [],
+      isItemGroup: input.isItemGroup ?? browseDetails?.isItemGroup ?? false,
+    });
+
+    appliedToEbay = ebayResult.appliedToEbay;
+    ebayUpdateError = ebayResult.ebayUpdateError;
   }
 
   const { data: inserted, error: insertError } = await supabase
