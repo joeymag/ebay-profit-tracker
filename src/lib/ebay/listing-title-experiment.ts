@@ -53,6 +53,8 @@ export type ListingTitleExperiment = {
     quantityAvailable: number | null;
     availabilityStatus: string | null;
     itemWebUrl: string | null;
+    isItemGroup: boolean;
+    variationCount: number | null;
   };
   periods: TitlePeriodRecord[];
   comparisons: TitlePeriodComparison[];
@@ -146,7 +148,9 @@ export async function getListingTitleExperiment(
 
   const normalizedId = listingId.trim();
   const { marketplaceId } = getEbayConfig();
-  const browse = await fetchBrowseItemByLegacyId(normalizedId, marketplaceId);
+  const browse = await fetchBrowseItemByLegacyId(normalizedId, marketplaceId).catch(
+    () => null,
+  );
 
   await ensureInitialPeriod(
     normalizedId,
@@ -218,6 +222,8 @@ export async function getListingTitleExperiment(
       quantityAvailable: browse?.quantityAvailable ?? null,
       availabilityStatus: browse?.availabilityStatus ?? null,
       itemWebUrl: browse?.itemWebUrl ?? null,
+      isItemGroup: browse?.isItemGroup ?? false,
+      variationCount: browse?.variationCount ?? null,
     },
     periods,
     comparisons,
@@ -283,8 +289,14 @@ export async function saveListingTitleChange(input: {
       ebayUpdateError = result.error;
     }
   } else if (input.applyToEbay !== false && !sku) {
-    ebayUpdateError =
-      "No SKU linked to this listing — title saved for tracking only. Update on eBay manually or reconnect with Inventory API access.";
+    const { marketplaceId } = getEbayConfig();
+    const browseDetails = await fetchBrowseItemByLegacyId(
+      listingId,
+      marketplaceId,
+    ).catch(() => null);
+    ebayUpdateError = browseDetails?.isItemGroup
+      ? "Multi-variation listing — title saved for tracking. Update the listing group title on eBay Seller Hub (Inventory API needs the item group SKU)."
+      : "No SKU linked to this listing — title saved for tracking only. Update on eBay manually or reconnect with Inventory API access.";
   }
 
   const { data: inserted, error: insertError } = await supabase

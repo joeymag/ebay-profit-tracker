@@ -239,6 +239,14 @@ export function ListingTitleExperimentPanel({
                 {experiment.currentListing.sku ? (
                   <span className="block">SKU {experiment.currentListing.sku}</span>
                 ) : null}
+                {experiment.currentListing.isItemGroup ? (
+                  <Badge variant="outline" className="mt-1">
+                    Multi-variation listing
+                    {experiment.currentListing.variationCount
+                      ? ` · ${experiment.currentListing.variationCount} variants`
+                      : ""}
+                  </Badge>
+                ) : null}
                 {experiment.currentListing.price != null ? (
                   <span className="block">
                     {formatMoney(
