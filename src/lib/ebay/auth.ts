@@ -1,6 +1,6 @@
 import {
   EBAY_APPLICATION_SCOPE,
-  EBAY_FINANCES_SCOPE,
+  EBAY_OAUTH_SCOPES,
   getEbayConfig,
 } from "@/lib/ebay/config";
 import {
@@ -67,7 +67,7 @@ export function buildEbayAuthorizeUrl(state: string): string {
     client_id: clientId,
     response_type: "code",
     redirect_uri: ruName,
-    scope: EBAY_FINANCES_SCOPE,
+    scope: EBAY_OAUTH_SCOPES,
     state,
   });
 
@@ -123,7 +123,7 @@ export async function getEbayAccessToken(): Promise<string> {
     new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      scope: EBAY_FINANCES_SCOPE,
+      scope: EBAY_OAUTH_SCOPES,
     }),
   );
 

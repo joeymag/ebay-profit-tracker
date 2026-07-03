@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BarChart3,
   Calculator,
   ClockAlert,
   LayoutDashboard,
@@ -41,6 +42,7 @@ const iconMap = {
   "clock-alert": ClockAlert,
   users: Users,
   trophy: Trophy,
+  "bar-chart": BarChart3,
   calculator: Calculator,
   store: Store,
   map: Map,

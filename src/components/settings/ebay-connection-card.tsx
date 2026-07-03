@@ -171,9 +171,11 @@ export function EbayConnectionCard() {
       </ul>
 
       <p className="text-sm text-muted-foreground">
-        OAuth scope:{" "}
-        <code className="text-xs">sell.finances</code> — used to pull actual
-        eBay fees per order via the Finances API.
+        OAuth scopes:{" "}
+        <code className="text-xs">sell.finances</code> (actual fees per order)
+        and <code className="text-xs">sell.analytics.readonly</code> (listing
+        impressions and views on the eBay analytics page). Reconnect if you
+        linked eBay before analytics was added.
       </p>
 
       <div className="flex flex-wrap gap-2">

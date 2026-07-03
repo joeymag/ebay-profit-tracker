@@ -1,17 +1,9 @@
 import { getEbayAccessToken } from "@/lib/ebay/auth";
 import { getEbayConfig } from "@/lib/ebay/config";
 import { buildFinancesSignatureHeaders } from "@/lib/ebay/digital-signature";
+import { EbayApiError } from "@/lib/ebay/errors";
 
-export class EbayApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly body?: string,
-  ) {
-    super(message);
-    this.name = "EbayApiError";
-  }
-}
+export { EbayApiError } from "@/lib/ebay/errors";
 
 export async function ebayFinancesFetch<T>(
   path: string,
