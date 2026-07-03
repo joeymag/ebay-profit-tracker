@@ -112,6 +112,7 @@ export function OutOfStockList({ refreshKey = 0, onSelectSku }: OutOfStockListPr
                   <TableHead className="w-16 pl-6" />
                   <TableHead>Product</TableHead>
                   <TableHead>SKU</TableHead>
+                  <TableHead className="text-right">Units sold</TableHead>
                   <TableHead className="pr-6 text-right">Available</TableHead>
                 </TableRow>
               </TableHeader>
@@ -139,6 +140,9 @@ export function OutOfStockList({ refreshKey = 0, onSelectSku }: OutOfStockListPr
                       <Badge variant="outline" className="font-mono text-sm">
                         {item.sku}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {item.unitsSoldDisplay}
                     </TableCell>
                     <TableCell className="pr-6 text-right">
                       <span className="font-semibold tabular-nums text-destructive">

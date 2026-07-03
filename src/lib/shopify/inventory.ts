@@ -5,6 +5,13 @@ import {
   shopifyAdminGraphql,
 } from "@/lib/shopify/graphql";
 import { ShopifyApiError, shopifyAdminFetchWithLink } from "@/lib/shopify/client";
+import {
+  formatUnitsSoldDisplay,
+  getUnitsSoldForSku,
+  getUnitsSoldMap,
+  parsePackSizeFromOptions,
+  type SkuSalesStats,
+} from "@/lib/orders/sku-units-sold";
 
 export type StockLocationLevel = {
   locationId: number;
@@ -22,6 +29,10 @@ export type StockSkuLookup = {
   imageUrl: string | null;
   tracked: boolean;
   locations: StockLocationLevel[];
+  unitsSold: number;
+  orderCount: number;
+  packSize: number | null;
+  unitsSoldDisplay: string;
 };
 
 export type OutOfStockItem = {
@@ -31,6 +42,10 @@ export type OutOfStockItem = {
   displayName: string;
   imageUrl: string | null;
   available: number;
+  unitsSold: number;
+  orderCount: number;
+  packSize: number | null;
+  unitsSoldDisplay: string;
 };
 
 type ShopifyProductRest = {
@@ -42,8 +57,37 @@ type ShopifyProductRest = {
     sku: string | null;
     inventory_management: string | null;
     inventory_quantity: number;
+    option1: string | null;
+    option2: string | null;
+    option3: string | null;
   }[];
 };
+
+function salesStatsForVariant(
+  sku: string,
+  salesMap: Map<string, SkuSalesStats>,
+  variant: ShopifyProductRest["variants"][number],
+) {
+  const sales = salesMap.get(sku.trim().toUpperCase()) ?? {
+    unitsSold: 0,
+    orderCount: 0,
+  };
+  const packSize = parsePackSizeFromOptions(
+    [variant.option1, variant.option2, variant.option3]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .map((value, index) => ({
+        name: `option${index + 1}`,
+        value: value.trim(),
+      })),
+  );
+
+  return {
+    unitsSold: sales.unitsSold,
+    orderCount: sales.orderCount,
+    packSize,
+    unitsSoldDisplay: formatUnitsSoldDisplay(sales.unitsSold, packSize),
+  };
+}
 
 function parseNextPageInfo(linkHeader: string | null): string | null {
   if (!linkHeader) {
@@ -69,6 +113,7 @@ export async function listOutOfStockItems(options?: {
 }): Promise<OutOfStockItem[]> {
   const maxPages = options?.maxPages ?? 40;
   const items: OutOfStockItem[] = [];
+  const salesMap = await getUnitsSoldMap();
   let pageInfo: string | null = null;
 
   for (let page = 0; page < maxPages; page += 1) {
@@ -103,6 +148,7 @@ export async function listOutOfStockItems(options?: {
               : `${product.title} — ${variant.title}`,
           imageUrl: product.image?.src ?? null,
           available: variant.inventory_quantity,
+          ...salesStatsForVariant(sku, salesMap, variant),
         });
       }
     }
@@ -125,6 +171,10 @@ const VARIANT_BY_SKU_QUERY = `
           sku
           title
           displayName
+          selectedOptions {
+            name
+            value
+          }
           product {
             title
             featuredImage {
@@ -149,6 +199,7 @@ type VariantBySkuResponse = {
         sku: string | null;
         title: string;
         displayName: string;
+        selectedOptions: { name: string; value: string }[];
         product: {
           title: string;
           featuredImage: { url: string } | null;
@@ -192,6 +243,9 @@ export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup |
     available: level.available ?? 0,
   }));
 
+  const sales = await getUnitsSoldForSku(match.sku);
+  const packSize = parsePackSizeFromOptions(match.selectedOptions ?? []);
+
   return {
     sku: match.sku,
     variantId: parseShopifyGid(match.id),
@@ -202,6 +256,10 @@ export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup |
     imageUrl: match.product.featuredImage?.url ?? null,
     tracked: match.inventoryItem.tracked,
     locations,
+    unitsSold: sales.unitsSold,
+    orderCount: sales.orderCount,
+    packSize,
+    unitsSoldDisplay: formatUnitsSoldDisplay(sales.unitsSold, packSize),
   };
 }
 

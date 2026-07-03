@@ -230,6 +230,15 @@ export function StockControlClient() {
                     Inventory tracking is off for this variant in Shopify.
                   </p>
                 ) : null}
+                <p className="text-sm text-muted-foreground">
+                  Units sold:{" "}
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {item.unitsSoldDisplay}
+                  </span>
+                  {item.orderCount > 0 ? (
+                    <span> · {item.orderCount} orders</span>
+                  ) : null}
+                </p>
               </div>
             </div>
 
