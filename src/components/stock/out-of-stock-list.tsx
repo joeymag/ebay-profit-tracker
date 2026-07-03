@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { OutOfStockItem } from "@/lib/shopify/inventory";
+import { ReorderBadge } from "@/components/stock/reorder-badge";
 
 type OutOfStockResponse =
   | { ok: true; count: number; items: OutOfStockItem[] }
@@ -73,8 +74,8 @@ export function OutOfStockList({ refreshKey = 0, onSelectSku }: OutOfStockListPr
             Out of stock
           </CardTitle>
           <CardDescription>
-            Tracked Shopify variants with zero available inventory. Click a row to
-            scan and update stock.
+            Tracked Shopify variants with zero stock, sorted by recent sales. Click a
+            row to scan and update stock — use sold counts to decide what to reorder.
           </CardDescription>
         </div>
         <Button
@@ -112,8 +113,10 @@ export function OutOfStockList({ refreshKey = 0, onSelectSku }: OutOfStockListPr
                   <TableHead className="w-16 pl-6" />
                   <TableHead>Product</TableHead>
                   <TableHead>SKU</TableHead>
-                  <TableHead className="text-right">Units sold</TableHead>
-                  <TableHead className="pr-6 text-right">Available</TableHead>
+                  <TableHead className="text-right">Sold 30d</TableHead>
+                  <TableHead className="text-right">Sold all</TableHead>
+                  <TableHead>Reorder</TableHead>
+                  <TableHead className="pr-6 text-right">In stock</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -141,8 +144,14 @@ export function OutOfStockList({ refreshKey = 0, onSelectSku }: OutOfStockListPr
                         {item.sku}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      {item.unitsSold30Days}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {item.unitsSoldDisplay}
+                      {item.unitsSold}
+                    </TableCell>
+                    <TableCell>
+                      <ReorderBadge sales={item} />
                     </TableCell>
                     <TableCell className="pr-6 text-right">
                       <span className="font-semibold tabular-nums text-destructive">

@@ -6,7 +6,7 @@ export default function StockControlPage() {
     <>
       <DashboardHeader
         title="Stock control"
-        description="Scan a SKU and update available quantity in Shopify"
+        description="Scan SKUs, check sales history, and decide what to reorder"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <StockControlClient />

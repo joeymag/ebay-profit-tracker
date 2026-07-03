@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { OutOfStockList } from "@/components/stock/out-of-stock-list";
+import { StockReorderInsight } from "@/components/stock/stock-reorder-insight";
 import type { StockSkuLookup } from "@/lib/shopify/inventory";
 
 type LookupResponse =
@@ -144,6 +145,10 @@ export function StockControlClient() {
   }
 
   const selectedLocation = item?.locations.find((l) => l.locationId === locationId);
+  const availableNow =
+    selectedLocation?.available ??
+    item?.locations.reduce((sum, level) => sum + level.available, 0) ??
+    0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -230,17 +235,10 @@ export function StockControlClient() {
                     Inventory tracking is off for this variant in Shopify.
                   </p>
                 ) : null}
-                <p className="text-sm text-muted-foreground">
-                  Units sold:{" "}
-                  <span className="font-semibold tabular-nums text-foreground">
-                    {item.unitsSoldDisplay}
-                  </span>
-                  {item.orderCount > 0 ? (
-                    <span> · {item.orderCount} orders</span>
-                  ) : null}
-                </p>
               </div>
             </div>
+
+            <StockReorderInsight available={availableNow} sales={item} />
 
             {item.locations.length > 1 ? (
               <div className="space-y-2">

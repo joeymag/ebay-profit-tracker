@@ -6,12 +6,15 @@ import {
 } from "@/lib/shopify/graphql";
 import { ShopifyApiError, shopifyAdminFetchWithLink } from "@/lib/shopify/client";
 import {
-  formatUnitsSoldDisplay,
+  attachSalesInsight,
   getUnitsSoldForSku,
   getUnitsSoldMap,
   parsePackSizeFromOptions,
   type SkuSalesStats,
+  type StockSalesInsight,
 } from "@/lib/orders/sku-units-sold";
+
+export type { StockSalesInsight };
 
 export type StockLocationLevel = {
   locationId: number;
@@ -29,11 +32,7 @@ export type StockSkuLookup = {
   imageUrl: string | null;
   tracked: boolean;
   locations: StockLocationLevel[];
-  unitsSold: number;
-  orderCount: number;
-  packSize: number | null;
-  unitsSoldDisplay: string;
-};
+} & StockSalesInsight;
 
 export type OutOfStockItem = {
   sku: string;
@@ -42,11 +41,7 @@ export type OutOfStockItem = {
   displayName: string;
   imageUrl: string | null;
   available: number;
-  unitsSold: number;
-  orderCount: number;
-  packSize: number | null;
-  unitsSoldDisplay: string;
-};
+} & StockSalesInsight;
 
 type ShopifyProductRest = {
   id: number;
@@ -71,6 +66,9 @@ function salesStatsForVariant(
   const sales = salesMap.get(sku.trim().toUpperCase()) ?? {
     unitsSold: 0,
     orderCount: 0,
+    unitsSold30Days: 0,
+    unitsSold90Days: 0,
+    orderCount30Days: 0,
   };
   const packSize = parsePackSizeFromOptions(
     [variant.option1, variant.option2, variant.option3]
@@ -81,12 +79,7 @@ function salesStatsForVariant(
       })),
   );
 
-  return {
-    unitsSold: sales.unitsSold,
-    orderCount: sales.orderCount,
-    packSize,
-    unitsSoldDisplay: formatUnitsSoldDisplay(sales.unitsSold, packSize),
-  };
+  return attachSalesInsight(variant.inventory_quantity, sales, packSize);
 }
 
 function parseNextPageInfo(linkHeader: string | null): string | null {
@@ -159,7 +152,12 @@ export async function listOutOfStockItems(options?: {
     }
   }
 
-  return items.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return items.sort(
+    (a, b) =>
+      b.unitsSold30Days - a.unitsSold30Days ||
+      b.unitsSold - a.unitsSold ||
+      a.displayName.localeCompare(b.displayName),
+  );
 }
 
 const VARIANT_BY_SKU_QUERY = `
@@ -245,6 +243,7 @@ export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup |
 
   const sales = await getUnitsSoldForSku(match.sku);
   const packSize = parsePackSizeFromOptions(match.selectedOptions ?? []);
+  const available = locations.reduce((sum, level) => sum + level.available, 0);
 
   return {
     sku: match.sku,
@@ -256,10 +255,7 @@ export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup |
     imageUrl: match.product.featuredImage?.url ?? null,
     tracked: match.inventoryItem.tracked,
     locations,
-    unitsSold: sales.unitsSold,
-    orderCount: sales.orderCount,
-    packSize,
-    unitsSoldDisplay: formatUnitsSoldDisplay(sales.unitsSold, packSize),
+    ...attachSalesInsight(available, sales, packSize),
   };
 }
 
