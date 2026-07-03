@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { OutOfStockList } from "@/components/stock/out-of-stock-list";
 import type { StockSkuLookup } from "@/lib/shopify/inventory";
 
 type LookupResponse =
@@ -36,6 +37,7 @@ export function StockControlClient() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [outOfStockRefreshKey, setOutOfStockRefreshKey] = useState(0);
 
   const focusSkuInput = useCallback(() => {
     requestAnimationFrame(() => skuInputRef.current?.focus());
@@ -125,6 +127,7 @@ export function StockControlClient() {
       setSkuInput("");
       setItem(null);
       setLocationId(null);
+      setOutOfStockRefreshKey((key) => key + 1);
       focusSkuInput();
     } catch {
       setError("Could not update stock.");
@@ -323,6 +326,14 @@ export function StockControlClient() {
           </CardContent>
         </Card>
       ) : null}
+
+      <OutOfStockList
+        refreshKey={outOfStockRefreshKey}
+        onSelectSku={(sku) => {
+          setSkuInput(sku);
+          void lookupSku(sku);
+        }}
+      />
     </div>
   );
 }

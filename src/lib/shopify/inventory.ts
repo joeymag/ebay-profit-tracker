@@ -4,7 +4,7 @@ import {
   setShopifyInventoryAvailable,
   shopifyAdminGraphql,
 } from "@/lib/shopify/graphql";
-import { ShopifyApiError } from "@/lib/shopify/client";
+import { ShopifyApiError, shopifyAdminFetchWithLink } from "@/lib/shopify/client";
 
 export type StockLocationLevel = {
   locationId: number;
@@ -23,6 +23,98 @@ export type StockSkuLookup = {
   tracked: boolean;
   locations: StockLocationLevel[];
 };
+
+export type OutOfStockItem = {
+  sku: string;
+  productTitle: string;
+  variantTitle: string;
+  displayName: string;
+  imageUrl: string | null;
+  available: number;
+};
+
+type ShopifyProductRest = {
+  id: number;
+  title: string;
+  image?: { src: string } | null;
+  variants: {
+    title: string;
+    sku: string | null;
+    inventory_management: string | null;
+    inventory_quantity: number;
+  }[];
+};
+
+function parseNextPageInfo(linkHeader: string | null): string | null {
+  if (!linkHeader) {
+    return null;
+  }
+
+  for (const part of linkHeader.split(",")) {
+    const section = part.trim();
+    if (section.endsWith('rel="next"')) {
+      const match = section.match(/page_info=([^&>]+)/);
+      if (match) {
+        return decodeURIComponent(match[1]);
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Tracked Shopify variants with zero available inventory. */
+export async function listOutOfStockItems(options?: {
+  maxPages?: number;
+}): Promise<OutOfStockItem[]> {
+  const maxPages = options?.maxPages ?? 40;
+  const items: OutOfStockItem[] = [];
+  let pageInfo: string | null = null;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const path = pageInfo
+      ? `/products.json?limit=250&fields=id,title,image,variants&page_info=${pageInfo}`
+      : "/products.json?limit=250&fields=id,title,image,variants";
+
+    const { data, linkHeader } = await shopifyAdminFetchWithLink<{
+      products: ShopifyProductRest[];
+    }>(path);
+
+    for (const product of data.products ?? []) {
+      for (const variant of product.variants ?? []) {
+        const sku = variant.sku?.trim();
+        if (!sku) {
+          continue;
+        }
+        if (variant.inventory_management !== "shopify") {
+          continue;
+        }
+        if (variant.inventory_quantity > 0) {
+          continue;
+        }
+
+        items.push({
+          sku,
+          productTitle: product.title,
+          variantTitle: variant.title,
+          displayName:
+            variant.title === "Default Title"
+              ? product.title
+              : `${product.title} — ${variant.title}`,
+          imageUrl: product.image?.src ?? null,
+          available: variant.inventory_quantity,
+        });
+      }
+    }
+
+    pageInfo = parseNextPageInfo(linkHeader);
+    if (!pageInfo) {
+      break;
+    }
+  }
+
+  return items.sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
 
 const VARIANT_BY_SKU_QUERY = `
   query VariantBySku($query: String!) {
