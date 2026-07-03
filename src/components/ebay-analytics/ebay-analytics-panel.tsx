@@ -265,9 +265,12 @@ export function EbayAnalyticsPanel() {
               </TableHeader>
               <TableBody>
                 {report.listings.map((row) => (
-                  <TableRow key={row.listingId}>
+                  <TableRow key={row.listingId} className="cursor-pointer">
                     <TableCell className="max-w-sm">
-                      <div className="flex gap-3">
+                      <Link
+                        href={`/ebay-analytics/${encodeURIComponent(row.listingId)}`}
+                        className="flex gap-3 rounded-lg transition-colors hover:bg-muted/40"
+                      >
                         <LineItemImage
                           src={row.imageUrl}
                           alt={row.title ?? row.listingId}
@@ -300,7 +303,7 @@ export function EbayAnalyticsPanel() {
                             <ExternalLink className="size-3" />
                           </a>
                         </div>
-                      </div>
+                      </Link>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatPrice(row.price, row.currency)}

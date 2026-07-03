@@ -4,13 +4,14 @@ import {
   parseDateRange,
   type DateRangeKey,
 } from "@/lib/date-range";
+import { formatAnalyticsDateRange } from "@/lib/ebay/analytics-date-range";
 import { ebayAnalyticsFetch } from "@/lib/ebay/analytics-client";
 import { getEbayConfig } from "@/lib/ebay/config";
 import type { ListingTrafficReport, ListingTrafficRow } from "@/lib/ebay/traffic-report-types";
 
 export type { ListingTrafficReport, ListingTrafficRow } from "@/lib/ebay/traffic-report-types";
 
-const TRAFFIC_REPORT_METRICS = [
+export const TRAFFIC_REPORT_METRICS = [
   "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE",
   "LISTING_IMPRESSION_TOTAL",
   "TOTAL_IMPRESSION_TOTAL",
@@ -45,29 +46,6 @@ type TrafficReportResponse = {
     metricValues?: ReportValue[];
   }>;
 };
-
-function getLondonUtcOffset(ymd: string): string {
-  const noonUtc = new Date(`${ymd}T12:00:00Z`);
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    timeZoneName: "longOffset",
-  }).formatToParts(noonUtc);
-
-  const offsetPart = parts.find((part) => part.type === "timeZoneName")?.value;
-  const match = offsetPart?.match(/GMT([+-]\d{1,2})(?::(\d{2}))?/);
-  if (!match) {
-    return "+00:00";
-  }
-
-  const hours = match[1]!.padStart(3, match[1]!.startsWith("-") ? "-0" : "+0");
-  const minutes = match[2] ?? "00";
-  return `${hours}:${minutes}`;
-}
-
-function formatAnalyticsDateRange(startYmd: string, endYmd: string): string {
-  const offset = getLondonUtcOffset(startYmd);
-  return `[${startYmd}T00:00:00.000${offset}..${endYmd}T00:00:00.000${offset}]`;
-}
 
 function resolveAnalyticsDateBounds(range: DateRangeKey): {
   startYmd: string;

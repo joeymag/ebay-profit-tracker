@@ -172,10 +172,10 @@ export function EbayConnectionCard() {
 
       <p className="text-sm text-muted-foreground">
         OAuth scopes:{" "}
-        <code className="text-xs">sell.finances</code> (actual fees per order)
-        and <code className="text-xs">sell.analytics.readonly</code> (listing
-        impressions and views on the eBay analytics page). Reconnect if you
-        linked eBay before analytics was added.
+        <code className="text-xs">sell.finances</code>,{" "}
+        <code className="text-xs">sell.analytics.readonly</code>, and{" "}
+        <code className="text-xs">sell.inventory</code> (update listing titles).
+        Reconnect if you linked eBay before a scope was added.
       </p>
 
       <div className="flex flex-wrap gap-2">

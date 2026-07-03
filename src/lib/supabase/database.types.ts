@@ -215,6 +215,38 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["ebay_oauth"]["Insert"]>;
         Relationships: [];
       };
+      ebay_listing_title_periods: {
+        Row: {
+          id: string;
+          listing_id: string;
+          title: string;
+          sku: string | null;
+          image_url: string | null;
+          notes: string | null;
+          applied_to_ebay: boolean;
+          ebay_update_error: string | null;
+          started_at: string;
+          ended_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          listing_id: string;
+          title: string;
+          sku?: string | null;
+          image_url?: string | null;
+          notes?: string | null;
+          applied_to_ebay?: boolean;
+          ebay_update_error?: string | null;
+          started_at?: string;
+          ended_at?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ebay_listing_title_periods"]["Insert"]
+        >;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
