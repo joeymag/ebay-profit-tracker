@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { navGroups, navItems } from "@/config/site";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import {
   Sidebar,
   SidebarContent,
@@ -109,9 +110,12 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/60">
-        <p className="px-2 text-xs leading-relaxed text-muted-foreground group-data-[collapsible=icon]:hidden">
-          eBay orders via Shopify · standalone app
-        </p>
+        <div className="space-y-2 px-2 py-2 group-data-[collapsible=icon]:hidden">
+          <SignOutButton />
+          <p className="px-2 text-xs leading-relaxed text-muted-foreground">
+            eBay orders via Shopify · standalone app
+          </p>
+        </div>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

@@ -9,6 +9,7 @@ import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setu
 import { ShopifyConnectionTest } from "@/components/settings/shopify-connection-test";
 import { getStorageBackend } from "@/lib/orders/store";
 import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
+import { getAuthUser } from "@/lib/supabase/server-auth";
 import {
   Card,
   CardContent,
@@ -20,6 +21,7 @@ import {
 export default async function SettingsPage() {
   const storageBackend = getStorageBackend();
   const autoSyncStatus = await getAutoSyncStatus();
+  const user = await getAuthUser();
 
   return (
     <>
@@ -28,6 +30,33 @@ export default async function SettingsPage() {
         description="Shopify, eBay, and database"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
+        <Card className="surface-card">
+          <CardHeader>
+            <CardTitle>App sign-in</CardTitle>
+            <CardDescription>
+              The dashboard is protected with Supabase Auth. Create users in your
+              Supabase project under{" "}
+              <strong>Authentication → Users → Add user</strong> (email +
+              password). Enable the Email provider under Authentication →
+              Providers. Add redirect URL{" "}
+              <code className="text-xs">https://your-domain/auth/callback</code>{" "}
+              (and{" "}
+              <code className="text-xs">http://localhost:3000/auth/callback</code>{" "}
+              for local dev).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            {user?.email ? (
+              <p>
+                Signed in as{" "}
+                <span className="font-medium text-foreground">{user.email}</span>
+              </p>
+            ) : (
+              <p>Not signed in.</p>
+            )}
+          </CardContent>
+        </Card>
+
         <Card className="surface-card">
           <CardHeader>
             <CardTitle>Database</CardTitle>
