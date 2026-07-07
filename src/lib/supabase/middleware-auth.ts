@@ -6,6 +6,10 @@ import {
   isPublicApiPath,
   isPublicPath,
 } from "@/lib/auth/public-paths";
+import {
+  isShopifyEmbeddedRequest,
+  supabaseCookieOptionsForEmbed,
+} from "@/lib/shopify/embed";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -13,6 +17,9 @@ export async function updateSession(request: NextRequest) {
   if (!isAuthConfigured()) {
     return supabaseResponse;
   }
+
+  const embedded = isShopifyEmbeddedRequest(request);
+  const embedCookieOptions = supabaseCookieOptionsForEmbed(embedded);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,7 +35,10 @@ export async function updateSession(request: NextRequest) {
           }
           supabaseResponse = NextResponse.next({ request });
           for (const { name, value, options } of cookiesToSet) {
-            supabaseResponse.cookies.set(name, value, options);
+            supabaseResponse.cookies.set(name, value, {
+              ...options,
+              ...embedCookieOptions,
+            });
           }
         },
       },

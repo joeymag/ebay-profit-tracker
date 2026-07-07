@@ -6,6 +6,7 @@ import { AutoSyncStatusCard } from "@/components/orders/auto-sync-status-card";
 import { EbayConnectionCard } from "@/components/settings/ebay-connection-card";
 import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button";
 import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
+import { ShopifyAdminAppCard } from "@/components/settings/shopify-admin-app-card";
 import { ShopifyConnectionTest } from "@/components/settings/shopify-connection-test";
 import { getStorageBackend } from "@/lib/orders/store";
 import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
@@ -69,6 +70,8 @@ export default async function SettingsPage() {
             <DatabaseStatus backend={storageBackend} />
           </CardContent>
         </Card>
+
+        <ShopifyAdminAppCard />
 
         <Card className="surface-card">
           <CardHeader>

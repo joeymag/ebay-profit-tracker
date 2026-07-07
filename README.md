@@ -82,3 +82,16 @@ Alternatively, set `EBAY_REFRESH_TOKEN` before connecting if you already have on
 3. Install the app on your store
 
 See **Settings** in the app to test the Shopify connection.
+
+### Open inside Shopify admin (fix “Example Domain”)
+
+If the app appears under **Apps** in Shopify admin but shows **Example Domain**, the Partners app URL is still the default placeholder.
+
+1. Partners → your app → **Configuration** → **URLs**
+2. Set **App URL** to your deployed URL, e.g. `https://ebay-profit-tracker-peach.vercel.app`
+3. Add the same URL under **Allowed redirection URL(s)**
+4. Save and reload the app in Shopify admin
+
+Optional: set `NEXT_PUBLIC_APP_URL` in Vercel so Settings shows the exact URL to paste.
+
+If sign-in fails inside the Shopify iframe, use **Open in new tab** (banner at the top) or disable **Embed app in Shopify admin** in Partners.

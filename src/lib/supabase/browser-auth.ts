@@ -12,5 +12,12 @@ export function createSupabaseBrowserAuthClient() {
     );
   }
 
-  return createBrowserClient<Database>(url, key);
+  const embedded =
+    typeof window !== "undefined" && window.self !== window.top;
+
+  return createBrowserClient<Database>(url, key, {
+    cookieOptions: embedded
+      ? { sameSite: "none", secure: true }
+      : undefined,
+  });
 }
