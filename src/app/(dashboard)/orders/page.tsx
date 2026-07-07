@@ -6,6 +6,7 @@ import { DateRangeFilterBar } from "@/components/filters/date-range-filter-bar";
 import { ProductFilterBar } from "@/components/filters/product-filter-bar";
 import { OrdersPageClient } from "@/components/orders/orders-page-client";
 import { AutoSyncStatusCard } from "@/components/orders/auto-sync-status-card";
+import { ExportOrdersCsvButton } from "@/components/orders/export-orders-csv-button";
 import { SyncOrdersButton } from "@/components/orders/sync-orders-button";
 import {
   Card,
@@ -105,6 +106,15 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">Product</p>
             <ProductFilterBar />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-4">
+            <p className="text-sm text-muted-foreground">
+              Download orders with SKU and costs for the current filters (opens in
+              Excel / Google Sheets).
+            </p>
+            <Suspense fallback={null}>
+              <ExportOrdersCsvButton orderCount={orders.length} />
+            </Suspense>
           </div>
         </div>
 
