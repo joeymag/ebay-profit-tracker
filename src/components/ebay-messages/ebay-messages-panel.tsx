@@ -26,6 +26,7 @@ import {
   getConversationPreviewText,
   isConversationUnread,
 } from "@/lib/ebay/message-types";
+import { isSellerMessage } from "@/lib/ebay/message-normalize";
 
 type ApiError = {
   ok: false;
@@ -35,7 +36,11 @@ type ApiError = {
 };
 
 type ConversationsResponse =
-  | { ok: true; conversations?: EbayConversationSummary[] }
+  | {
+      ok: true;
+      conversations?: EbayConversationSummary[];
+      sellerUsername?: string | null;
+    }
   | ApiError;
 
 type ConversationResponse =
@@ -43,8 +48,10 @@ type ConversationResponse =
       ok: true;
       conversation?: {
         conversationId?: string;
+        otherPartyUsername?: string;
         messages?: EbayConversationMessage[];
       };
+      sellerUsername?: string | null;
     }
   | ApiError;
 
@@ -90,6 +97,7 @@ export function EbayMessagesPanel() {
   const [draft, setDraft] = useState("");
   const [newUsername, setNewUsername] = useState(composeUsername);
   const [showCompose, setShowCompose] = useState(Boolean(composeUsername));
+  const [sellerUsername, setSellerUsername] = useState<string | null>(null);
 
   const selectedConversation = useMemo(
     () =>
@@ -100,7 +108,9 @@ export function EbayMessagesPanel() {
   );
 
   const threadTitle = selectedConversation
-    ? getConversationPartyUsername(selectedConversation) ?? "Conversation"
+    ? getConversationPartyUsername(selectedConversation, sellerUsername) ??
+      selectedConversation.otherPartyUsername ??
+      "Conversation"
     : showCompose
       ? newUsername.trim() || "New message"
       : "Select a conversation";
@@ -127,6 +137,9 @@ export function EbayMessagesPanel() {
       }
 
       setConversations(data.conversations ?? []);
+      if (data.sellerUsername) {
+        setSellerUsername(data.sellerUsername);
+      }
     } catch {
       setConversations([]);
       setListError({
@@ -138,40 +151,53 @@ export function EbayMessagesPanel() {
     }
   }, [filter]);
 
-  const loadThread = useCallback(async (conversationId: string) => {
-    setLoadingThread(true);
-    setThreadError(null);
+  const loadThread = useCallback(
+    async (conversationId: string, seller?: string | null) => {
+      setLoadingThread(true);
+      setThreadError(null);
 
-    try {
-      const response = await fetch(
-        `/api/ebay/messages/conversations/${encodeURIComponent(conversationId)}`,
-      );
-      const data = (await response.json()) as ConversationResponse;
+      try {
+        const params = new URLSearchParams();
+        if (seller) {
+          params.set("seller", seller);
+        }
 
-      if (!data.ok) {
+        const query = params.toString();
+        const response = await fetch(
+          `/api/ebay/messages/conversations/${encodeURIComponent(conversationId)}${query ? `?${query}` : ""}`,
+        );
+        const data = (await response.json()) as ConversationResponse;
+
+        if (!data.ok) {
+          setMessages([]);
+          setThreadError(data.error);
+          return;
+        }
+
+        if (data.sellerUsername) {
+          setSellerUsername(data.sellerUsername);
+        }
+
+        const threadMessages = [...(data.conversation?.messages ?? [])].sort(
+          (a, b) =>
+            new Date(a.creationDate ?? 0).getTime() -
+            new Date(b.creationDate ?? 0).getTime(),
+        );
+        setMessages(threadMessages);
+
+        await fetch(
+          `/api/ebay/messages/conversations/${encodeURIComponent(conversationId)}`,
+          { method: "POST" },
+        );
+      } catch {
         setMessages([]);
-        setThreadError(data.error);
-        return;
+        setThreadError("Could not load messages.");
+      } finally {
+        setLoadingThread(false);
       }
-
-      const threadMessages = [...(data.conversation?.messages ?? [])].sort(
-        (a, b) =>
-          new Date(a.creationDate ?? 0).getTime() -
-          new Date(b.creationDate ?? 0).getTime(),
-      );
-      setMessages(threadMessages);
-
-      await fetch(
-        `/api/ebay/messages/conversations/${encodeURIComponent(conversationId)}`,
-        { method: "POST" },
-      );
-    } catch {
-      setMessages([]);
-      setThreadError("Could not load messages.");
-    } finally {
-      setLoadingThread(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     void loadConversations();
@@ -187,11 +213,11 @@ export function EbayMessagesPanel() {
   useEffect(() => {
     if (selectedConversationId) {
       setShowCompose(false);
-      void loadThread(selectedConversationId);
+      void loadThread(selectedConversationId, sellerUsername);
     } else {
       setMessages([]);
     }
-  }, [selectedConversationId, loadThread]);
+  }, [selectedConversationId, loadThread, sellerUsername]);
 
   function openConversation(conversationId: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -371,7 +397,10 @@ export function EbayMessagesPanel() {
                   return null;
                 }
 
-                const username = getConversationPartyUsername(conversation);
+                const username = getConversationPartyUsername(
+                  conversation,
+                  sellerUsername,
+                );
                 const unread = isConversationUnread(conversation);
                 const active = conversationId === selectedConversationId;
 
@@ -386,7 +415,9 @@ export function EbayMessagesPanel() {
                       )}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <p className="font-medium">{username ?? "eBay member"}</p>
+                        <p className="font-semibold text-foreground">
+                          {username ?? "eBay member"}
+                        </p>
                         {unread ? <Badge>New</Badge> : null}
                       </div>
                       <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
@@ -435,7 +466,7 @@ export function EbayMessagesPanel() {
             </div>
           ) : null}
 
-          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          <div className="flex min-h-[420px] flex-1 flex-col gap-4 overflow-y-auto bg-muted/10 px-4 py-4">
             {loadingThread ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
@@ -448,22 +479,67 @@ export function EbayMessagesPanel() {
                   : "Select a conversation from the inbox."}
               </p>
             ) : (
-              messages.map((message) => (
-                <div
-                  key={message.messageId ?? `${message.creationDate}-${message.messageText}`}
-                  className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span className="font-mono">
-                      {message.senderUsername ?? "Unknown sender"}
-                    </span>
-                    <span>{formatMessageDate(message.creationDate)}</span>
+              messages.map((message) => {
+                const outgoing = isSellerMessage(message, sellerUsername);
+                const body =
+                  message.messageText?.trim() ||
+                  message.subject?.trim() ||
+                  "";
+
+                return (
+                  <div
+                    key={
+                      message.messageId ??
+                      `${message.creationDate}-${message.senderUsername}-${body.slice(0, 24)}`
+                    }
+                    className={cn(
+                      "flex w-full",
+                      outgoing ? "justify-end" : "justify-start",
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "max-w-[min(100%,640px)] rounded-2xl px-4 py-3 shadow-sm",
+                        outgoing
+                          ? "bg-primary text-primary-foreground"
+                          : "border border-border/60 bg-card text-card-foreground",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "flex flex-wrap items-center justify-between gap-2 text-xs",
+                          outgoing
+                            ? "text-primary-foreground/80"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        <span className="font-mono font-medium">
+                          {message.senderUsername ?? "Unknown sender"}
+                        </span>
+                        <span>{formatMessageDate(message.creationDate)}</span>
+                      </div>
+                      {message.subject ? (
+                        <p
+                          className={cn(
+                            "mt-2 text-sm font-semibold",
+                            outgoing ? "text-primary-foreground" : "text-foreground",
+                          )}
+                        >
+                          {message.subject}
+                        </p>
+                      ) : null}
+                      <p
+                        className={cn(
+                          "mt-2 whitespace-pre-wrap text-base leading-relaxed",
+                          outgoing ? "text-primary-foreground" : "text-foreground",
+                        )}
+                      >
+                        {body || "(Empty message)"}
+                      </p>
+                    </div>
                   </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm">
-                    {message.messageText ?? ""}
-                  </p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 

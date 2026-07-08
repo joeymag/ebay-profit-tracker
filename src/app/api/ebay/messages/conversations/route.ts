@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getEbayConfig } from "@/lib/ebay/config";
-import { listEbayConversations } from "@/lib/ebay/messages";
+import { listEbayConversationsNormalized } from "@/lib/ebay/messages";
 import type { EbayConversationStatus } from "@/lib/ebay/message-types";
 import { ebayApiRouteErrorResponse } from "@/lib/ebay/route-response";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
   const offset = Number(url.searchParams.get("offset") ?? "0");
 
   try {
-    const data = await listEbayConversations({
+    const data = await listEbayConversationsNormalized({
       conversationStatus: conversationStatus ?? undefined,
       otherPartyUsername: otherPartyUsername ?? undefined,
       limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 50,

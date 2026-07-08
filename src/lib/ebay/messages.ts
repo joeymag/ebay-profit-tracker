@@ -1,4 +1,10 @@
 import { ebayMessageFetch } from "@/lib/ebay/message-client";
+import {
+  getConfiguredSellerUsername,
+  inferSellerUsername,
+  normalizeConversationDetail,
+  normalizeConversations,
+} from "@/lib/ebay/message-normalize";
 import type {
   EbayConversationDetailResponse,
   EbayConversationStatus,
@@ -44,6 +50,41 @@ export async function listEbayConversations(
   return ebayMessageFetch<EbayConversationsResponse>(
     `/conversation?${params.toString()}`,
   );
+}
+
+export async function listEbayConversationsNormalized(
+  options: ListConversationsOptions = {},
+) {
+  const response = await listEbayConversations(options);
+  const configuredSeller = getConfiguredSellerUsername();
+  let conversations = normalizeConversations(
+    response.conversations,
+    configuredSeller,
+  );
+  const sellerUsername =
+    configuredSeller ?? inferSellerUsername(conversations);
+
+  if (!configuredSeller && sellerUsername) {
+    conversations = normalizeConversations(
+      response.conversations,
+      sellerUsername,
+    );
+  }
+
+  return {
+    conversations,
+    sellerUsername,
+    total: response.total,
+  };
+}
+
+export async function getEbayConversationNormalized(
+  conversationId: string,
+  options: GetConversationOptions = {},
+  sellerUsername?: string | null,
+) {
+  const response = await getEbayConversation(conversationId, options);
+  return normalizeConversationDetail(response, sellerUsername);
 }
 
 export async function getEbayConversation(

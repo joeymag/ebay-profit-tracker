@@ -1,3 +1,5 @@
+import { pickBuyerUsername } from "@/lib/ebay/message-normalize";
+
 export type EbayConversationType = "FROM_MEMBERS" | "FROM_EBAY";
 
 export type EbayConversationStatus =
@@ -16,7 +18,9 @@ export type EbayMessagePreview = {
   messageId?: string;
   creationDate?: string;
   senderUsername?: string;
+  recipientUsername?: string;
   read?: boolean;
+  subject?: string;
 };
 
 export type EbayConversationSummary = {
@@ -29,6 +33,7 @@ export type EbayConversationSummary = {
   latestMessage?: EbayMessagePreview;
   lastMessage?: EbayMessagePreview;
   messagePreview?: EbayMessagePreview;
+  messages?: EbayConversationMessage[];
   reference?: {
     referenceType?: string;
     referenceId?: string;
@@ -38,6 +43,7 @@ export type EbayConversationSummary = {
 export type EbayConversationMessage = {
   messageId?: string;
   messageText?: string;
+  subject?: string;
   creationDate?: string;
   senderUsername?: string;
   recipientUsername?: string;
@@ -71,10 +77,21 @@ export type EbaySendMessageResponse = {
 
 export function getConversationPartyUsername(
   conversation: EbayConversationSummary,
+  sellerUsername?: string | null,
 ): string | null {
   return (
     conversation.otherPartyUsername?.trim() ||
     conversation.otherParty?.username?.trim() ||
+    pickBuyerUsername(
+      conversation.latestMessage?.senderUsername,
+      conversation.latestMessage?.recipientUsername,
+      sellerUsername,
+    ) ||
+    pickBuyerUsername(
+      conversation.lastMessage?.senderUsername,
+      conversation.lastMessage?.recipientUsername,
+      sellerUsername,
+    ) ||
     null
   );
 }
@@ -87,7 +104,7 @@ export function getConversationPreviewText(
     conversation.lastMessage ??
     conversation.messagePreview;
 
-  return preview?.messageText?.trim() || "No preview";
+  return preview?.messageText?.trim() || preview?.subject?.trim() || "No preview";
 }
 
 export function getConversationPreviewDate(

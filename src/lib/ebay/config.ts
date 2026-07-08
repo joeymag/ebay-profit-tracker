@@ -56,6 +56,7 @@ export function getEbayConfig() {
       : "https://api.ebay.com/commerce/message/v1",
     marketplaceId:
       process.env.EBAY_MARKETPLACE?.trim().toUpperCase() || "EBAY_GB",
+    sellerUsername: process.env.EBAY_SELLER_USERNAME?.trim() || null,
     keyManagementBaseUrl: isSandbox
       ? "https://apiz.sandbox.ebay.com/developer/key_management/v1"
       : "https://apiz.ebay.com/developer/key_management/v1",

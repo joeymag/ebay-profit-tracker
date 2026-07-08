@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getEbayConfig } from "@/lib/ebay/config";
-import { getEbayConversation, markEbayConversationRead } from "@/lib/ebay/messages";
+import { getEbayConversationNormalized, markEbayConversationRead } from "@/lib/ebay/messages";
 import { ebayApiRouteErrorResponse } from "@/lib/ebay/route-response";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
 
@@ -36,13 +36,22 @@ export async function GET(request: Request, context: RouteContext) {
   const limit = Number(url.searchParams.get("limit") ?? "50");
   const offset = Number(url.searchParams.get("offset") ?? "0");
 
-  try {
-    const conversation = await getEbayConversation(conversationId, {
-      limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 50,
-      offset: Number.isFinite(offset) ? Math.max(offset, 0) : 0,
-    });
+  const sellerUsername =
+    url.searchParams.get("seller")?.trim() ||
+    getEbayConfig().sellerUsername ||
+    null;
 
-    return NextResponse.json({ ok: true, conversation });
+  try {
+    const conversation = await getEbayConversationNormalized(
+      conversationId,
+      {
+        limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 50,
+        offset: Number.isFinite(offset) ? Math.max(offset, 0) : 0,
+      },
+      sellerUsername,
+    );
+
+    return NextResponse.json({ ok: true, conversation, sellerUsername });
   } catch (error) {
     return ebayApiRouteErrorResponse(error, {
       scopeMessage:
