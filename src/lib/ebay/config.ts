@@ -9,6 +9,9 @@ export const EBAY_ANALYTICS_SCOPE =
 export const EBAY_INVENTORY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.inventory";
 
+export const EBAY_MESSAGE_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/commerce.message";
+
 export const EBAY_APPLICATION_SCOPE = "https://api.ebay.com/oauth/api_scope";
 
 /** OAuth scopes requested when connecting eBay (space-separated). */
@@ -16,6 +19,7 @@ export const EBAY_OAUTH_SCOPES = [
   EBAY_FINANCES_SCOPE,
   EBAY_ANALYTICS_SCOPE,
   EBAY_INVENTORY_SCOPE,
+  EBAY_MESSAGE_SCOPE,
 ].join(" ");
 
 export function getEbayConfig() {
@@ -47,6 +51,9 @@ export function getEbayConfig() {
     analyticsBaseUrl: isSandbox
       ? "https://api.sandbox.ebay.com/sell/analytics/v1"
       : "https://api.ebay.com/sell/analytics/v1",
+    messageBaseUrl: isSandbox
+      ? "https://api.sandbox.ebay.com/commerce/message/v1"
+      : "https://api.ebay.com/commerce/message/v1",
     marketplaceId:
       process.env.EBAY_MARKETPLACE?.trim().toUpperCase() || "EBAY_GB",
     keyManagementBaseUrl: isSandbox

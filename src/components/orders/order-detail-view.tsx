@@ -242,7 +242,13 @@ export function OrderDetailView({
                 </p>
                 {ebayUsername ? (
                   <p className="mt-1 font-mono text-sm text-muted-foreground">
-                    eBay: {ebayUsername}
+                    eBay: {ebayUsername}{" "}
+                    <Link
+                      href={`/ebay-messages?user=${encodeURIComponent(ebayUsername)}`}
+                      className="font-sans text-primary hover:underline"
+                    >
+                      Message buyer
+                    </Link>
                   </p>
                 ) : null}
                 {isEbay && order.ebayOrderId ? (

@@ -173,8 +173,9 @@ export function EbayConnectionCard() {
       <p className="text-sm text-muted-foreground">
         OAuth scopes:{" "}
         <code className="text-xs">sell.finances</code>,{" "}
-        <code className="text-xs">sell.analytics.readonly</code>, and{" "}
-        <code className="text-xs">sell.inventory</code> (update listing titles).
+        <code className="text-xs">sell.analytics.readonly</code>,{" "}
+        <code className="text-xs">sell.inventory</code>, and{" "}
+        <code className="text-xs">commerce.message</code> (buyer messages).
         Reconnect if you linked eBay before a scope was added.
       </p>
 
