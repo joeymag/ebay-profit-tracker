@@ -25,7 +25,6 @@ import {
 import { isOrderCostsIncomplete, getOrderCostFieldStatus } from "@/lib/orders/cost-completeness";
 import {
   EbayFeeCell,
-  FeePercentCell,
   ProductCostCell,
 } from "@/components/orders/missing-value-cell";
 import { getOrderProductDisplay } from "@/lib/orders/product-filter";
@@ -319,28 +318,22 @@ export function OrdersTable({
                           : order.ebayFeesActual
                         : null
                     }
-                    rate={order.ebayFeeRate}
+                    rate={null}
                     currency={order.currency}
                     missing={costStatus.ebayFeeMissing}
                     notApplicable={!costStatus.isEbay}
                   />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {hasActualEbayFees ? (
-                    <EbayFeeCell
-                      actualAmount={order.ebayAdsFeeActual ?? 0}
-                      rate={null}
-                      currency={order.currency}
-                      missing={false}
-                      notApplicable={!costStatus.isEbay}
-                    />
-                  ) : (
-                    <FeePercentCell
-                      rate={order.ebayAdsFeeRate}
-                      missing={costStatus.ebayAdsFeeMissing}
-                      notApplicable={!costStatus.isEbay}
-                    />
-                  )}
+                  <EbayFeeCell
+                    actualAmount={
+                      hasActualEbayFees ? (order.ebayAdsFeeActual ?? 0) : null
+                    }
+                    rate={null}
+                    currency={order.currency}
+                    missing={costStatus.isEbay && !hasActualEbayFees}
+                    notApplicable={!costStatus.isEbay}
+                  />
                 </TableCell>
                 <TableCell className="text-right">
                   <MoneyCell

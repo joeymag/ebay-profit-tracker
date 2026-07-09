@@ -26,19 +26,13 @@ export function getOrderCostFieldStatus(
   const isEbay = getSalesChannel(order.tags) === "eBay";
   const hasActualEbayFees =
     order.ebayFeesActual != null && order.ebayFeesActual >= 0;
-  const hasActualEbayAdsFees =
-    order.ebayAdsFeeActual != null && order.ebayAdsFeeActual >= 0;
 
   return {
     isEbay,
     productCostMissing: order.productCost == null,
     postageMissing: order.shippingLabelCost == null,
-    ebayFeeMissing: isEbay && !hasActualEbayFees && order.ebayFeeRate == null,
-    ebayAdsFeeMissing:
-      isEbay &&
-      !hasActualEbayFees &&
-      !hasActualEbayAdsFees &&
-      order.ebayAdsFeeRate == null,
+    ebayFeeMissing: isEbay && !hasActualEbayFees,
+    ebayAdsFeeMissing: false,
   };
 }
 
@@ -55,11 +49,7 @@ export function getMissingOrderCosts(order: CostCompletenessInput): string[] {
   }
 
   if (status.ebayFeeMissing) {
-    missingCosts.push("eBay selling fee %");
-  }
-
-  if (status.ebayAdsFeeMissing) {
-    missingCosts.push("eBay ads fee %");
+    missingCosts.push("eBay fees (sync from Settings)");
   }
 
   return missingCosts;

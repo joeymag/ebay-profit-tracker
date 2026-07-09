@@ -42,11 +42,6 @@ import {
 import {
   computeEbayFees,
   formatAmazonFeeLabel,
-  formatEbayAdsFeeLabel,
-  formatEbayAdsFeeVatLabel,
-  formatEbayFeeLabel,
-  formatEbayFinalValueFeeLabel,
-  formatEbaySellingFeeVatLabel,
 } from "@/lib/orders/platform-fees";
 import {
   formatProductCostVatLabel,
@@ -389,14 +384,7 @@ export function OrderDetailView({
       {isEbay ? (
         <EbayOrderCostsForm
           shopifyId={order.shopifyId}
-          revenue={order.revenue}
           currency={currency}
-          initialFeeRatePercent={
-            order.ebayFeeRate != null ? order.ebayFeeRate * 100 : null
-          }
-          initialAdsFeeRatePercent={
-            order.ebayAdsFeeRate != null ? order.ebayAdsFeeRate * 100 : null
-          }
           initialPostageCost={order.shippingLabelCost}
           initialProductCostExVat={order.productCost}
           ebayFeesActual={order.ebayFeesActual}
@@ -506,46 +494,17 @@ export function OrderDetailView({
                   />
                 </>
               ) : null}
-              {!hasActualEbayFees && isEbay && ebayFees ? (
+              {!hasActualEbayFees && isEbay ? (
                 <DetailRow
-                  label={formatEbayFinalValueFeeLabel(order.revenue)}
-                  value={formatMoney(ebayFees.finalValueFee, currency)}
-                />
-              ) : null}
-              {!hasActualEbayFees && ebayFees?.sellingFeeExVat != null && order.ebayFeeRate != null ? (
-                <DetailRow
-                  label={formatEbayFeeLabel(order.ebayFeeRate)}
-                  value={formatMoney(ebayFees.sellingFeeExVat, currency)}
-                />
-              ) : null}
-              {!hasActualEbayFees && ebayFees?.sellingFeeVat != null ? (
-                <DetailRow
-                  label={formatEbaySellingFeeVatLabel()}
-                  value={formatMoney(ebayFees.sellingFeeVat, currency)}
-                />
-              ) : null}
-              {!hasActualEbayFees && ebayFees?.sellingFee != null && order.ebayFeeRate != null ? (
-                <DetailRow
-                  label="eBay selling fee (incl VAT)"
-                  value={formatMoney(ebayFees.sellingFee, currency)}
-                />
-              ) : null}
-              {!hasActualEbayFees && ebayFees?.adsFeeExVat != null && order.ebayAdsFeeRate != null ? (
-                <DetailRow
-                  label={formatEbayAdsFeeLabel(order.ebayAdsFeeRate)}
-                  value={formatMoney(ebayFees.adsFeeExVat, currency)}
-                />
-              ) : null}
-              {!hasActualEbayFees && ebayFees?.adsFeeVat != null ? (
-                <DetailRow
-                  label={formatEbayAdsFeeVatLabel()}
-                  value={formatMoney(ebayFees.adsFeeVat, currency)}
-                />
-              ) : null}
-              {!hasActualEbayFees && ebayFees?.adsFee != null && order.ebayAdsFeeRate != null ? (
-                <DetailRow
-                  label="eBay ads fee (incl VAT)"
-                  value={formatMoney(ebayFees.adsFee, currency)}
+                  label="eBay fees"
+                  value={
+                    <Link
+                      href="/settings"
+                      className="font-medium text-primary underline underline-offset-4"
+                    >
+                      Sync from Settings
+                    </Link>
+                  }
                 />
               ) : null}
               {platformFeeLabel ? (

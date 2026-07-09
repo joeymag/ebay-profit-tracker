@@ -1,17 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Check, Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getSalesChannel } from "@/lib/orders/channel";
-import {
-  parseMoneyInput,
-  parsePercentInput,
-} from "@/lib/orders/parse-cost-inputs";
-import { PRODUCT_COST_VAT_RATE } from "@/lib/orders/product-cost-vat";
+import { parseMoneyInput } from "@/lib/orders/parse-cost-inputs";
 import type { StoredOrder } from "@/lib/orders/types";
 
 type BulkEditCostsBarProps = {
@@ -26,30 +21,18 @@ export function BulkEditCostsBar({
   const router = useRouter();
   const [productCost, setProductCost] = useState("");
   const [postageCost, setPostageCost] = useState("");
-  const [sellingFeePercent, setSellingFeePercent] = useState("");
-  const [adsFeePercent, setAdsFeePercent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
 
-  const ebayCount = useMemo(
-    () =>
-      selectedOrders.filter((o) => getSalesChannel(o.tags) === "eBay").length,
-    [selectedOrders],
-  );
-
   async function applyBulkEdit() {
     const product = parseMoneyInput(productCost);
     const postage = parseMoneyInput(postageCost);
-    const sellingFee = parsePercentInput(sellingFeePercent);
-    const adsFee = parsePercentInput(adsFeePercent);
 
     const hasProduct = productCost.trim().length > 0;
     const hasPostage = postageCost.trim().length > 0;
-    const hasSellingFee = sellingFeePercent.trim().length > 0;
-    const hasAdsFee = adsFeePercent.trim().length > 0;
 
-    if (!hasProduct && !hasPostage && !hasSellingFee && !hasAdsFee) {
+    if (!hasProduct && !hasPostage) {
       setError("Enter at least one value to apply (leave fields blank to skip).");
       return;
     }
@@ -64,16 +47,6 @@ export function BulkEditCostsBar({
       return;
     }
 
-    if (hasSellingFee && sellingFee == null) {
-      setError("Enter a valid eBay selling fee % (0–100).");
-      return;
-    }
-
-    if (hasAdsFee && adsFee == null) {
-      setError("Enter a valid eBay ads fee % (0–100).");
-      return;
-    }
-
     const body: Record<string, unknown> = {
       shopifyIds: selectedOrders.map((o) => o.shopifyId),
     };
@@ -83,12 +56,6 @@ export function BulkEditCostsBar({
     }
     if (hasPostage && postage != null) {
       body.shippingLabelCost = postage;
-    }
-    if (hasSellingFee && sellingFee != null) {
-      body.ebayFeeRatePercent = sellingFee;
-    }
-    if (hasAdsFee && adsFee != null) {
-      body.ebayAdsFeeRatePercent = adsFee;
     }
 
     setSaving(true);
@@ -120,8 +87,6 @@ export function BulkEditCostsBar({
       onClearSelection();
       setProductCost("");
       setPostageCost("");
-      setSellingFeePercent("");
-      setAdsFeePercent("");
       router.refresh();
     } catch {
       setError("Could not save bulk changes");
@@ -140,14 +105,8 @@ export function BulkEditCostsBar({
               {selectedOrders.length === 1 ? "" : "s"} selected
             </p>
             <p className="text-sm text-muted-foreground">
-              Fill only the fields you want to change. Blank fields are left
-              unchanged on each order.
-              {ebayCount < selectedOrders.length && ebayCount > 0
-                ? ` eBay fees apply to ${ebayCount} eBay order(s) only.`
-                : null}
-              {ebayCount === 0 && selectedOrders.length > 0
-                ? " eBay fees apply to eBay orders only."
-                : null}
+              Fill only product cost or postage to apply. eBay fees are synced
+              from eBay in Settings, not edited here.
             </p>
           </div>
           <Button
@@ -163,7 +122,7 @@ export function BulkEditCostsBar({
           </Button>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">
               Product cost (ex-VAT)
@@ -208,56 +167,6 @@ export function BulkEditCostsBar({
                 disabled={saving}
               />
             </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              eBay selling fee % (ex-VAT)
-            </label>
-            <div className="relative">
-              <Input
-                type="text"
-                inputMode="decimal"
-                placeholder="Skip"
-                value={sellingFeePercent}
-                onChange={(e) => {
-                  setSellingFeePercent(e.target.value);
-                  setError(null);
-                }}
-                className="bg-background pr-8 text-right tabular-nums"
-                disabled={saving}
-              />
-              <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">
-                %
-              </span>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              eBay ads fee % (ex-VAT)
-            </label>
-            <div className="relative">
-              <Input
-                type="text"
-                inputMode="decimal"
-                placeholder="Skip"
-                value={adsFeePercent}
-                onChange={(e) => {
-                  setAdsFeePercent(e.target.value);
-                  setError(null);
-                }}
-                className="bg-background pr-8 text-right tabular-nums"
-                disabled={saving}
-              />
-              <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">
-                %
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              eBay product &amp; fees add {(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}%
-              VAT in profit calc
-            </p>
           </div>
         </div>
 

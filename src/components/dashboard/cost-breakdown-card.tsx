@@ -9,10 +9,7 @@ import {
 import { formatMoney } from "@/lib/format";
 import type { summarizeOrders } from "@/lib/orders/filtered-orders";
 import { formatAmazonSubscriptionLabel } from "@/lib/orders/amazon-subscription";
-import {
-  formatAmazonFeeLabel,
-  formatEbayFinalValueFeeSchedule,
-} from "@/lib/orders/platform-fees";
+import { formatAmazonFeeLabel } from "@/lib/orders/platform-fees";
 import { cn } from "@/lib/utils";
 
 type CostBreakdownCardProps = {
@@ -94,7 +91,6 @@ export function CostBreakdownCard({
     ebaySellingFees,
     ebayAdsFees,
     ebayOrders,
-    ebayOrdersWithSellingFee,
     ebayOrdersWithAdsFee,
     ebayOrdersWithActualFees,
     amazonSubscription,
@@ -144,9 +140,7 @@ export function CostBreakdownCard({
             hint:
               ebayOrdersWithActualFees > 0
                 ? `Actual fees from eBay Finances API · ${ebayOrdersWithActualFees} of ${ebayOrders} eBay orders`
-                : ebayOrdersWithSellingFee > 0
-                  ? `Selling fees incl. VAT + tiered FVF (${formatEbayFinalValueFeeSchedule()}) · ${ebayOrdersWithSellingFee} of ${ebayOrders} eBay orders`
-                  : `${ebayOrders} eBay orders · add selling fee % on orders to include percentage fees`,
+                : `${ebayOrders} eBay orders · sync fees from Settings`,
             barClass: "bg-sky-500",
             emphasize: "cost" as const,
           },
@@ -156,7 +150,7 @@ export function CostBreakdownCard({
             hint:
               ebayOrdersWithAdsFee > 0
                 ? `Ads fees incl. VAT · ${ebayOrdersWithAdsFee} of ${ebayOrders} eBay orders`
-                : `${ebayOrders} eBay orders · add ads fee % where promoted listings apply`,
+                : `${ebayOrders} eBay orders · sync fees from Settings`,
             barClass: "bg-sky-400",
             emphasize: "cost" as const,
           },
