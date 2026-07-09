@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -22,11 +22,42 @@ type SyncFeesResult =
 
 export function EbayFeesSyncButton() {
   const router = useRouter();
+  const [hasSigningKey, setHasSigningKey] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const loadSigningKeyStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ebay/signing-key");
+      const data = (await res.json()) as { hasSigningKey?: boolean };
+      setHasSigningKey(Boolean(data.hasSigningKey));
+    } catch {
+      setHasSigningKey(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSigningKeyStatus();
+  }, [loadSigningKeyStatus]);
+
+  useEffect(() => {
+    function onStatusChanged() {
+      void loadSigningKeyStatus();
+    }
+
+    window.addEventListener("ebay-status-changed", onStatusChanged);
+    return () => window.removeEventListener("ebay-status-changed", onStatusChanged);
+  }, [loadSigningKeyStatus]);
+
   async function syncFees() {
+    if (!hasSigningKey) {
+      setError(
+        "Generate a signing key first using the button above, then try again.",
+      );
+      return;
+    }
+
     setLoading(true);
     setMessage(null);
     setError(null);
@@ -56,6 +87,8 @@ export function EbayFeesSyncButton() {
     }
   }
 
+  const signingKeyMissing = hasSigningKey === false;
+
   return (
     <div className="space-y-3 border-t pt-4">
       <div>
@@ -63,11 +96,14 @@ export function EbayFeesSyncButton() {
         <p className="text-sm text-muted-foreground">
           Pull actual eBay fees from the Finances API and update profit on
           matching orders (last 120 days).
+          {signingKeyMissing
+            ? " You must generate a signing key in the section above first."
+            : null}
         </p>
       </div>
       <Button
         onClick={syncFees}
-        disabled={loading}
+        disabled={loading || signingKeyMissing}
         type="button"
         variant="secondary"
       >
@@ -80,6 +116,12 @@ export function EbayFeesSyncButton() {
           "Sync eBay fees from eBay"
         )}
       </Button>
+      {signingKeyMissing ? (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          Step 1: click <strong>Generate signing key</strong> above. Step 2: sync
+          fees here.
+        </p>
+      ) : null}
       {message ? (
         <Badge variant="secondary" className="font-normal">
           {message}
