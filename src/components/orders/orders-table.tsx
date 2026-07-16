@@ -22,7 +22,11 @@ import {
   normalizeEbayUsername,
   resolveEbayUsername,
 } from "@/lib/orders/ebay-buyer";
-import { isOrderCostsIncomplete, getOrderCostFieldStatus } from "@/lib/orders/cost-completeness";
+import {
+  getMissingOrderCosts,
+  getOrderCostFieldStatus,
+  isOrderCostsIncomplete,
+} from "@/lib/orders/cost-completeness";
 import {
   EbayFeeCell,
   ProductCostCell,
@@ -128,6 +132,7 @@ export function OrdersTable({
         ) : (
           orders.map((order, i) => {
             const costsIncomplete = isOrderCostsIncomplete(order);
+            const missingCosts = getMissingOrderCosts(order);
             const costStatus = getOrderCostFieldStatus(order);
             const hasActualEbayFees =
               costStatus.isEbay &&
@@ -142,6 +147,11 @@ export function OrdersTable({
                 key={order.shopifyId}
                 role={bulkMode ? undefined : "link"}
                 tabIndex={bulkMode ? undefined : 0}
+                title={
+                  missingCosts.length
+                    ? `Missing: ${missingCosts.join(", ")}`
+                    : undefined
+                }
                 className={cn(
                   "transition-colors",
                   bulkMode ? "" : "cursor-pointer",
@@ -203,7 +213,14 @@ export function OrdersTable({
                       {order.orderNumber}
                     </button>
                   ) : (
-                    order.orderNumber
+                    <div className="space-y-0.5">
+                      <span>{order.orderNumber}</span>
+                      {missingCosts.length ? (
+                        <span className="block text-xs font-normal text-destructive">
+                          Missing: {missingCosts.join(", ")}
+                        </span>
+                      ) : null}
+                    </div>
                   )}
                 </TableCell>
                 <TableCell className="min-w-0 max-w-[18rem] whitespace-normal align-top">
