@@ -33,6 +33,7 @@ import { formatMoney, formatDeliveryDate, formatOrderDate } from "@/lib/format";
 import { getSalesChannel } from "@/lib/orders/channel";
 import type { CustomerHistory } from "@/lib/orders/customer-history";
 import { resolveEbayUsername } from "@/lib/orders/ebay-buyer";
+import { getMissingOrderCosts, isOrderCostsIncomplete } from "@/lib/orders/cost-completeness";
 import { amazonSellerCentralOrderUrl } from "@/lib/shopify/amazon-order-id";
 import { ebaySellerHubOrderUrl } from "@/lib/shopify/ebay-note-attributes";
 import {
@@ -121,6 +122,8 @@ export function OrderDetailView({
       ? formatAmazonFeeLabel()
       : null;
   const productCostBreakdown = getProductCostBreakdown(order);
+  const costsIncomplete = isOrderCostsIncomplete(order);
+  const missingCosts = getMissingOrderCosts(order);
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
@@ -142,6 +145,20 @@ export function OrderDetailView({
           cancelled={cancelled}
         />
       </div>
+
+      {costsIncomplete ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm">
+          <p className="font-semibold text-foreground">
+            Profit incomplete for {order.orderNumber}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            Still missing: {missingCosts.join(", ")}.
+            {missingCosts.some((item) => item.includes("eBay fees"))
+              ? " Product cost and postage are saved — sync eBay fees in Settings to clear this order."
+              : null}
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="surface-card lg:col-span-2">

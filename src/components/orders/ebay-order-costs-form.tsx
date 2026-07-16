@@ -67,6 +67,7 @@ export function EbayOrderCostsForm({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   const previewProductCost = useMemo(() => {
     const exVat = parseMoney(productCostExVat);
@@ -102,9 +103,19 @@ export function EbayOrderCostsForm({
       (productCost ?? null) === (initialProductCostExVat ?? null);
 
     if (postageUnchanged && productUnchanged) {
+      if (!hasActualEbayFees) {
+        setError(null);
+        setInfo(
+          "Product cost and postage are already saved. This order stays red until eBay fees are synced in Settings — Save costs cannot pull fees from eBay.",
+        );
+      } else {
+        setError(null);
+        setInfo("No changes to save.");
+      }
       return;
     }
 
+    setInfo(null);
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -148,17 +159,21 @@ export function EbayOrderCostsForm({
             . Enter product cost and postage below.
           </p>
         ) : (
-          <p className="mt-1 text-sm text-muted-foreground">
-            eBay selling and ads fees come from the eBay Finances API — sync them
-            in{" "}
-            <Link
-              href="/settings"
-              className="font-medium text-primary underline underline-offset-4"
-            >
-              Settings
-            </Link>
-            . Enter product cost and postage below.
-          </p>
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-950 dark:text-amber-100">
+            <p className="font-medium">eBay fees not synced yet</p>
+            <p className="mt-1">
+              Product cost and postage can be saved here, but eBay selling and ads
+              fees must be pulled from eBay in{" "}
+              <Link
+                href="/settings"
+                className="font-medium text-primary underline underline-offset-4"
+              >
+                Settings → Sync eBay fees
+              </Link>
+              . Until then, profit stays blank and the order stays red on the
+              list.
+            </p>
+          </div>
         )}
       </div>
 
@@ -209,6 +224,7 @@ export function EbayOrderCostsForm({
                 setProductCostExVat(e.target.value);
                 setSaved(false);
                 setError(null);
+                setInfo(null);
               }}
               className={cn("pl-8 text-right tabular-nums", error && "border-destructive")}
               disabled={saving}
@@ -243,6 +259,7 @@ export function EbayOrderCostsForm({
                 setPostageCost(e.target.value);
                 setSaved(false);
                 setError(null);
+                setInfo(null);
               }}
               className={cn("pl-8 text-right tabular-nums", error && "border-destructive")}
               disabled={saving}
@@ -270,6 +287,9 @@ export function EbayOrderCostsForm({
         ) : null}
         {error ? (
           <span className="text-sm text-destructive">{error}</span>
+        ) : null}
+        {info ? (
+          <span className="text-sm text-muted-foreground">{info}</span>
         ) : null}
       </div>
     </div>
