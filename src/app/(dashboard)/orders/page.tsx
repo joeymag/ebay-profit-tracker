@@ -29,6 +29,8 @@ type OrdersPageProps = {
   searchParams: Promise<{ range?: string; channel?: string; product?: string }>;
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const params = await searchParams;
   const {

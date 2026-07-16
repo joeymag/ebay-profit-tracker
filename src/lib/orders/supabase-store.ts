@@ -2,6 +2,7 @@ import {
   applyProductCostsToOrder,
   applyProductCostsToOrders,
 } from "@/lib/orders/apply-product-costs";
+import { fetchAllLineItemsFromSupabase } from "@/lib/orders/fetch-line-items";
 import { withComputedFinancials } from "@/lib/orders/financials";
 import {
   getDeletedOrderIds,
@@ -157,19 +158,12 @@ export async function loadOrdersForSkuDefaults(): Promise<SkuDefaultSourceOrder[
     throw new Error(ordersError.message);
   }
 
-  const { data: lineItems, error: itemsError } = await supabase
-    .from("order_line_items")
-    .select("shopify_order_id, title, sku");
-
-  if (itemsError) {
-    throw new Error(itemsError.message);
-  }
-
+  const allLineItems = await fetchAllLineItemsFromSupabase();
   const itemsByOrder = new Map<
     number,
     Pick<SkuDefaultSourceOrder["lineItems"][number], "sku" | "title">[]
   >();
-  for (const item of lineItems ?? []) {
+  for (const item of allLineItems) {
     const list = itemsByOrder.get(item.shopify_order_id) ?? [];
     list.push({ sku: item.sku, title: item.title });
     itemsByOrder.set(item.shopify_order_id, list);
@@ -215,17 +209,14 @@ export async function getOrdersFromSupabase(): Promise<OrdersDatabase> {
   }
 
   const shopifyIds = orders.map((o) => o.shopify_id);
-  const { data: lineItems, error: itemsError } = await supabase
-    .from("order_line_items")
-    .select("*")
-    .in("shopify_order_id", shopifyIds);
-
-  if (itemsError) {
-    throw new Error(itemsError.message);
-  }
+  const shopifyIdSet = new Set(shopifyIds);
+  const allLineItems = await fetchAllLineItemsFromSupabase();
 
   const itemsByOrder = new Map<number, LineItemRow[]>();
-  for (const item of lineItems ?? []) {
+  for (const item of allLineItems) {
+    if (!shopifyIdSet.has(item.shopify_order_id)) {
+      continue;
+    }
     const list = itemsByOrder.get(item.shopify_order_id) ?? [];
     list.push(item);
     itemsByOrder.set(item.shopify_order_id, list);

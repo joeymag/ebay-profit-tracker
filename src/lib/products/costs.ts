@@ -64,7 +64,7 @@ export function applyCatalogToOrder(
   const productCost =
     order.productCostManual && order.productCost != null
       ? order.productCost
-      : catalogCost;
+      : (catalogCost ?? order.productCost);
 
   return {
     ...order,

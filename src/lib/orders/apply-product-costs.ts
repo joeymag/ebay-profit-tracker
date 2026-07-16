@@ -6,6 +6,7 @@ import {
   applyCatalogToOrders,
   buildProductCatalog,
 } from "@/lib/products/costs";
+import { fetchAllLineItemsFromSupabase } from "@/lib/orders/fetch-line-items";
 import { getProductCatalog } from "@/lib/products/store";
 import type { StoredOrder } from "@/lib/orders/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
@@ -47,14 +48,8 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
   }
 
   const shopifyIds = orders.map((o) => o.shopify_id);
-  const { data: lineItems, error: itemsError } = await supabase
-    .from("order_line_items")
-    .select("*")
-    .in("shopify_order_id", shopifyIds);
-
-  if (itemsError) {
-    throw new Error(itemsError.message);
-  }
+  const shopifyIdSet = new Set(shopifyIds);
+  const allLineItems = await fetchAllLineItemsFromSupabase();
 
   const { data: orderRows, error: fullError } = await supabase
     .from("orders")
@@ -65,8 +60,11 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
     throw new Error(fullError.message);
   }
 
-  const itemsByOrder = new Map<number, typeof lineItems>();
-  for (const item of lineItems ?? []) {
+  const itemsByOrder = new Map<number, typeof allLineItems>();
+  for (const item of allLineItems) {
+    if (!shopifyIdSet.has(item.shopify_order_id)) {
+      continue;
+    }
     const list = itemsByOrder.get(item.shopify_order_id) ?? [];
     list.push(item);
     itemsByOrder.set(item.shopify_order_id, list);
