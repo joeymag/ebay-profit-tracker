@@ -45,7 +45,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const currency = orders[0]?.currency ?? "GBP";
   const channelStats = aggregateChannelStats(orders);
   const dailySummary = aggregateDailyChannelPerformance(orders, range);
-  const summary = summarizeOrders(orders, currency, range, allOrders);
+  const summary = summarizeOrders(orders, currency, range, allOrders, channel);
   const onTimeDelivery = summarizeOnTimeDelivery(allOrders, range, channel);
   const locationStats = aggregateOrderLocations(orders);
   const ordersWithAddress = countOrdersWithAddress(orders);
