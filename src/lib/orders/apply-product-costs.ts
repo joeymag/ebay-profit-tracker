@@ -1,5 +1,6 @@
 import { withComputedFinancials } from "@/lib/orders/financials";
 import { parseEbayUsernameForOrder } from "@/lib/orders/ebay-buyer";
+import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
 import { shippingAddressFromFields } from "@/lib/orders/shipping-address";
 import {
   applyCatalogToOrder,
