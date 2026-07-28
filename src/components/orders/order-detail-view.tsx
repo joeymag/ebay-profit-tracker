@@ -6,6 +6,7 @@ import { CustomerHistoryCard } from "@/components/orders/customer-history-card";
 import { DeleteOrderButton } from "@/components/orders/delete-order-button";
 import { DesiredProfitCalculator } from "@/components/orders/desired-profit-calculator";
 import { EbayOrderCostsForm } from "@/components/orders/ebay-order-costs-form";
+import { SimpleOrderCostsForm } from "@/components/orders/simple-order-costs-form";
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { MoneyCell } from "@/components/orders/money-cell";
 import { OrderTags } from "@/components/orders/order-tags";
@@ -98,6 +99,9 @@ export function OrderDetailView({
   const channel = getSalesChannel(order.tags);
   const isEbay = channel === "eBay";
   const isAmazon = channel === "Amazon";
+  const isTemu = channel === "Temu";
+  const isOther = channel === "Other";
+  const usesPostageCostLabel = isEbay || isAmazon || isTemu || isOther;
   const deliverByAt = isAmazon
     ? order.amazonDeliverByAt
     : isEbay
@@ -415,6 +419,14 @@ export function OrderDetailView({
           initialPostageCost={order.shippingLabelCost}
           initialProductCost={order.productCost}
         />
+      ) : isTemu || isOther ? (
+        <SimpleOrderCostsForm
+          shopifyId={order.shopifyId}
+          currency={currency}
+          channel={isTemu ? "Temu" : "Other"}
+          initialPostageCost={order.shippingLabelCost}
+          initialProductCost={order.productCost}
+        />
       ) : null}
 
       {customerHistory ? (
@@ -454,7 +466,7 @@ export function OrderDetailView({
             </div>
             <div className="divide-y divide-border/60">
               <DetailRow
-                label={isEbay || isAmazon ? "Postage cost" : "Postage label cost"}
+                label={usesPostageCostLabel ? "Postage cost" : "Postage label cost"}
                 value={
                   order.shippingLabelCost != null ? (
                     formatMoney(order.shippingLabelCost, currency)
