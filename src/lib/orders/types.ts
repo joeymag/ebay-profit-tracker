@@ -3,6 +3,8 @@ export type StoredLineItem = {
   title: string;
   quantity: number;
   sku: string | null;
+  /** Temu marketplace SKU ID from line item properties. */
+  temuSku: string | null;
   price: number;
   productId: number | null;
   variantId: number | null;

@@ -45,7 +45,7 @@ function lineItemRevenue(item: StoredLineItem): number {
 }
 
 function productKeyForLineItem(item: StoredLineItem): string {
-  const sku = resolveLineItemSkuForDisplay(item.sku, item.title);
+  const sku = resolveLineItemSkuForDisplay(item.sku, item.title, item.temuSku);
   return sku?.trim() || item.title.trim() || "Unknown product";
 }
 
@@ -62,6 +62,7 @@ function allocateOrderToLineItems(order: StoredOrder): {
           title: "Unknown product",
           quantity: order.itemCount || 1,
           sku: null,
+          temuSku: null,
           price: order.revenue / Math.max(order.itemCount || 1, 1),
           productId: null,
           variantId: null,

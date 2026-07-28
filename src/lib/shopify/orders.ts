@@ -89,21 +89,25 @@ function parseBuyerName(order: ShopifyOrder): string | null {
   );
 }
 
-import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
+import { parseTemuSkuFromProperties } from "@/lib/orders/temu-sku";
 
 function normalizeOrder(order: ShopifyOrder): StoredOrder {
   const revenue = parseAmount(order.total_price);
-  const lineItems: StoredLineItem[] = order.line_items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    quantity: item.quantity,
-    sku: resolveLineItemSkuForDisplay(item.sku, item.title),
-    price: parseAmount(item.price),
-    productId: item.product_id ?? null,
-    variantId: item.variant_id ?? null,
-    imageUrl: null,
-    unitCost: null,
-  }));
+  const lineItems: StoredLineItem[] = order.line_items.map((item) => {
+    const temuSku = parseTemuSkuFromProperties(item.properties);
+    return {
+      id: item.id,
+      title: item.title,
+      quantity: item.quantity,
+      sku: item.sku?.trim() || null,
+      temuSku,
+      price: parseAmount(item.price),
+      productId: item.product_id ?? null,
+      variantId: item.variant_id ?? null,
+      imageUrl: null,
+      unitCost: null,
+    };
+  });
   const itemCount = lineItems.reduce((sum, item) => sum + item.quantity, 0);
   const {
     shippingCarrier,

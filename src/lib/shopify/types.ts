@@ -37,6 +37,7 @@ export type ShopifyLineItem = {
   price: string;
   product_id?: number | null;
   variant_id?: number | null;
+  properties?: { name: string; value: string }[];
 };
 
 export type ShopifyShippingLine = {

@@ -122,6 +122,7 @@ export type Database = {
           title: string;
           quantity: number;
           sku: string | null;
+          temu_sku: string | null;
           price: number;
           image_url: string | null;
         };
@@ -131,6 +132,7 @@ export type Database = {
           title: string;
           quantity: number;
           sku?: string | null;
+          temu_sku?: string | null;
           price: number;
           image_url?: string | null;
         };
@@ -182,6 +184,7 @@ export type Database = {
           unit_cost: number | null;
           image_url: string | null;
           shopify_product_id: number | null;
+          temu_sku: string | null;
           updated_at: string;
         };
         Insert: {
@@ -190,6 +193,7 @@ export type Database = {
           unit_cost?: number | null;
           image_url?: string | null;
           shopify_product_id?: number | null;
+          temu_sku?: string | null;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["products"]["Insert"]>;

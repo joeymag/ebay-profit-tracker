@@ -15,6 +15,7 @@ import {
 } from "@/lib/orders/sku-cost-defaults";
 import { shippingAddressFingerprint, shippingAddressFromFields, shippingAddressToFields, mergeShippingAddressOnSync } from "@/lib/orders/shipping-address";
 import { parseEbayUsernameForOrder } from "@/lib/orders/ebay-buyer";
+import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
 import { mergeBuyerIdentityOnSync } from "@/lib/shopify/buyer-name";
 import type { OrdersDatabase, StoredOrder } from "@/lib/orders/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
@@ -133,7 +134,8 @@ function rowToOrder(
       id: item.shopify_line_item_id,
       title: item.title,
       quantity: item.quantity,
-      sku: item.sku,
+      sku: resolveLineItemSkuForDisplay(item.sku, item.title, item.temu_sku),
+      temuSku: item.temu_sku,
       price: Number(item.price),
       productId: null,
       variantId: null,
@@ -419,6 +421,7 @@ export async function saveOrdersToSupabase(
         title: item.title,
         quantity: item.quantity,
         sku: item.sku,
+        temu_sku: item.temuSku,
         price: item.price,
         image_url: item.imageUrl,
       })),

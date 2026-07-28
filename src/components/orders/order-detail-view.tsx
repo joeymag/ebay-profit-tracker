@@ -39,6 +39,7 @@ import { amazonSellerCentralOrderUrl } from "@/lib/shopify/amazon-order-id";
 import { ebaySellerHubOrderUrl } from "@/lib/shopify/ebay-note-attributes";
 import {
   isBracketDerivedSku,
+  isTemuDerivedSku,
   resolveLineItemSkuForDisplay,
 } from "@/lib/orders/line-item-sku";
 import {
@@ -192,8 +193,10 @@ export function OrderDetailView({
                   const displaySku = resolveLineItemSkuForDisplay(
                     item.sku,
                     item.title,
+                    item.temuSku,
                   );
                   const skuFromTitle = isBracketDerivedSku(item.sku, item.title);
+                  const skuFromTemu = isTemuDerivedSku(item.sku, item.temuSku);
 
                   return (
                   <TableRow key={item.id}>
@@ -210,7 +213,9 @@ export function OrderDetailView({
                           title={
                             skuFromTitle
                               ? "SKU derived from variant text in title"
-                              : undefined
+                              : skuFromTemu
+                                ? "Temu SKU from order line item"
+                                : undefined
                           }
                         >
                           {displaySku}

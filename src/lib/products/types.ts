@@ -4,6 +4,7 @@ export type Product = {
   unitCost: number | null;
   imageUrl: string | null;
   shopifyProductId: number | null;
+  temuSku: string | null;
   updatedAt: string;
   /** How many order line items use this SKU. */
   orderLineCount: number;

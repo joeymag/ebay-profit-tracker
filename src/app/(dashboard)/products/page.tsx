@@ -64,8 +64,8 @@ export default async function ProductsPage() {
               <CardHeader className="border-b border-border/50 bg-muted/20">
                 <CardTitle>Product catalog</CardTitle>
                 <CardDescription>
-                  Enter the cost you pay per unit. When orders sync, line items
-                  match by SKU and profit is calculated automatically.
+                  Enter the cost you pay per unit. Temu SKUs import from Temu
+                  orders when you sync orders, then click Import SKUs from orders.
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-0 pb-0 pt-0">
@@ -76,6 +76,7 @@ export default async function ProductsPage() {
                         <TableHead className="w-16 pl-6" />
                         <TableHead>Product</TableHead>
                         <TableHead>SKU</TableHead>
+                        <TableHead>Temu SKU</TableHead>
                         <TableHead>Unit cost</TableHead>
                         <TableHead className="pr-6 text-right">In orders</TableHead>
                       </TableRow>
@@ -84,7 +85,7 @@ export default async function ProductsPage() {
                       {products.length === 0 ? (
                         <TableRow>
                           <TableCell
-                            colSpan={5}
+                            colSpan={6}
                             className="h-24 text-center text-muted-foreground"
                           >
                             Click &quot;Import SKUs from orders&quot; to build
@@ -117,6 +118,18 @@ export default async function ProductsPage() {
                               >
                                 {product.sku}
                               </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {product.temuSku ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-orange-500/30 bg-orange-500/10 font-mono text-sm font-medium text-orange-800 dark:text-orange-300"
+                                >
+                                  {product.temuSku}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <ProductCostInput

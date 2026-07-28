@@ -1,4 +1,7 @@
-import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
+import {
+  resolveLineItemCatalogSku,
+  resolveLineItemSkuForDisplay,
+} from "@/lib/orders/line-item-sku";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 import type { Product } from "@/lib/products/types";
@@ -13,6 +16,7 @@ function rowToProduct(row: ProductRow, orderLineCount = 0): Product {
     unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
     imageUrl: row.image_url,
     shopifyProductId: row.shopify_product_id,
+    temuSku: row.temu_sku,
     updatedAt: row.updated_at,
     orderLineCount,
   };
@@ -22,7 +26,7 @@ async function getOrderLineCountsBySku(): Promise<Map<string, number>> {
   const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("order_line_items")
-    .select("sku, title");
+    .select("sku, title, temu_sku");
 
   if (error) {
     throw new Error(error.message);
@@ -30,7 +34,7 @@ async function getOrderLineCountsBySku(): Promise<Map<string, number>> {
 
   const counts = new Map<string, number>();
   for (const row of data ?? []) {
-    const sku = resolveLineItemSkuForDisplay(row.sku, row.title);
+    const sku = resolveLineItemCatalogSku(row.sku, row.title, row.temu_sku);
     if (!sku) {
       continue;
     }
@@ -62,7 +66,7 @@ export async function getProductCatalogFromSupabase(): Promise<
   const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("products")
-    .select("sku, unit_cost");
+    .select("sku, unit_cost, temu_sku");
 
   if (error) {
     throw new Error(error.message);
@@ -71,6 +75,7 @@ export async function getProductCatalogFromSupabase(): Promise<
   return (data ?? []).map((row) => ({
     sku: row.sku,
     unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
+    temuSku: row.temu_sku,
   }));
 }
 
@@ -106,7 +111,7 @@ export async function syncProductsFromOrdersInSupabase(): Promise<{
 
   const { data: lineItems, error: itemsError } = await supabase
     .from("order_line_items")
-    .select("sku, title, image_url, shopify_order_id")
+    .select("sku, title, image_url, shopify_order_id, temu_sku")
     .order("shopify_order_id", { ascending: false });
 
   if (itemsError) {
@@ -115,17 +120,18 @@ export async function syncProductsFromOrdersInSupabase(): Promise<{
 
   const bySku = new Map<
     string,
-    { title: string; imageUrl: string | null }
+    { title: string; imageUrl: string | null; temuSku: string | null }
   >();
 
   for (const item of lineItems ?? []) {
-    const sku = resolveLineItemSkuForDisplay(item.sku, item.title);
+    const sku = resolveLineItemCatalogSku(item.sku, item.title, item.temu_sku);
     if (!sku || bySku.has(sku)) {
       continue;
     }
     bySku.set(sku, {
       title: item.title,
       imageUrl: item.image_url,
+      temuSku: item.temu_sku,
     });
   }
 
@@ -153,6 +159,7 @@ export async function syncProductsFromOrdersInSupabase(): Promise<{
       sku,
       title: meta.title,
       image_url: meta.imageUrl,
+      temu_sku: meta.temuSku,
     });
   }
 

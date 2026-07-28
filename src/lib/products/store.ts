@@ -7,7 +7,10 @@ import {
   syncProductsFromOrdersInSupabase,
   updateProductCostInSupabase,
 } from "@/lib/products/supabase-store";
-import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
+import {
+  resolveLineItemCatalogSku,
+  resolveLineItemSkuForDisplay,
+} from "@/lib/orders/line-item-sku";
 import type { Product } from "@/lib/products/types";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
@@ -50,7 +53,11 @@ export async function getProductCatalog(): Promise<
     return getProductCatalogFromSupabase();
   }
   const products = await readProductsFromJson();
-  return products.map((p) => ({ sku: p.sku, unitCost: p.unitCost }));
+  return products.map((p) => ({
+    sku: p.sku,
+    unitCost: p.unitCost,
+    temuSku: p.temuSku,
+  }));
 }
 
 export async function updateProductCost(
@@ -93,7 +100,11 @@ export async function syncProductsFromOrders(): Promise<{
 
   for (const order of orders) {
     for (const item of order.lineItems) {
-      const sku = resolveLineItemSkuForDisplay(item.sku, item.title);
+      const sku = resolveLineItemCatalogSku(
+        item.sku,
+        item.title,
+        item.temuSku,
+      );
       if (!sku) {
         continue;
       }
@@ -108,6 +119,7 @@ export async function syncProductsFromOrders(): Promise<{
         unitCost: null,
         imageUrl: item.imageUrl,
         shopifyProductId: item.productId,
+        temuSku: item.temuSku,
         updatedAt: new Date().toISOString(),
         orderLineCount: 0,
       });
