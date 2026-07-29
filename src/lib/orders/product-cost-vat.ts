@@ -1,7 +1,7 @@
 import { getSalesChannel } from "@/lib/orders/channel";
 import type { StoredOrder } from "@/lib/orders/types";
 
-/** VAT added on top of ex-VAT product cost for eBay and Amazon orders. */
+/** VAT added on top of ex-VAT product cost for eBay, Amazon, and Temu orders. */
 export const PRODUCT_COST_VAT_RATE = Number(
   process.env.PRODUCT_COST_VAT_RATE ?? 0.2,
 );
@@ -10,7 +10,7 @@ export function isProductCostWithVat(
   tags: string | null | undefined,
 ): boolean {
   const channel = getSalesChannel(tags);
-  return channel === "eBay" || channel === "Amazon";
+  return channel === "eBay" || channel === "Amazon" || channel === "Temu";
 }
 
 export function productCostVatAmount(

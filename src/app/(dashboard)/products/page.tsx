@@ -64,8 +64,9 @@ export default async function ProductsPage() {
               <CardHeader className="border-b border-border/50 bg-muted/20">
                 <CardTitle>Product catalog</CardTitle>
                 <CardDescription>
-                  Enter the cost you pay per unit. Temu SKUs import from Temu
-                  orders when you sync orders, then click Import SKUs from orders.
+                  Enter the cost you pay per unit (ex-VAT). Temu, eBay, and Amazon
+                  orders add VAT in profit calculations. Import Temu SKUs after
+                  syncing orders.
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-0 pb-0 pt-0">

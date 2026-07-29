@@ -484,7 +484,7 @@ export function OrderDetailView({
                 <>
                   <DetailRow
                     label={
-                      isEbay || isAmazon
+                      isEbay || isAmazon || isTemu
                         ? "Product cost (ex-VAT)"
                         : "Product cost"
                     }
@@ -496,7 +496,8 @@ export function OrderDetailView({
                       value={formatMoney(productCostBreakdown.vat, currency)}
                     />
                   ) : null}
-                  {(isEbay || isAmazon) && productCostBreakdown.inclVat != null ? (
+                  {(isEbay || isAmazon || isTemu) &&
+                  productCostBreakdown.inclVat != null ? (
                     <DetailRow
                       label="Product cost (incl VAT)"
                       value={formatMoney(productCostBreakdown.inclVat, currency)}

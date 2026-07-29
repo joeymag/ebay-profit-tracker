@@ -7,6 +7,10 @@ import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { SalesChannel } from "@/lib/orders/channel";
+import {
+  PRODUCT_COST_VAT_RATE,
+  productCostVatAmount,
+} from "@/lib/orders/product-cost-vat";
 import { cn } from "@/lib/utils";
 
 type SimpleOrderCostsFormProps = {
@@ -38,7 +42,9 @@ const CHANNEL_COPY: Record<
   Temu: {
     title: "Temu costs",
     description:
-      "Enter product cost and postage for this Temu order. Profit is revenue minus these costs (no marketplace fee is applied).",
+      "Enter product cost ex-VAT and postage. Product cost adds " +
+      `${(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}% VAT for profit calculations. ` +
+      "No Temu marketplace fee is applied.",
     boxClass: "border-orange-500/20 bg-orange-500/5",
   },
   Other: {
@@ -67,6 +73,16 @@ export function SimpleOrderCostsForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const productVatPreview =
+    channel === "Temu"
+      ? (() => {
+          const exVat = parseMoney(productCost);
+          if (exVat == null) {
+            return null;
+          }
+          return productCostVatAmount(exVat, "Temu");
+        })()
+      : null;
 
   async function saveCosts() {
     const postage = parseMoney(postageCost);
@@ -134,7 +150,9 @@ export function SimpleOrderCostsForm({
             htmlFor={`simple-product-${shopifyId}`}
             className="text-sm font-medium text-muted-foreground"
           >
-            Product cost ({currency})
+            {channel === "Temu"
+              ? `Product cost ex-VAT (${currency})`
+              : `Product cost (${currency})`}
           </label>
           <Input
             id={`simple-product-${shopifyId}`}
@@ -148,6 +166,13 @@ export function SimpleOrderCostsForm({
               setError(null);
             }}
           />
+          {productVatPreview != null ? (
+            <p className="text-xs text-muted-foreground">
+              + {(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}% VAT ={" "}
+              {currency}{" "}
+              {(parseMoney(productCost)! + productVatPreview).toFixed(2)} incl VAT
+            </p>
+          ) : null}
         </div>
         <div className="space-y-2">
           <label
