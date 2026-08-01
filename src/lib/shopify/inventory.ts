@@ -43,6 +43,25 @@ export type OutOfStockItem = {
   available: number;
 } & StockSalesInsight;
 
+export type InventoryMapItem = {
+  sku: string | null;
+  productTitle: string;
+  variantTitle: string;
+  displayName: string;
+  imageUrl: string | null;
+  available: number;
+  tracked: boolean;
+} & StockSalesInsight;
+
+export type InventoryMapSummary = {
+  totalTracked: number;
+  withSku: number;
+  withoutSku: number;
+  inStock: number;
+  outOfStock: number;
+  lowStock: number;
+};
+
 type ShopifyProductRest = {
   id: number;
   title: string;
@@ -158,6 +177,99 @@ export async function listOutOfStockItems(options?: {
       b.unitsSold - a.unitsSold ||
       a.displayName.localeCompare(b.displayName),
   );
+}
+
+function variantDisplayName(
+  productTitle: string,
+  variantTitle: string,
+): string {
+  return variantTitle === "Default Title"
+    ? productTitle
+    : `${productTitle} — ${variantTitle}`;
+}
+
+function insightForVariant(
+  sku: string | null,
+  salesMap: Map<string, SkuSalesStats>,
+  variant: ShopifyProductRest["variants"][number],
+) {
+  if (!sku) {
+    return attachSalesInsight(variant.inventory_quantity, EMPTY_SALES, 1);
+  }
+
+  return salesStatsForVariant(sku, salesMap, variant);
+}
+
+const EMPTY_SALES: SkuSalesStats = {
+  unitsSold: 0,
+  orderCount: 0,
+  unitsSold30Days: 0,
+  unitsSold90Days: 0,
+  orderCount30Days: 0,
+};
+
+/** All tracked Shopify variants with stock levels and sales insight. */
+export async function listInventoryMapItems(options?: {
+  maxPages?: number;
+}): Promise<{ items: InventoryMapItem[]; summary: InventoryMapSummary }> {
+  const maxPages = options?.maxPages ?? 40;
+  const items: InventoryMapItem[] = [];
+  const salesMap = await getUnitsSoldMap();
+  let pageInfo: string | null = null;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const path = pageInfo
+      ? `/products.json?limit=250&fields=id,title,image,variants&page_info=${pageInfo}`
+      : "/products.json?limit=250&fields=id,title,image,variants";
+
+    const { data, linkHeader } = await shopifyAdminFetchWithLink<{
+      products: ShopifyProductRest[];
+    }>(path);
+
+    for (const product of data.products ?? []) {
+      for (const variant of product.variants ?? []) {
+        if (variant.inventory_management !== "shopify") {
+          continue;
+        }
+
+        const sku = variant.sku?.trim() || null;
+        items.push({
+          sku,
+          productTitle: product.title,
+          variantTitle: variant.title,
+          displayName: variantDisplayName(product.title, variant.title),
+          imageUrl: product.image?.src ?? null,
+          available: variant.inventory_quantity,
+          tracked: true,
+          ...insightForVariant(sku, salesMap, variant),
+        });
+      }
+    }
+
+    pageInfo = parseNextPageInfo(linkHeader);
+    if (!pageInfo) {
+      break;
+    }
+  }
+
+  items.sort(
+    (a, b) =>
+      a.available - b.available ||
+      b.unitsSold30Days - a.unitsSold30Days ||
+      a.displayName.localeCompare(b.displayName),
+  );
+
+  const summary: InventoryMapSummary = {
+    totalTracked: items.length,
+    withSku: items.filter((item) => item.sku).length,
+    withoutSku: items.filter((item) => !item.sku).length,
+    inStock: items.filter((item) => item.available > 0).length,
+    outOfStock: items.filter((item) => item.available <= 0).length,
+    lowStock: items.filter((item) => item.available > 0 && item.available <= 5)
+      .length,
+  };
+
+  return { items, summary };
 }
 
 const VARIANT_BY_SKU_QUERY = `

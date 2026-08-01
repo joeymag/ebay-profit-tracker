@@ -251,6 +251,66 @@ export type Database = {
         >;
         Relationships: [];
       };
+      inventory_masters: {
+        Row: {
+          sku: string;
+          pack_size: number;
+          pieces_on_hand: number;
+          label: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          sku: string;
+          pack_size: number;
+          pieces_on_hand?: number;
+          label?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["inventory_masters"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      inventory_child_mappings: {
+        Row: {
+          child_sku: string;
+          master_sku: string;
+          pieces_per_unit: number;
+          label: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          child_sku: string;
+          master_sku: string;
+          pieces_per_unit: number;
+          label?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["inventory_child_mappings"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      inventory_consumption: {
+        Row: {
+          shopify_line_item_id: number;
+          shopify_order_id: number;
+          master_sku: string;
+          pieces_consumed: number;
+          updated_at: string;
+        };
+        Insert: {
+          shopify_line_item_id: number;
+          shopify_order_id: number;
+          master_sku: string;
+          pieces_consumed: number;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["inventory_consumption"]["Insert"]
+        >;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

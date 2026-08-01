@@ -19,6 +19,7 @@ import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
 import { mergeBuyerIdentityOnSync } from "@/lib/shopify/buyer-name";
 import type { OrdersDatabase, StoredOrder } from "@/lib/orders/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 import type { Database } from "@/lib/supabase/database.types";
 
 type OrderRow = Database["public"]["Tables"]["orders"]["Insert"];
@@ -445,6 +446,13 @@ export async function saveOrdersToSupabase(
     tracking_found: stats?.trackingFound ?? 0,
     status: "completed",
   });
+
+  if (isSupabaseConfigured()) {
+    const { reconcileInventoryConsumption } = await import(
+      "@/lib/inventory/master-child"
+    );
+    await reconcileInventoryConsumption(merged);
+  }
 
   return getOrdersFromSupabase();
 }
