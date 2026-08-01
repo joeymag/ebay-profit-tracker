@@ -2,6 +2,9 @@
 export const PUBLIC_PATH_PREFIXES = [
   "/login",
   "/auth/callback",
+  "/auth/confirm",
+  "/auth/complete",
+  "/auth/reset-password",
 ] as const;
 
 export const PUBLIC_API_PATH_PREFIXES = [

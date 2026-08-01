@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Loader2, Package, Trash2 } from "lucide-react";
+import { Check, Loader2, Package, Sparkles, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,31 @@ export function MasterChildConfigPanel({ onChanged }: MasterChildConfigPanelProp
   const [childSku, setChildSku] = useState("");
   const [piecesPerUnit, setPiecesPerUnit] = useState("10");
   const [selectedMasterSku, setSelectedMasterSku] = useState("");
+
+  async function suggestSku(
+    setter: (value: string) => void,
+    prefix: string,
+  ): Promise<void> {
+    setError(null);
+
+    try {
+      const res = await fetch(
+        `/api/shopify/inventory/generate-sku?prefix=${encodeURIComponent(prefix)}`,
+      );
+      const data = (await res.json()) as
+        | { ok: true; sku: string }
+        | { ok: false; error: string };
+
+      if (!data.ok) {
+        setError(data.error);
+        return;
+      }
+
+      setter(data.sku);
+    } catch {
+      setError("Could not generate SKU.");
+    }
+  }
 
   const loadMasters = useCallback(async () => {
     setLoading(true);
@@ -200,11 +225,22 @@ export function MasterChildConfigPanel({ onChanged }: MasterChildConfigPanelProp
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-3 rounded-xl border border-border/60 p-4">
             <p className="text-sm font-semibold">Add master SKU</p>
-            <Input
-              placeholder="Master SKU (bulk pack)"
-              value={masterSku}
-              onChange={(e) => setMasterSku(e.target.value)}
-            />
+            <div className="flex gap-2">
+              <Input
+                placeholder="Master SKU (bulk pack)"
+                value={masterSku}
+                onChange={(e) => setMasterSku(e.target.value)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="Generate unique SKU"
+                onClick={() => void suggestSku(setMasterSku, "MST")}
+              >
+                <Sparkles className="size-4" />
+              </Button>
+            </div>
             <Input
               placeholder="Pack size (pieces per box)"
               inputMode="numeric"
@@ -219,11 +255,22 @@ export function MasterChildConfigPanel({ onChanged }: MasterChildConfigPanelProp
 
           <div className="space-y-3 rounded-xl border border-border/60 p-4">
             <p className="text-sm font-semibold">Map child SKU</p>
-            <Input
-              placeholder="Child SKU (sold on Shopify)"
-              value={childSku}
-              onChange={(e) => setChildSku(e.target.value)}
-            />
+            <div className="flex gap-2">
+              <Input
+                placeholder="Child SKU (sold on Shopify)"
+                value={childSku}
+                onChange={(e) => setChildSku(e.target.value)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="Generate unique SKU"
+                onClick={() => void suggestSku(setChildSku, "CHD")}
+              >
+                <Sparkles className="size-4" />
+              </Button>
+            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <select
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"

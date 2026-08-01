@@ -39,11 +39,18 @@ export default async function SettingsPage() {
               Supabase project under{" "}
               <strong>Authentication → Users → Add user</strong> (email +
               password). Enable the Email provider under Authentication →
-              Providers. Add redirect URL{" "}
-              <code className="text-xs">https://your-domain/auth/callback</code>{" "}
+              Providers. Add redirect URLs{" "}
+              <code className="text-xs">https://your-domain/auth/confirm</code>,{" "}
+              <code className="text-xs">https://your-domain/auth/callback</code>,{" "}
+              <code className="text-xs">https://your-domain/auth/reset-password</code>{" "}
               (and{" "}
-              <code className="text-xs">http://localhost:3000/auth/callback</code>{" "}
-              for local dev).
+              <code className="text-xs">http://localhost:3000/auth/confirm</code>,{" "}
+              <code className="text-xs">http://localhost:3000/auth/callback</code>,{" "}
+              <code className="text-xs">http://localhost:3000/auth/reset-password</code>{" "}
+              for local dev). Update the Reset password email template to:{" "}
+              <code className="text-xs">
+                {"{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/auth/reset-password"}
+              </code>
             </CardDescription>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">

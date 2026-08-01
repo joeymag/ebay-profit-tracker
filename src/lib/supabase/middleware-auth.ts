@@ -51,9 +51,34 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  const authCode = request.nextUrl.searchParams.get("code");
+  if (
+    authCode &&
+    pathname !== "/auth/callback" &&
+    !pathname.startsWith("/auth/confirm")
+  ) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/auth/callback";
+    if (!url.searchParams.has("next")) {
+      url.searchParams.set("next", "/");
+    }
+    return NextResponse.redirect(url);
+  }
+
   if (user && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/";
+    return NextResponse.redirect(url);
+  }
+
+  if (user && pathname === "/auth/reset-password") {
+    return supabaseResponse;
+  }
+
+  if (!user && pathname === "/auth/reset-password") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.searchParams.set("error", "reset_session_expired");
     return NextResponse.redirect(url);
   }
 

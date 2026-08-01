@@ -4,7 +4,7 @@ import {
   setShopifyInventoryAvailable,
   shopifyAdminGraphql,
 } from "@/lib/shopify/graphql";
-import { ShopifyApiError, shopifyAdminFetchWithLink } from "@/lib/shopify/client";
+import { ShopifyApiError, shopifyAdminFetch, shopifyAdminFetchWithLink } from "@/lib/shopify/client";
 import {
   attachSalesInsight,
   getUnitsSoldForSku,
@@ -44,6 +44,8 @@ export type OutOfStockItem = {
 } & StockSalesInsight;
 
 export type InventoryMapItem = {
+  variantId: number;
+  productId: number;
   sku: string | null;
   productTitle: string;
   variantTitle: string;
@@ -67,6 +69,7 @@ type ShopifyProductRest = {
   title: string;
   image?: { src: string } | null;
   variants: {
+    id: number;
     title: string;
     sku: string | null;
     inventory_management: string | null;
@@ -234,6 +237,8 @@ export async function listInventoryMapItems(options?: {
 
         const sku = variant.sku?.trim() || null;
         items.push({
+          variantId: variant.id,
+          productId: product.id,
           sku,
           productTitle: product.title,
           variantTitle: variant.title,
@@ -449,4 +454,40 @@ export async function updateStockQuantity(input: {
 
 export function isShopifyInventoryError(error: unknown): error is Error {
   return error instanceof Error;
+}
+
+export async function setVariantSku(
+  variantId: number,
+  sku: string,
+): Promise<string> {
+  const trimmed = sku.trim();
+  if (!trimmed) {
+    throw new Error("SKU is required.");
+  }
+
+  try {
+    const data = await shopifyAdminFetch<{ variant: { id: number; sku: string } }>(
+      `/variants/${variantId}.json`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          variant: { id: variantId, sku: trimmed },
+        }),
+      },
+    );
+
+    const assigned = data.variant?.sku?.trim();
+    if (!assigned) {
+      throw new Error("Shopify did not return the updated SKU.");
+    }
+
+    return assigned;
+  } catch (error) {
+    if (error instanceof ShopifyApiError && error.status === 403) {
+      throw new Error(
+        "Shopify rejected the SKU update. Add Admin API scope write_products to your app, release a new version, and reinstall on your store.",
+      );
+    }
+    throw error;
+  }
 }

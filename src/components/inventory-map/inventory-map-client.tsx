@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { LayoutGrid, Loader2, RefreshCw, ScanBarcode } from "lucide-react";
+import { LayoutGrid, Loader2, RefreshCw, ScanBarcode, Sparkles } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { MasterChildConfigPanel } from "@/components/inventory-map/master-child-config-panel";
@@ -97,6 +97,8 @@ export function InventoryMapClient() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<StockFilter>("all");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [generatingVariantId, setGeneratingVariantId] = useState<number | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -187,6 +189,35 @@ export function InventoryMapClient() {
       };
     });
   }, [childMappingBySku, items, masterBySku]);
+
+  async function generateSku(variantId: number) {
+    setGeneratingVariantId(variantId);
+    setActionMessage(null);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/shopify/inventory/generate-sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantId }),
+      });
+      const data = (await res.json()) as
+        | { ok: true; sku: string }
+        | { ok: false; error: string };
+
+      if (!data.ok) {
+        setError(data.error);
+        return;
+      }
+
+      setActionMessage(`Assigned SKU ${data.sku}.`);
+      setRefreshKey((value) => value + 1);
+    } catch {
+      setError("Could not generate SKU.");
+    } finally {
+      setGeneratingVariantId(null);
+    }
+  }
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -299,6 +330,10 @@ export function InventoryMapClient() {
             <p className="text-sm text-destructive">{error}</p>
           ) : null}
 
+          {actionMessage ? (
+            <p className="text-sm text-muted-foreground">{actionMessage}</p>
+          ) : null}
+
           {loading ? (
             <div className="flex items-center justify-center py-16 text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
@@ -311,7 +346,7 @@ export function InventoryMapClient() {
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {filteredItems.map((item) => (
                 <div
-                  key={`${item.displayName}-${item.sku ?? "no-sku"}-${item.available}`}
+                  key={item.variantId}
                   className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-3 shadow-sm"
                 >
                   <div className="flex gap-3">
@@ -375,7 +410,23 @@ export function InventoryMapClient() {
                       <ScanBarcode className="size-4" />
                       Update in Stock control
                     </Button>
-                  ) : null}
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      disabled={generatingVariantId === item.variantId}
+                      onClick={() => void generateSku(item.variantId)}
+                    >
+                      {generatingVariantId === item.variantId ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="size-4" />
+                      )}
+                      Generate SKU
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>

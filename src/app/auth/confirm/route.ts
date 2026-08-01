@@ -1,3 +1,4 @@
+import { type EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -7,16 +8,19 @@ import {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
-  const type = searchParams.get("type");
+  const tokenHash = searchParams.get("token_hash");
+  const type = searchParams.get("type") as EmailOtpType | null;
   const defaultNext = type === "recovery" ? "/auth/reset-password" : "/";
   const next = safeRedirectPath(searchParams.get("next"), defaultNext);
 
-  if (code) {
+  if (tokenHash && type) {
     const redirectUrl = new URL(next, request.url);
     const response = NextResponse.redirect(redirectUrl);
     const supabase = createSupabaseRouteHandlerClient(request, response);
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { error } = await supabase.auth.verifyOtp({
+      type,
+      token_hash: tokenHash,
+    });
 
     if (!error) {
       return response;
@@ -24,6 +28,6 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.redirect(
-    new URL("/login?error=auth_callback_failed", request.url),
+    new URL("/login?error=auth_confirm_failed", request.url),
   );
 }

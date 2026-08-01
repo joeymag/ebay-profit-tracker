@@ -15,20 +15,35 @@ import {
 import { Input } from "@/components/ui/input";
 import { createSupabaseBrowserAuthClient } from "@/lib/supabase/browser-auth";
 
+const URL_ERROR_MESSAGES: Record<string, string> = {
+  auth_callback_failed:
+    "That sign-in link is invalid or expired. Request a new password reset email.",
+  auth_confirm_failed:
+    "That reset link is invalid or expired. Request a new password reset email.",
+  reset_session_expired:
+    "Your reset session expired. Request a new password reset email.",
+};
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/";
+  const urlError = searchParams.get("error");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [error, setError] = useState<string | null>(
+    urlError ? (URL_ERROR_MESSAGES[urlError] ?? "Sign-in failed.") : null,
+  );
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setLoading(true);
     setError(null);
+    setResetSent(false);
 
     try {
       const supabase = createSupabaseBrowserAuthClient();
@@ -50,6 +65,40 @@ export function LoginForm() {
       setLoading(false);
     }
   }
+
+  async function handleForgotPassword() {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError("Enter your email above, then click Forgot password.");
+      return;
+    }
+
+    setResetLoading(true);
+    setError(null);
+    setResetSent(false);
+
+    try {
+      const supabase = createSupabaseBrowserAuthClient();
+      const redirectTo = `${window.location.origin}/auth/confirm?next=/auth/reset-password`;
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        trimmedEmail,
+        { redirectTo },
+      );
+
+      if (resetError) {
+        setError(resetError.message);
+        return;
+      }
+
+      setResetSent(true);
+    } catch {
+      setError("Could not send reset email. Check Supabase auth is configured.");
+    } finally {
+      setResetLoading(false);
+    }
+  }
+
+  const busy = loading || resetLoading;
 
   return (
     <Card className="surface-card w-full max-w-md border-primary/20">
@@ -78,13 +127,23 @@ export function LoginForm() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
               required
-              disabled={loading}
+              disabled={busy}
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium">
-              Password
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="password" className="text-sm font-medium">
+                Password
+              </label>
+              <button
+                type="button"
+                className="text-xs text-primary hover:underline disabled:opacity-50"
+                onClick={handleForgotPassword}
+                disabled={busy}
+              >
+                Forgot password?
+              </button>
+            </div>
             <Input
               id="password"
               type="password"
@@ -92,11 +151,18 @@ export function LoginForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              disabled={loading}
+              disabled={busy}
             />
           </div>
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <Button type="submit" className="w-full" size="lg" disabled={loading}>
+          {resetSent ? (
+            <p className="text-sm text-muted-foreground">
+              Reset email sent. Open the link on the same site URL you use for
+              this app (check the address bar matches your Supabase redirect
+              URLs).
+            </p>
+          ) : null}
+          <Button type="submit" className="w-full" size="lg" disabled={busy}>
             {loading ? (
               <>
                 <Loader2 className="animate-spin" />
