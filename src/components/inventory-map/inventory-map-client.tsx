@@ -6,6 +6,10 @@ import { LayoutGrid, Loader2, RefreshCw, ScanBarcode, Sparkles } from "lucide-re
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { MasterChildConfigPanel } from "@/components/inventory-map/master-child-config-panel";
+import {
+  ProductConfigGroup,
+  type ProductConfigGroupData,
+} from "@/components/inventory-map/product-config-group";
 import { ReorderBadge } from "@/components/stock/reorder-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,10 +51,18 @@ type EnrichedItem = InventoryMapItem & {
   childPiecesPerUnit?: number;
 };
 
-type StockFilter = "all" | "in-stock" | "out-of-stock" | "low-stock" | "has-sku" | "no-sku";
+type StockFilter =
+  | "all"
+  | "config-products"
+  | "in-stock"
+  | "out-of-stock"
+  | "low-stock"
+  | "has-sku"
+  | "no-sku";
 
 const filterLabels: Record<StockFilter, string> = {
   all: "All",
+  "config-products": "Config products",
   "in-stock": "In stock",
   "out-of-stock": "Out of stock",
   "low-stock": "Low (1–5)",
@@ -190,9 +202,11 @@ export function InventoryMapClient() {
     });
   }, [childMappingBySku, items, masterBySku]);
 
-  async function generateSku(variantId: number) {
+  async function assignSkuToVariant(
+    variantId: number,
+    options?: { refresh?: boolean },
+  ): Promise<string | null> {
     setGeneratingVariantId(variantId);
-    setActionMessage(null);
     setError(null);
 
     try {
@@ -207,17 +221,57 @@ export function InventoryMapClient() {
 
       if (!data.ok) {
         setError(data.error);
-        return;
+        return null;
       }
 
-      setActionMessage(`Assigned SKU ${data.sku}.`);
-      setRefreshKey((value) => value + 1);
+      if (options?.refresh !== false) {
+        setActionMessage(`Assigned SKU ${data.sku}.`);
+        setRefreshKey((value) => value + 1);
+      }
+
+      return data.sku;
     } catch {
       setError("Could not generate SKU.");
+      return null;
     } finally {
       setGeneratingVariantId(null);
     }
   }
+
+  async function generateSku(
+    variantId: number,
+    options?: { refresh?: boolean },
+  ): Promise<string | null> {
+    if (options?.refresh !== false) {
+      setActionMessage(null);
+    }
+    return assignSkuToVariant(variantId, options);
+  }
+
+  async function generateAllSkus(variantIds: number[]) {
+    setActionMessage(null);
+    setError(null);
+
+    const assigned: string[] = [];
+    for (const variantId of variantIds) {
+      const sku = await assignSkuToVariant(variantId, { refresh: false });
+      if (!sku) {
+        return;
+      }
+      assigned.push(sku);
+    }
+
+    setActionMessage(`Assigned ${assigned.length} SKUs.`);
+    setRefreshKey((value) => value + 1);
+  }
+
+  const variantCountByProduct = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const item of enrichedItems) {
+      counts.set(item.productId, (counts.get(item.productId) ?? 0) + 1);
+    }
+    return counts;
+  }, [enrichedItems]);
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -238,6 +292,11 @@ export function InventoryMapClient() {
       if (filter === "no-sku" && item.sku) {
         return false;
       }
+      if (filter === "config-products") {
+        if ((variantCountByProduct.get(item.productId) ?? 0) < 2) {
+          return false;
+        }
+      }
 
       if (!query) {
         return true;
@@ -249,7 +308,48 @@ export function InventoryMapClient() {
         item.productTitle.toLowerCase().includes(query)
       );
     });
-  }, [enrichedItems, filter, search]);
+  }, [enrichedItems, filter, search, variantCountByProduct]);
+
+  const { configProductGroups, singleVariantItems } = useMemo(() => {
+    const byProduct = new Map<number, EnrichedItem[]>();
+
+    for (const item of filteredItems) {
+      const list = byProduct.get(item.productId) ?? [];
+      list.push(item);
+      byProduct.set(item.productId, list);
+    }
+
+    const configProductGroups: ProductConfigGroupData[] = [];
+    const singleVariantItems: EnrichedItem[] = [];
+
+    for (const [productId, variants] of byProduct) {
+      const sorted = [...variants].sort((a, b) =>
+        a.variantTitle.localeCompare(b.variantTitle),
+      );
+
+      if (sorted.length > 1) {
+        configProductGroups.push({
+          productId,
+          productTitle: sorted[0]!.productTitle,
+          imageUrl: sorted[0]!.imageUrl,
+          variants: sorted,
+        });
+      } else {
+        singleVariantItems.push(sorted[0]!);
+      }
+    }
+
+    configProductGroups.sort((a, b) =>
+      a.productTitle.localeCompare(b.productTitle),
+    );
+    singleVariantItems.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    return { configProductGroups, singleVariantItems };
+  }, [filteredItems]);
+
+  const visibleConfigGroups = configProductGroups;
+  const visibleSingleItems = filter === "config-products" ? [] : singleVariantItems;
+  const visibleCount = visibleConfigGroups.length + visibleSingleItems.length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -280,8 +380,9 @@ export function InventoryMapClient() {
               Inventory map
             </CardTitle>
             <CardDescription>
-              Live stock from Shopify for every tracked variant. Search by product
-              or SKU, then update quantities on{" "}
+              Live stock from Shopify for every tracked variant. Config products
+              with multiple variants are grouped so you can set SKUs, master pack
+              size, and child pieces together. Update quantities on{" "}
               <Link href="/stock" className="text-primary hover:underline">
                 Stock control
               </Link>
@@ -342,9 +443,29 @@ export function InventoryMapClient() {
             <p className="py-12 text-center text-muted-foreground">
               No variants match your filters.
             </p>
+          ) : visibleCount === 0 ? (
+            <p className="py-12 text-center text-muted-foreground">
+              No config products match your filters.
+            </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {filteredItems.map((item) => (
+              {visibleConfigGroups.map((group) => (
+                <ProductConfigGroup
+                  key={group.productId}
+                  group={group}
+                  generatingVariantId={generatingVariantId}
+                  saving={loading}
+                  onGenerateSku={generateSku}
+                  onGenerateAllSkus={generateAllSkus}
+                  onSaved={() => {
+                    setActionMessage(`Saved master and child mappings for ${group.productTitle}.`);
+                    setRefreshKey((value) => value + 1);
+                  }}
+                  onError={setError}
+                />
+              ))}
+
+              {visibleSingleItems.map((item) => (
                 <div
                   key={item.variantId}
                   className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-3 shadow-sm"
@@ -432,9 +553,14 @@ export function InventoryMapClient() {
             </div>
           )}
 
-          {!loading && filteredItems.length > 0 ? (
+          {!loading && visibleCount > 0 ? (
             <p className="text-sm text-muted-foreground">
-              Showing {filteredItems.length} of {items.length} tracked variants
+              Showing {visibleConfigGroups.length} config product
+              {visibleConfigGroups.length === 1 ? "" : "s"} (
+              {visibleConfigGroups.reduce((sum, group) => sum + group.variants.length, 0)}{" "}
+              variants) and {visibleSingleItems.length} single variant
+              {visibleSingleItems.length === 1 ? "" : "s"} · {filteredItems.length} of{" "}
+              {items.length} total
             </p>
           ) : null}
         </CardContent>
