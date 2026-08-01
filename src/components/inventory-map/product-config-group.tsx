@@ -68,20 +68,41 @@ function stockTone(available: number): string {
   return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 }
 
+function parsePackFromVariantTitle(title: string): number | null {
+  const match = title.match(/\/\s*(\d+(?:\.\d+)?)\s*$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(match[1]);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function variantPackHint(variant: ConfigGroupVariant): number | null {
+  return variant.packSize ?? parsePackFromVariantTitle(variant.variantTitle);
+}
+
 function pickDefaultMasterVariant(variants: ConfigGroupVariant[]): ConfigGroupVariant {
-  const bulkCandidate = [...variants]
-    .filter((variant) => (variant.packSize ?? 0) >= 50)
-    .sort((a, b) => (b.packSize ?? 0) - (a.packSize ?? 0))[0];
+  const ranked = [...variants].sort(
+    (a, b) => (variantPackHint(b) ?? 0) - (variantPackHint(a) ?? 0),
+  );
+
+  const bulkCandidate = ranked.find((variant) => (variantPackHint(variant) ?? 0) >= 50);
   if (bulkCandidate) {
     return bulkCandidate;
   }
 
-  return variants.find((variant) => variant.sku) ?? variants[0]!;
+  return ranked[0] ?? variants[0]!;
 }
 
 function defaultMasterPackSize(variant: ConfigGroupVariant): string {
-  if (variant.packSize && variant.packSize >= 50) {
-    return String(Math.floor(variant.packSize));
+  const hint = variantPackHint(variant);
+  if (hint && hint >= 50) {
+    return String(Math.floor(hint));
   }
   return "1000";
 }
@@ -90,10 +111,13 @@ function defaultChildPieces(variant: ConfigGroupVariant): string {
   if (variant.childPiecesPerUnit) {
     return String(variant.childPiecesPerUnit);
   }
-  if (variant.packSize && variant.packSize > 0 && variant.packSize < 50) {
-    return String(variant.packSize);
+
+  const hint = variantPackHint(variant);
+  if (hint && hint > 0) {
+    return String(hint);
   }
-  return "10";
+
+  return "1";
 }
 
 export function ProductConfigGroup({
@@ -122,9 +146,29 @@ export function ProductConfigGroup({
   });
   const [localSaving, setLocalSaving] = useState(false);
 
+  const resolvedMasterVariantId = useMemo(() => {
+    if (group.variants.some((variant) => variant.variantId === masterVariantId)) {
+      return masterVariantId;
+    }
+    return pickDefaultMasterVariant(group.variants).variantId;
+  }, [group.variants, masterVariantId]);
+
+  const masterVariant = useMemo(
+    () =>
+      group.variants.find((variant) => variant.variantId === resolvedMasterVariantId) ??
+      pickDefaultMasterVariant(group.variants),
+    [group.variants, resolvedMasterVariantId],
+  );
+
+  function selectMasterVariant(variant: ConfigGroupVariant) {
+    setMasterVariantId(variant.variantId);
+    setMasterPackSize(defaultMasterPackSize(variant));
+  }
+
   const childVariants = useMemo(
-    () => group.variants.filter((variant) => variant.variantId !== masterVariantId),
-    [group.variants, masterVariantId],
+    () =>
+      group.variants.filter((variant) => variant.variantId !== resolvedMasterVariantId),
+    [group.variants, resolvedMasterVariantId],
   );
 
   const missingSkuCount = group.variants.filter((variant) => !variant.sku).length;
@@ -140,9 +184,6 @@ export function ProductConfigGroup({
   }
 
   async function handleSaveGroup() {
-    const masterVariant = group.variants.find(
-      (variant) => variant.variantId === masterVariantId,
-    );
     if (!masterVariant) {
       onError("Select a master variant.");
       return;
@@ -283,6 +324,63 @@ export function ProductConfigGroup({
 
       {expanded ? (
         <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border/60 bg-muted/15 p-3">
+            <div className="min-w-[220px] flex-1 space-y-1">
+              <label
+                htmlFor={`master-select-${group.productId}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Master variant (bulk box)
+              </label>
+              <select
+                id={`master-select-${group.productId}`}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={resolvedMasterVariantId}
+                disabled={busy}
+                onChange={(event) => {
+                  const variant = group.variants.find(
+                    (item) => item.variantId === Number(event.target.value),
+                  );
+                  if (variant) {
+                    selectMasterVariant(variant);
+                  }
+                }}
+              >
+                {group.variants.map((variant) => (
+                  <option key={variant.variantId} value={variant.variantId}>
+                    {variant.variantTitle === "Default Title"
+                      ? "Default"
+                      : variant.variantTitle}
+                    {variantPackHint(variant)
+                      ? ` · ${variantPackHint(variant)} pc pack`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor={`master-pack-${group.productId}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Master pack size (pieces per box)
+              </label>
+              <Input
+                id={`master-pack-${group.productId}`}
+                inputMode="numeric"
+                value={masterPackSize}
+                disabled={busy}
+                onChange={(e) => setMasterPackSize(e.target.value)}
+                placeholder="e.g. 1000"
+                className="h-10 w-36"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Pick the bulk listing (e.g. m10 / 100). All other sizes become
+              child SKUs that deduct pieces from this master pool.
+            </p>
+          </div>
+
           <div className="overflow-x-auto rounded-lg border border-border/60">
             <table className="min-w-full text-sm">
               <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
@@ -291,25 +389,41 @@ export function ProductConfigGroup({
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">Stock</th>
                   <th className="px-3 py-2 font-medium">Role</th>
-                  <th className="px-3 py-2 font-medium">Pack / pieces</th>
+                  <th className="px-3 py-2 font-medium">Pieces per unit sold</th>
                   <th className="px-3 py-2 font-medium">Sales</th>
                   <th className="px-3 py-2 font-medium" />
                 </tr>
               </thead>
               <tbody>
                 {group.variants.map((variant) => {
-                  const isMaster = variant.variantId === masterVariantId;
+                  const isMaster = variant.variantId === resolvedMasterVariantId;
+                  const packHint = variantPackHint(variant);
                   return (
-                    <tr key={variant.variantId} className="border-t border-border/50">
+                    <tr
+                      key={variant.variantId}
+                      className={cn(
+                        "border-t border-border/50",
+                        isMaster && "bg-primary/5",
+                      )}
+                    >
                       <td className="px-3 py-3 align-top">
-                        <p className="font-medium">
-                          {variant.variantTitle === "Default Title"
-                            ? "Default"
-                            : variant.variantTitle}
-                        </p>
-                        {variant.packSize ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">
+                            {variant.variantTitle === "Default Title"
+                              ? "Default"
+                              : variant.variantTitle}
+                          </p>
+                          {isMaster ? (
+                            <Badge variant="outline" className="border-primary/40 text-primary">
+                              Master
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">Child</Badge>
+                          )}
+                        </div>
+                        {packHint ? (
                           <p className="text-xs text-muted-foreground">
-                            Option hint: {variant.packSize} pc
+                            Pack hint: {packHint} pc per unit sold
                           </p>
                         ) : null}
                       </td>
@@ -342,30 +456,25 @@ export function ProductConfigGroup({
                         </Badge>
                       </td>
                       <td className="px-3 py-3 align-top">
-                        <label className="flex items-center gap-2 text-xs">
-                          <input
-                            type="radio"
-                            name={`master-${group.productId}`}
-                            checked={isMaster}
+                        {isMaster ? (
+                          <span className="text-xs font-medium text-primary">
+                            Bulk box
+                          </span>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
                             disabled={busy}
-                            onChange={() => {
-                              setMasterVariantId(variant.variantId);
-                              setMasterPackSize(defaultMasterPackSize(variant));
-                            }}
-                          />
-                          {isMaster ? "Master (bulk)" : "Child"}
-                        </label>
+                            onClick={() => selectMasterVariant(variant)}
+                          >
+                            Set as master
+                          </Button>
+                        )}
                       </td>
                       <td className="px-3 py-3 align-top">
                         {isMaster ? (
-                          <Input
-                            inputMode="numeric"
-                            value={masterPackSize}
-                            disabled={busy}
-                            onChange={(e) => setMasterPackSize(e.target.value)}
-                            placeholder="Pack size"
-                            className="h-8 w-28"
-                          />
+                          <span className="text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
                             inputMode="decimal"
