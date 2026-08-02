@@ -37,3 +37,25 @@ export function getShopifyAdminBaseUrl(storeDomain: string, apiVersion: string) 
   const host = normalizeShopifyDomain(storeDomain);
   return `https://${host}/admin/api/${apiVersion}`;
 }
+
+export function getShopifyStoreHost() {
+  const { storeDomain } = getShopifyConfig();
+  return storeDomain ? normalizeShopifyDomain(storeDomain) : null;
+}
+
+export function getShopifyProductAdminUrl(productId: number) {
+  const host = getShopifyStoreHost();
+  if (!host) {
+    return null;
+  }
+  return `https://${host}/admin/products/${productId}`;
+}
+
+export function getShopifyStorefrontProductUrl(productHandle: string) {
+  const host = getShopifyStoreHost();
+  const handle = productHandle.trim();
+  if (!host || !handle) {
+    return null;
+  }
+  return `https://${host}/products/${handle}`;
+}

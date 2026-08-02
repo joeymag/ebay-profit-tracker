@@ -6,6 +6,10 @@ import {
 } from "@/lib/shopify/graphql";
 import { ShopifyApiError, shopifyAdminFetch, shopifyAdminFetchWithLink } from "@/lib/shopify/client";
 import {
+  getShopifyProductAdminUrl,
+  getShopifyStorefrontProductUrl,
+} from "@/lib/shopify/config";
+import {
   attachSalesInsight,
   getUnitsSoldForSku,
   getUnitsSoldMap,
@@ -25,11 +29,15 @@ export type StockLocationLevel = {
 export type StockSkuLookup = {
   sku: string;
   variantId: number;
+  productId: number;
+  productHandle: string;
   inventoryItemId: number;
   productTitle: string;
   variantTitle: string;
   displayName: string;
   imageUrl: string | null;
+  adminUrl: string | null;
+  storefrontUrl: string | null;
   tracked: boolean;
   locations: StockLocationLevel[];
 } & StockSalesInsight;
@@ -291,7 +299,9 @@ const VARIANT_BY_SKU_QUERY = `
             value
           }
           product {
+            id
             title
+            handle
             featuredImage {
               url
             }
@@ -316,7 +326,9 @@ type VariantBySkuResponse = {
         displayName: string;
         selectedOptions: { name: string; value: string }[];
         product: {
+          id: string;
           title: string;
+          handle: string;
           featuredImage: { url: string } | null;
         };
         inventoryItem: {
@@ -350,15 +362,21 @@ async function buildStockSkuLookup(match: VariantBySkuNode): Promise<StockSkuLoo
   const sales = await getUnitsSoldForSku(match.sku);
   const packSize = parsePackSizeFromOptions(match.selectedOptions ?? []);
   const available = locations.reduce((sum, level) => sum + level.available, 0);
+  const productId = parseShopifyGid(match.product.id);
+  const productHandle = match.product.handle;
 
   return {
     sku: match.sku,
     variantId: parseShopifyGid(match.id),
+    productId,
+    productHandle,
     inventoryItemId,
     productTitle: match.product.title,
     variantTitle: match.title,
     displayName: match.displayName,
     imageUrl: match.product.featuredImage?.url ?? null,
+    adminUrl: getShopifyProductAdminUrl(productId),
+    storefrontUrl: getShopifyStorefrontProductUrl(productHandle),
     tracked: match.inventoryItem.tracked,
     locations,
     ...attachSalesInsight(available, sales, packSize),

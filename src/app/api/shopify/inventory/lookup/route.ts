@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   isShopifyInventoryError,
-  lookupStockBySku,
+  lookupAllStockBySku,
 } from "@/lib/shopify/inventory";
 
 export async function GET(request: Request) {
@@ -17,15 +17,19 @@ export async function GET(request: Request) {
   }
 
   try {
-    const item = await lookupStockBySku(sku);
-    if (!item) {
+    const listings = await lookupAllStockBySku(sku);
+    if (listings.length === 0) {
       return NextResponse.json(
         { ok: false, error: `No product found for SKU "${sku}".` },
         { status: 404 },
       );
     }
 
-    return NextResponse.json({ ok: true, item });
+    return NextResponse.json({
+      ok: true,
+      item: listings[0],
+      listings,
+    });
   } catch (error) {
     const message = isShopifyInventoryError(error)
       ? error.message

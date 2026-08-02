@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, ScanBarcode } from "lucide-react";
+import { Check, ExternalLink, Loader2, ScanBarcode } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -17,14 +17,22 @@ import { Input } from "@/components/ui/input";
 import { OutOfStockList } from "@/components/stock/out-of-stock-list";
 import { StockReorderInsight } from "@/components/stock/stock-reorder-insight";
 import type { StockSkuLookup } from "@/lib/shopify/inventory";
+import { cn } from "@/lib/utils";
 
 type LookupResponse =
-  | { ok: true; item: StockSkuLookup }
+  | { ok: true; item: StockSkuLookup; listings: StockSkuLookup[] }
   | { ok: false; error: string };
 
 type SetResponse =
   | { ok: true; item: StockSkuLookup; available: number }
   | { ok: false; error: string };
+
+function listingAvailable(listing: StockSkuLookup, locationId: number | null) {
+  if (locationId != null) {
+    return listing.locations.find((level) => level.locationId === locationId)?.available ?? 0;
+  }
+  return listing.locations.reduce((sum, level) => sum + level.available, 0);
+}
 
 export function StockControlClient() {
   const skuInputRef = useRef<HTMLInputElement>(null);
@@ -33,6 +41,7 @@ export function StockControlClient() {
   const [skuInput, setSkuInput] = useState("");
   const [qtyInput, setQtyInput] = useState("");
   const [item, setItem] = useState<StockSkuLookup | null>(null);
+  const [listings, setListings] = useState<StockSkuLookup[]>([]);
   const [locationId, setLocationId] = useState<number | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -58,6 +67,7 @@ export function StockControlClient() {
     setError(null);
     setSuccess(null);
     setItem(null);
+    setListings([]);
 
     try {
       const res = await fetch(
@@ -72,6 +82,7 @@ export function StockControlClient() {
       }
 
       setItem(data.item);
+      setListings(data.listings);
       setSkuInput(data.item.sku);
       const primaryLocation = data.item.locations[0];
       setLocationId(primaryLocation?.locationId ?? null);
@@ -127,6 +138,7 @@ export function StockControlClient() {
 
       setSkuInput("");
       setItem(null);
+      setListings([]);
       setLocationId(null);
       setOutOfStockRefreshKey((key) => key + 1);
       focusSkuInput();
@@ -239,6 +251,81 @@ export function StockControlClient() {
             </div>
 
             <StockReorderInsight available={availableNow} sales={item} />
+
+            {listings.length > 0 ? (
+              <div className="space-y-2 rounded-lg border border-border/60 bg-muted/15 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">
+                    Shopify listing{listings.length === 1 ? "" : "s"} for this SKU
+                  </p>
+                  {listings.length > 1 ? (
+                    <Badge variant="outline">
+                      {listings.length} listings share this SKU
+                    </Badge>
+                  ) : null}
+                </div>
+                <ul className="space-y-2">
+                  {listings.map((listing) => {
+                    const stock = listingAvailable(listing, locationId);
+                    return (
+                      <li
+                        key={`${listing.productId}-${listing.variantId}`}
+                        className="flex flex-col gap-2 rounded-md border border-border/50 bg-background p-3 sm:flex-row sm:items-center"
+                      >
+                        <div className="flex min-w-0 flex-1 gap-3">
+                          <LineItemImage
+                            src={listing.imageUrl}
+                            alt={listing.productTitle}
+                            className="size-12 shrink-0 rounded-md"
+                          />
+                          <div className="min-w-0 space-y-1">
+                            <p className="font-medium leading-snug">{listing.productTitle}</p>
+                            {listing.variantTitle !== "Default Title" ? (
+                              <p className="text-sm text-muted-foreground">
+                                {listing.variantTitle}
+                              </p>
+                            ) : null}
+                            <p className="text-xs text-muted-foreground">
+                              Stock on this listing:{" "}
+                              <span className="font-semibold text-foreground">{stock}</span>
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 sm:shrink-0">
+                          {listing.adminUrl ? (
+                            <a
+                              href={listing.adminUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                            >
+                              <ExternalLink className="size-3.5" />
+                              Edit in Shopify
+                            </a>
+                          ) : null}
+                          {listing.storefrontUrl ? (
+                            <a
+                              href={listing.storefrontUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+                            >
+                              <ExternalLink className="size-3.5" />
+                              View listing
+                            </a>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {listings.length > 1 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Saving stock here updates every listing above to the same quantity.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             {item.locations.length > 1 ? (
               <div className="space-y-2">
