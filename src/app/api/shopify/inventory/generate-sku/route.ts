@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { suggestUniqueSku } from "@/lib/inventory/sku-uniqueness";
+import { isSkuTaken, suggestUniqueSku } from "@/lib/inventory/sku-uniqueness";
 import {
   isShopifyInventoryError,
   setVariantSku,
@@ -9,6 +9,7 @@ import {
 type GenerateSkuBody = {
   variantId?: number;
   prefix?: string;
+  sku?: string;
 };
 
 export async function POST(request: Request) {
@@ -28,15 +29,38 @@ export async function POST(request: Request) {
   }
 
   const prefix = body.prefix?.trim() || "INV";
+  const customSku = body.sku?.trim();
+  const variantIdInt = Math.floor(variantId);
 
   try {
-    const sku = await suggestUniqueSku(prefix);
-    const assignedSku = await setVariantSku(Math.floor(variantId), sku);
+    let sku: string;
+
+    if (customSku) {
+      if (customSku.length > 255) {
+        return NextResponse.json(
+          { ok: false, error: "SKU must be 255 characters or fewer." },
+          { status: 400 },
+        );
+      }
+
+      if (await isSkuTaken(customSku, { exceptVariantId: variantIdInt })) {
+        return NextResponse.json(
+          { ok: false, error: `SKU "${customSku}" is already in use.` },
+          { status: 409 },
+        );
+      }
+
+      sku = customSku;
+    } else {
+      sku = await suggestUniqueSku(prefix);
+    }
+
+    const assignedSku = await setVariantSku(variantIdInt, sku);
 
     return NextResponse.json({
       ok: true,
       sku: assignedSku,
-      variantId: Math.floor(variantId),
+      variantId: variantIdInt,
     });
   } catch (error) {
     const message = isShopifyInventoryError(error)

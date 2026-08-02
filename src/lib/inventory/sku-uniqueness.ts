@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 
 import { createSupabaseAdmin } from "@/lib/supabase/client";
-import { lookupStockBySku } from "@/lib/shopify/inventory";
+import { lookupAllStockBySku } from "@/lib/shopify/inventory";
 
 const SKU_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -64,14 +64,23 @@ async function isSkuTakenInDatabase(sku: string): Promise<boolean> {
 }
 
 /** True if SKU exists in Shopify or Supabase inventory/product tables. */
-export async function isSkuTaken(sku: string): Promise<boolean> {
+export async function isSkuTaken(
+  sku: string,
+  options?: { exceptVariantId?: number },
+): Promise<boolean> {
   const trimmed = sku.trim();
   if (!trimmed) {
     return true;
   }
 
-  const shopifyMatch = await lookupStockBySku(trimmed);
-  if (shopifyMatch) {
+  const shopifyMatches = await lookupAllStockBySku(trimmed);
+  for (const match of shopifyMatches) {
+    if (
+      options?.exceptVariantId != null &&
+      match.variantId === options.exceptVariantId
+    ) {
+      continue;
+    }
     return true;
   }
 

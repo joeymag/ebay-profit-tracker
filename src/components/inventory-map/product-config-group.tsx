@@ -20,6 +20,7 @@ import {
   buildChildMasterOptions,
   ChildMasterSelector,
 } from "@/components/inventory-map/child-master-selector";
+import { VariantSkuAssign } from "@/components/inventory-map/variant-sku-assign";
 import { cn } from "@/lib/utils";
 
 export type ConfigGroupVariant = {
@@ -56,7 +57,7 @@ type ProductConfigGroupProps = {
   saving: boolean;
   onGenerateSku: (
     variantId: number,
-    options?: { refresh?: boolean },
+    options?: { refresh?: boolean; sku?: string },
   ) => Promise<string | null>;
   onGenerateAllSkus: (variantIds: number[]) => Promise<void>;
   onSaved: (message?: string) => void;
@@ -620,20 +621,12 @@ export function ProductConfigGroup({
                         {variant.sku ? (
                           <p className="font-mono text-xs">{variant.sku}</p>
                         ) : (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={busy}
-                            onClick={() => void onGenerateSku(variant.variantId)}
-                          >
-                            {generatingVariantId === variant.variantId ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <Sparkles className="size-4" />
-                            )}
-                            Generate
-                          </Button>
+                          <VariantSkuAssign
+                            variantId={variant.variantId}
+                            busy={busy || generatingVariantId === variant.variantId}
+                            compact
+                            onAssign={onGenerateSku}
+                          />
                         )}
                       </td>
                       <td className="px-3 py-3 align-top">

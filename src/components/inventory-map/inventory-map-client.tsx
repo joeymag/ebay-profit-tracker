@@ -11,6 +11,7 @@ import {
   type ProductConfigGroupData,
 } from "@/components/inventory-map/product-config-group";
 import { SingleVariantMapping } from "@/components/inventory-map/single-variant-mapping";
+import { VariantSkuAssign } from "@/components/inventory-map/variant-sku-assign";
 import { ReorderBadge } from "@/components/stock/reorder-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -222,7 +223,7 @@ export function InventoryMapClient() {
 
   async function assignSkuToVariant(
     variantId: number,
-    options?: { refresh?: boolean },
+    options?: { refresh?: boolean; sku?: string },
   ): Promise<string | null> {
     setGeneratingVariantId(variantId);
     setError(null);
@@ -231,7 +232,10 @@ export function InventoryMapClient() {
       const res = await fetch("/api/shopify/inventory/generate-sku", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ variantId }),
+        body: JSON.stringify({
+          variantId,
+          sku: options?.sku,
+        }),
       });
       const data = (await res.json()) as
         | { ok: true; sku: string }
@@ -249,7 +253,7 @@ export function InventoryMapClient() {
 
       return data.sku;
     } catch {
-      setError("Could not generate SKU.");
+      setError(options?.sku ? "Could not assign SKU." : "Could not generate SKU.");
       return null;
     } finally {
       setGeneratingVariantId(null);
@@ -258,7 +262,7 @@ export function InventoryMapClient() {
 
   async function generateSku(
     variantId: number,
-    options?: { refresh?: boolean },
+    options?: { refresh?: boolean; sku?: string },
   ): Promise<string | null> {
     if (options?.refresh !== false) {
       setActionMessage(null);
@@ -575,21 +579,11 @@ export function InventoryMapClient() {
                       Update in Stock control
                     </Button>
                   ) : (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      disabled={generatingVariantId === item.variantId}
-                      onClick={() => void generateSku(item.variantId)}
-                    >
-                      {generatingVariantId === item.variantId ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="size-4" />
-                      )}
-                      Generate SKU
-                    </Button>
+                    <VariantSkuAssign
+                      variantId={item.variantId}
+                      busy={generatingVariantId === item.variantId}
+                      onAssign={generateSku}
+                    />
                   )}
                 </div>
                 );
