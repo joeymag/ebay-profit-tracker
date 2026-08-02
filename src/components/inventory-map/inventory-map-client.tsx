@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { LayoutGrid, Loader2, RefreshCw, ScanBarcode, Sparkles } from "lucide-react";
+import { LayoutGrid, Loader2, RefreshCw, ScanBarcode } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { MasterChildConfigPanel } from "@/components/inventory-map/master-child-config-panel";
@@ -113,6 +113,12 @@ export function InventoryMapClient() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [generatingVariantId, setGeneratingVariantId] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [pendingSkuByVariantId, setPendingSkuByVariantId] = useState<
+    Record<number, string>
+  >({});
+  const [savingPendingSkus, setSavingPendingSkus] = useState(false);
+
+  const pendingSkuCount = Object.keys(pendingSkuByVariantId).length;
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -246,7 +252,7 @@ export function InventoryMapClient() {
         return null;
       }
 
-      if (options?.refresh !== false) {
+      if (options?.refresh) {
         setActionMessage(`Assigned SKU ${data.sku}.`);
         setRefreshKey((value) => value + 1);
       }
@@ -260,31 +266,142 @@ export function InventoryMapClient() {
     }
   }
 
-  async function generateSku(
-    variantId: number,
-    options?: { refresh?: boolean; sku?: string },
-  ): Promise<string | null> {
-    if (options?.refresh !== false) {
-      setActionMessage(null);
+  async function suggestSku(prefix = "INV"): Promise<string | null> {
+    try {
+      const res = await fetch(
+        `/api/shopify/inventory/generate-sku?prefix=${encodeURIComponent(prefix)}`,
+      );
+      const data = (await res.json()) as
+        | { ok: true; sku: string }
+        | { ok: false; error: string };
+
+      if (!data.ok) {
+        setError(data.error);
+        return null;
+      }
+
+      return data.sku;
+    } catch {
+      setError("Could not generate SKU.");
+      return null;
     }
-    return assignSkuToVariant(variantId, options);
   }
 
-  async function generateAllSkus(variantIds: number[]) {
-    setActionMessage(null);
-    setError(null);
-
-    const assigned: string[] = [];
-    for (const variantId of variantIds) {
-      const sku = await assignSkuToVariant(variantId, { refresh: false });
-      if (!sku) {
-        return;
-      }
-      assigned.push(sku);
+  function stageSku(variantId: number, sku: string) {
+    const trimmed = sku.trim();
+    if (!trimmed) {
+      return;
     }
 
-    setActionMessage(`Assigned ${assigned.length} SKUs.`);
+    setPendingSkuByVariantId((current) => ({
+      ...current,
+      [variantId]: trimmed,
+    }));
+    setError(null);
+  }
+
+  function clearPendingSku(variantId: number) {
+    setPendingSkuByVariantId((current) => {
+      const next = { ...current };
+      delete next[variantId];
+      return next;
+    });
+  }
+
+  async function flushPendingSkus(
+    variantIds: number[],
+  ): Promise<{ ok: true; assigned: Record<number, string> } | { ok: false }> {
+    const assigned: Record<number, string> = {};
+    const ids = [...new Set(variantIds)];
+
+    setSavingPendingSkus(true);
+    setError(null);
+
+    try {
+      for (const variantId of ids) {
+        const sku = pendingSkuByVariantId[variantId]?.trim();
+        if (!sku) {
+          continue;
+        }
+
+        const result = await assignSkuToVariant(variantId, { sku, refresh: false });
+        if (!result) {
+          return { ok: false };
+        }
+
+        assigned[variantId] = result;
+      }
+
+      if (Object.keys(assigned).length > 0) {
+        setPendingSkuByVariantId((current) => {
+          const next = { ...current };
+          for (const variantId of Object.keys(assigned).map(Number)) {
+            delete next[variantId];
+          }
+          return next;
+        });
+      }
+
+      return { ok: true, assigned };
+    } finally {
+      setSavingPendingSkus(false);
+    }
+  }
+
+  async function saveAllPendingSkus() {
+    const variantIds = Object.keys(pendingSkuByVariantId).map(Number);
+    if (variantIds.length === 0) {
+      return;
+    }
+
+    const result = await flushPendingSkus(variantIds);
+    if (!result.ok) {
+      return;
+    }
+
+    setActionMessage(`Saved ${Object.keys(result.assigned).length} SKU(s) to Shopify.`);
     setRefreshKey((value) => value + 1);
+  }
+
+  async function stageGeneratedSkusForVariants(variantIds: number[]) {
+    setError(null);
+    setActionMessage(null);
+
+    const used = new Set(
+      Object.values(pendingSkuByVariantId).map((sku) => sku.toUpperCase()),
+    );
+    const next = { ...pendingSkuByVariantId };
+    let staged = 0;
+
+    for (const variantId of variantIds) {
+      if (next[variantId]) {
+        continue;
+      }
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const sku = await suggestSku();
+        if (!sku) {
+          break;
+        }
+
+        const key = sku.toUpperCase();
+        if (used.has(key)) {
+          continue;
+        }
+
+        next[variantId] = sku;
+        used.add(key);
+        staged += 1;
+        break;
+      }
+    }
+
+    setPendingSkuByVariantId(next);
+    if (staged > 0) {
+      setActionMessage(
+        `Staged ${staged} SKU(s). Add more or click Save SKUs to Shopify when ready.`,
+      );
+    }
   }
 
   const variantCountByProduct = useMemo(() => {
@@ -402,9 +519,10 @@ export function InventoryMapClient() {
               Inventory map
             </CardTitle>
             <CardDescription>
-              Live stock from Shopify for every tracked variant. Config products
-              with multiple variants are grouped so you can set SKUs, master pack
-              size, and child pieces together. Update quantities on{" "}
+              Live stock from Shopify for every tracked variant. Add SKUs locally,
+              then click <strong>Save SKUs to Shopify</strong> when you are done —
+              the page will not reload until then. Config products can set master
+              pack size and child pieces together. Update quantities on{" "}
               <Link href="/stock" className="text-primary hover:underline">
                 Stock control
               </Link>
@@ -476,10 +594,14 @@ export function InventoryMapClient() {
                   key={group.productId}
                   group={group}
                   allMasters={masters}
+                  pendingSkuByVariantId={pendingSkuByVariantId}
                   generatingVariantId={generatingVariantId}
-                  saving={loading}
-                  onGenerateSku={generateSku}
-                  onGenerateAllSkus={generateAllSkus}
+                  saving={loading || savingPendingSkus}
+                  onStageSku={stageSku}
+                  onClearPendingSku={clearPendingSku}
+                  onSuggestSku={suggestSku}
+                  onFlushPendingSkus={flushPendingSkus}
+                  onStageGeneratedSkus={stageGeneratedSkusForVariants}
                   onSaved={(message) => {
                     setActionMessage(
                       message ??
@@ -581,8 +703,11 @@ export function InventoryMapClient() {
                   ) : (
                     <VariantSkuAssign
                       variantId={item.variantId}
-                      busy={generatingVariantId === item.variantId}
-                      onAssign={generateSku}
+                      pendingSku={pendingSkuByVariantId[item.variantId]}
+                      disabled={savingPendingSkus}
+                      onStage={stageSku}
+                      onClearPending={clearPendingSku}
+                      onSuggestSku={suggestSku}
                     />
                   )}
                 </div>
@@ -603,6 +728,39 @@ export function InventoryMapClient() {
           ) : null}
         </CardContent>
       </Card>
+
+      {pendingSkuCount > 0 ? (
+        <div className="sticky bottom-4 z-20 mx-auto flex w-full max-w-2xl flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-card p-4 shadow-lg">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">
+              {pendingSkuCount} SKU{pendingSkuCount === 1 ? "" : "s"} ready to save
+            </p>
+            <p className="text-xs text-muted-foreground">
+              SKUs are staged locally until you save them to Shopify.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={savingPendingSkus}
+              onClick={() => setPendingSkuByVariantId({})}
+            >
+              Clear all
+            </Button>
+            <Button
+              type="button"
+              disabled={savingPendingSkus}
+              onClick={() => void saveAllPendingSkus()}
+            >
+              {savingPendingSkus ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : null}
+              Save SKUs to Shopify
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

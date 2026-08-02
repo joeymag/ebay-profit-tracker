@@ -53,13 +53,16 @@ export type ProductConfigGroupData = {
 type ProductConfigGroupProps = {
   group: ProductConfigGroupData;
   allMasters: InventoryMasterWithChildren[];
+  pendingSkuByVariantId: Record<number, string>;
   generatingVariantId: number | null;
   saving: boolean;
-  onGenerateSku: (
-    variantId: number,
-    options?: { refresh?: boolean; sku?: string },
-  ) => Promise<string | null>;
-  onGenerateAllSkus: (variantIds: number[]) => Promise<void>;
+  onStageSku: (variantId: number, sku: string) => void;
+  onClearPendingSku: (variantId: number) => void;
+  onSuggestSku: () => Promise<string | null>;
+  onFlushPendingSkus: (
+    variantIds: number[],
+  ) => Promise<{ ok: true; assigned: Record<number, string> } | { ok: false }>;
+  onStageGeneratedSkus: (variantIds: number[]) => Promise<void>;
   onSaved: (message?: string) => void;
   onError: (message: string | null) => void;
 };
@@ -200,10 +203,14 @@ function buildInitialConfig(
 export function ProductConfigGroup({
   group,
   allMasters,
+  pendingSkuByVariantId,
   generatingVariantId,
   saving,
-  onGenerateSku,
-  onGenerateAllSkus,
+  onStageSku,
+  onClearPendingSku,
+  onSuggestSku,
+  onFlushPendingSkus,
+  onStageGeneratedSkus,
   onSaved,
   onError,
 }: ProductConfigGroupProps) {
@@ -225,7 +232,24 @@ export function ProductConfigGroup({
   const childCount = group.variants.filter(
     (variant) => config.roles[variant.variantId] === "child",
   ).length;
-  const missingSkuCount = group.variants.filter((variant) => !variant.sku).length;
+  const missingSkuCount = group.variants.filter(
+    (variant) => !variant.sku && !pendingSkuByVariantId[variant.variantId],
+  ).length;
+  const pendingSkuCount = group.variants.filter(
+    (variant) => !variant.sku && pendingSkuByVariantId[variant.variantId],
+  ).length;
+
+  function effectiveSku(
+    variant: ConfigGroupVariant,
+    assignedDuringFlush?: Record<number, string>,
+  ): string | null {
+    return (
+      variant.sku ??
+      assignedDuringFlush?.[variant.variantId] ??
+      pendingSkuByVariantId[variant.variantId] ??
+      null
+    );
+  }
 
   const childMasterOptions = useMemo(
     () =>
@@ -292,19 +316,14 @@ export function ProductConfigGroup({
 
   async function handleGenerateAll() {
     const missing = group.variants
-      .filter((variant) => !variant.sku)
+      .filter(
+        (variant) => !variant.sku && !pendingSkuByVariantId[variant.variantId],
+      )
       .map((variant) => variant.variantId);
     if (!missing.length) {
       return;
     }
-    await onGenerateAllSkus(missing);
-  }
-
-  async function resolveVariantSku(variant: ConfigGroupVariant): Promise<string | null> {
-    if (variant.sku) {
-      return variant.sku;
-    }
-    return onGenerateSku(variant.variantId, { refresh: false });
+    await onStageGeneratedSkus(missing);
   }
 
   async function handleSaveGroup() {
@@ -320,10 +339,28 @@ export function ProductConfigGroup({
       return;
     }
 
+    const missingSkus = [...masters, ...children].filter(
+      (variant) => !effectiveSku(variant),
+    );
+    if (missingSkus.length > 0) {
+      onError(
+        `Add SKUs for: ${missingSkus.map((variant) => variantLabel(variant)).join(", ")}.`,
+      );
+      return;
+    }
+
     setLocalSaving(true);
     onError(null);
 
     try {
+      const flushResult = await onFlushPendingSkus(
+        group.variants.map((variant) => variant.variantId),
+      );
+      if (!flushResult.ok) {
+        return;
+      }
+
+      const assignedDuringFlush = flushResult.assigned;
       const masterSkuByVariantId = new Map<number, string>();
       const savedChildSkus: string[] = [];
       const syncMasterSkus = new Set<string>();
@@ -335,8 +372,9 @@ export function ProductConfigGroup({
           return;
         }
 
-        const masterSku = await resolveVariantSku(master);
+        const masterSku = effectiveSku(master, assignedDuringFlush);
         if (!masterSku) {
+          onError(`Missing SKU for ${variantLabel(master)}.`);
           return;
         }
 
@@ -373,8 +411,9 @@ export function ProductConfigGroup({
           return;
         }
 
-        const childSku = await resolveVariantSku(child);
+        const childSku = effectiveSku(child, assignedDuringFlush);
         if (!childSku) {
+          onError(`Missing SKU for ${variantLabel(child)}.`);
           return;
         }
 
@@ -435,6 +474,14 @@ export function ProductConfigGroup({
   }
 
   async function handleUpdateShopifyStock() {
+    const pendingInGroup = group.variants.some(
+      (variant) => !variant.sku && pendingSkuByVariantId[variant.variantId],
+    );
+    if (pendingInGroup) {
+      onError("Save pending SKUs to Shopify before updating listing stock.");
+      return;
+    }
+
     const children = group.variants.filter(
       (variant) => config.roles[variant.variantId] === "child" && variant.sku,
     );
@@ -520,6 +567,11 @@ export function ProductConfigGroup({
                 {masterCount} master{masterCount === 1 ? "" : "s"}
               </Badge>
               <Badge variant="outline">{childCount} child</Badge>
+              {pendingSkuCount > 0 ? (
+                <Badge variant="outline" className="border-amber-500/40 text-amber-700">
+                  {pendingSkuCount} SKU pending save
+                </Badge>
+              ) : null}
               {missingSkuCount > 0 ? (
                 <Badge variant="outline" className="border-amber-500/40 text-amber-700">
                   {missingSkuCount} missing SKU
@@ -568,9 +620,11 @@ export function ProductConfigGroup({
             Some config listings need <strong>more than one master</strong> (e.g. different
             bulk box sizes). Set role to <strong>Master</strong> for each bulk SKU with its
             pack size. Set <strong>Child</strong> for sold sizes and pick which master they
-            deduct from — including masters on <strong>other products</strong>. After save,{" "}
-            <strong>child listing stock on Shopify</strong> is updated from the master piece
-            pool (sellable units).
+            deduct from — including masters on <strong>other products</strong>. Add SKUs with{" "}
+            <strong>Add</strong> or <strong>Generate</strong>, then use{" "}
+            <strong>Save SKUs to Shopify</strong> at the bottom when finished.{" "}
+            <strong>Save masters &amp; children</strong> also saves any pending SKUs in this
+            group before updating mappings and Shopify stock.
           </p>
 
           <div className="overflow-x-auto rounded-lg border border-border/60">
@@ -623,9 +677,12 @@ export function ProductConfigGroup({
                         ) : (
                           <VariantSkuAssign
                             variantId={variant.variantId}
-                            busy={busy || generatingVariantId === variant.variantId}
+                            pendingSku={pendingSkuByVariantId[variant.variantId]}
                             compact
-                            onAssign={onGenerateSku}
+                            disabled={busy}
+                            onStage={onStageSku}
+                            onClearPending={onClearPendingSku}
+                            onSuggestSku={onSuggestSku}
                           />
                         )}
                       </td>
