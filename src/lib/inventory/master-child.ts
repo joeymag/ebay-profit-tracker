@@ -8,7 +8,7 @@ import type {
 } from "@/lib/inventory/master-child-types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { lookupStockBySku } from "@/lib/shopify/inventory";
+import { lookupAllStockBySku } from "@/lib/shopify/inventory";
 
 export type {
   InventoryChildMapping,
@@ -92,6 +92,13 @@ export async function upsertInventoryMaster(input: {
   }
 
   const supabase = createSupabaseAdmin();
+
+  const { data: existing } = await supabase
+    .from("inventory_masters")
+    .select("pieces_on_hand")
+    .eq("sku", sku)
+    .maybeSingle();
+
   const { data, error } = await supabase
     .from("inventory_masters")
     .upsert(
@@ -99,7 +106,9 @@ export async function upsertInventoryMaster(input: {
         sku,
         pack_size: Math.floor(input.packSize),
         label: input.label?.trim() || null,
-        pieces_on_hand: input.piecesOnHand ?? 0,
+        pieces_on_hand:
+          input.piecesOnHand ??
+          (existing ? Number(existing.pieces_on_hand) : 0),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "sku" },
@@ -134,15 +143,15 @@ export async function syncMasterPiecesFromShopify(
     throw new Error(`Master SKU "${sku}" is not configured.`);
   }
 
-  const shopify = await lookupStockBySku(sku);
-  if (!shopify) {
+  const shopifyMatches = await lookupAllStockBySku(sku);
+  if (shopifyMatches.length === 0) {
     throw new Error(`SKU "${sku}" not found in Shopify.`);
   }
 
-  const shopifyUnits = shopify.locations.reduce(
-    (sum, level) => sum + level.available,
-    0,
-  );
+  const shopifyUnits = shopifyMatches.reduce((max, match) => {
+    const available = match.locations.reduce((sum, level) => sum + level.available, 0);
+    return Math.max(max, available);
+  }, 0);
   const piecesOnHand = shopifyUnits * master.pack_size;
 
   const { data, error } = await supabase

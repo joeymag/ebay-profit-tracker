@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { refreshConfigStockForSku } from "@/lib/inventory/sync-listing-stock";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 import {
   isShopifyInventoryError,
   updateStockQuantity,
@@ -38,11 +40,22 @@ export async function POST(request: Request) {
       locationId: body.locationId,
     });
 
+    let configSync: { childSku: string; sellable: number; pushed: number }[] = [];
+    if (isSupabaseConfigured()) {
+      try {
+        configSync = await refreshConfigStockForSku(sku);
+      } catch {
+        // Stock saved in Shopify; config sync is best-effort.
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       item: result.lookup,
       locationId: result.locationId,
       available: result.available,
+      updatedVariantCount: result.updatedVariantCount,
+      configSync,
     });
   } catch (error) {
     const message = isShopifyInventoryError(error)

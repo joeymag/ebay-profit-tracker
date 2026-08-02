@@ -165,6 +165,18 @@ export function InventoryMapClient() {
     return map;
   }, [masters]);
 
+  const masterBoxesBySku = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of items) {
+      if (!item.sku) {
+        continue;
+      }
+      const key = item.sku.toUpperCase();
+      map.set(key, Math.max(map.get(key) ?? 0, item.available));
+    }
+    return map;
+  }, [items]);
+
   const enrichedItems = useMemo((): EnrichedItem[] => {
     return items.map((item) => {
       const skuKey = item.sku?.toUpperCase() ?? "";
@@ -172,17 +184,22 @@ export function InventoryMapClient() {
       const childLink = skuKey ? childMappingBySku.get(skuKey) : undefined;
 
       if (master) {
+        const boxes = masterBoxesBySku.get(skuKey) ?? item.available;
+        const pieces = boxes * master.packSize;
         return {
           ...item,
-          displayStock: Math.floor(master.piecesOnHand),
-          stockLabel: `${Math.floor(master.piecesOnHand).toLocaleString()} pc (${Math.floor(master.piecesOnHand / master.packSize)} boxes)`,
+          displayStock: Math.floor(pieces),
+          stockLabel: `${Math.floor(pieces).toLocaleString()} pc (${boxes} boxes)`,
           masterInfo: master,
         };
       }
 
       if (childLink) {
+        const masterSkuKey = childLink.master.sku.toUpperCase();
+        const masterBoxes = masterBoxesBySku.get(masterSkuKey) ?? 0;
+        const masterPieces = masterBoxes * childLink.master.packSize;
         const sellable = childSellableUnits(
-          childLink.master.piecesOnHand,
+          masterPieces,
           childLink.mapping.piecesPerUnit,
         );
         return {
@@ -200,7 +217,7 @@ export function InventoryMapClient() {
         stockLabel: `${item.available} in stock`,
       };
     });
-  }, [childMappingBySku, items, masterBySku]);
+  }, [childMappingBySku, items, masterBoxesBySku, masterBySku]);
 
   async function assignSkuToVariant(
     variantId: number,
@@ -457,8 +474,11 @@ export function InventoryMapClient() {
                   saving={loading}
                   onGenerateSku={generateSku}
                   onGenerateAllSkus={generateAllSkus}
-                  onSaved={() => {
-                    setActionMessage(`Saved master and child mappings for ${group.productTitle}.`);
+                  onSaved={(message) => {
+                    setActionMessage(
+                      message ??
+                        `Saved master and child mappings for ${group.productTitle}.`,
+                    );
                     setRefreshKey((value) => value + 1);
                   }}
                   onError={setError}

@@ -279,7 +279,7 @@ export async function listInventoryMapItems(options?: {
 
 const VARIANT_BY_SKU_QUERY = `
   query VariantBySku($query: String!) {
-    productVariants(first: 5, query: $query) {
+    productVariants(first: 25, query: $query) {
       edges {
         node {
           id
@@ -332,21 +332,10 @@ function escapeSkuQuery(sku: string): string {
   return sku.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup | null> {
-  const sku = rawSku.trim();
-  if (!sku) {
-    return null;
-  }
+type VariantBySkuNode = VariantBySkuResponse["productVariants"]["edges"][number]["node"];
 
-  const data = await shopifyAdminGraphql<VariantBySkuResponse>(VARIANT_BY_SKU_QUERY, {
-    query: `sku:${escapeSkuQuery(sku)}`,
-  });
-
-  const match = data.productVariants.edges.find(
-    (edge) => edge.node.sku?.trim().toLowerCase() === sku.toLowerCase(),
-  )?.node ?? data.productVariants.edges[0]?.node;
-
-  if (!match?.sku) {
+async function buildStockSkuLookup(match: VariantBySkuNode): Promise<StockSkuLookup | null> {
+  if (!match.sku?.trim()) {
     return null;
   }
 
@@ -374,6 +363,37 @@ export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup |
     locations,
     ...attachSalesInsight(available, sales, packSize),
   };
+}
+
+/** All Shopify variants that share a SKU (duplicate listings). */
+export async function lookupAllStockBySku(rawSku: string): Promise<StockSkuLookup[]> {
+  const sku = rawSku.trim();
+  if (!sku) {
+    return [];
+  }
+
+  const data = await shopifyAdminGraphql<VariantBySkuResponse>(VARIANT_BY_SKU_QUERY, {
+    query: `sku:${escapeSkuQuery(sku)}`,
+  });
+
+  const matches = data.productVariants.edges
+    .map((edge) => edge.node)
+    .filter((node) => node.sku?.trim().toLowerCase() === sku.toLowerCase());
+
+  const lookups: StockSkuLookup[] = [];
+  for (const match of matches) {
+    const lookup = await buildStockSkuLookup(match);
+    if (lookup) {
+      lookups.push(lookup);
+    }
+  }
+
+  return lookups;
+}
+
+export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup | null> {
+  const lookups = await lookupAllStockBySku(rawSku);
+  return lookups[0] ?? null;
 }
 
 function resolveLocationId(
@@ -407,30 +427,39 @@ export async function updateStockQuantity(input: {
   lookup: StockSkuLookup;
   locationId: number;
   available: number;
+  updatedVariantCount: number;
 }> {
   if (!Number.isFinite(input.available) || input.available < 0) {
     throw new Error("Quantity must be zero or greater.");
   }
 
-  const lookup = await lookupStockBySku(input.sku);
-  if (!lookup) {
+  const lookups = await lookupAllStockBySku(input.sku);
+  if (lookups.length === 0) {
     throw new Error(`No Shopify product found for SKU "${input.sku.trim()}".`);
   }
 
-  if (!lookup.tracked) {
+  const tracked = lookups.filter((lookup) => lookup.tracked);
+  if (tracked.length === 0) {
     throw new Error(
       "Inventory is not tracked for this variant in Shopify. Enable inventory tracking on the product first.",
     );
   }
 
-  const locationId = resolveLocationId(lookup, input.locationId);
+  const quantity = Math.floor(input.available);
+  let primaryLookup = tracked[0]!;
+  let primaryLocationId = resolveLocationId(primaryLookup, input.locationId);
 
   try {
-    await setShopifyInventoryAvailable(
-      lookup.inventoryItemId,
-      locationId,
-      Math.floor(input.available),
-    );
+    for (const lookup of tracked) {
+      const locationId = resolveLocationId(lookup, input.locationId);
+      await setShopifyInventoryAvailable(
+        lookup.inventoryItemId,
+        locationId,
+        quantity,
+      );
+      primaryLookup = lookup;
+      primaryLocationId = locationId;
+    }
   } catch (error) {
     if (error instanceof ShopifyApiError && error.status === 403) {
       throw new Error(
@@ -447,8 +476,9 @@ export async function updateStockQuantity(input: {
 
   return {
     lookup: refreshed,
-    locationId,
-    available: Math.floor(input.available),
+    locationId: primaryLocationId,
+    available: quantity,
+    updatedVariantCount: tracked.length,
   };
 }
 
