@@ -16,6 +16,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { InventoryMasterWithChildren } from "@/lib/inventory/master-child-types";
+import {
+  buildChildMasterOptions,
+  ChildMasterSelector,
+} from "@/components/inventory-map/child-master-selector";
 import { cn } from "@/lib/utils";
 
 export type ConfigGroupVariant = {
@@ -47,6 +51,7 @@ export type ProductConfigGroupData = {
 
 type ProductConfigGroupProps = {
   group: ProductConfigGroupData;
+  allMasters: InventoryMasterWithChildren[];
   generatingVariantId: number | null;
   saving: boolean;
   onGenerateSku: (
@@ -63,7 +68,7 @@ type VariantRole = "master" | "child" | "none";
 type VariantConfigState = {
   roles: Record<number, VariantRole>;
   masterPackSizes: Record<number, string>;
-  childMasterVariantId: Record<number, number>;
+  childMasterSku: Record<number, string>;
   childPieces: Record<number, string>;
 };
 
@@ -99,15 +104,6 @@ function variantLabel(variant: ConfigGroupVariant): string {
   return variant.variantTitle === "Default Title" ? "Default" : variant.variantTitle;
 }
 
-function pickDefaultMasterVariant(variants: ConfigGroupVariant[]): ConfigGroupVariant {
-  const ranked = [...variants].sort(
-    (a, b) => (variantPackHint(b) ?? 0) - (variantPackHint(a) ?? 0),
-  );
-
-  const bulkCandidate = ranked.find((variant) => (variantPackHint(variant) ?? 0) >= 50);
-  return bulkCandidate ?? ranked[0] ?? variants[0]!;
-}
-
 function defaultMasterPackSize(variant: ConfigGroupVariant): string {
   if (variant.masterInfo?.packSize) {
     return String(variant.masterInfo.packSize);
@@ -134,28 +130,36 @@ function defaultChildPieces(variant: ConfigGroupVariant): string {
   return "1";
 }
 
-function findMasterVariantIdForChild(
+function findMasterSkuForChild(
   variants: ConfigGroupVariant[],
   child: ConfigGroupVariant,
-): number | null {
-  if (!child.masterInfo) {
-    return null;
+  allMasters: InventoryMasterWithChildren[],
+): string {
+  if (child.masterInfo?.sku) {
+    return child.masterInfo.sku;
   }
 
-  const masterSku = child.masterInfo.sku.toUpperCase();
-  const match = variants.find(
-    (variant) => variant.sku?.toUpperCase() === masterSku,
+  const inProductMaster = variants.find(
+    (variant) =>
+      variant.sku &&
+      variant.masterInfo &&
+      variant.sku.toUpperCase() === variant.masterInfo.sku.toUpperCase(),
   );
-  return match?.variantId ?? null;
+  if (inProductMaster?.sku) {
+    return inProductMaster.sku;
+  }
+
+  return allMasters[0]?.sku ?? "";
 }
 
-function buildInitialConfig(variants: ConfigGroupVariant[]): VariantConfigState {
+function buildInitialConfig(
+  variants: ConfigGroupVariant[],
+  allMasters: InventoryMasterWithChildren[],
+): VariantConfigState {
   const roles: Record<number, VariantRole> = {};
   const masterPackSizes: Record<number, string> = {};
-  const childMasterVariantId: Record<number, number> = {};
+  const childMasterSku: Record<number, string> = {};
   const childPieces: Record<number, string> = {};
-
-  const fallbackMasterId = pickDefaultMasterVariant(variants).variantId;
 
   for (const variant of variants) {
     const isExistingMaster =
@@ -172,8 +176,11 @@ function buildInitialConfig(variants: ConfigGroupVariant[]): VariantConfigState 
     if (isExistingChild) {
       roles[variant.variantId] = "child";
       childPieces[variant.variantId] = defaultChildPieces(variant);
-      childMasterVariantId[variant.variantId] =
-        findMasterVariantIdForChild(variants, variant) ?? fallbackMasterId;
+      childMasterSku[variant.variantId] = findMasterSkuForChild(
+        variants,
+        variant,
+        allMasters,
+      );
       continue;
     }
 
@@ -186,34 +193,12 @@ function buildInitialConfig(variants: ConfigGroupVariant[]): VariantConfigState 
     }
   }
 
-  if (!Object.values(roles).includes("master")) {
-    roles[fallbackMasterId] = "master";
-    masterPackSizes[fallbackMasterId] = defaultMasterPackSize(
-      variants.find((variant) => variant.variantId === fallbackMasterId) ??
-        pickDefaultMasterVariant(variants),
-    );
-  }
-
-  const firstMasterId = Number(
-    Object.entries(roles).find(([, role]) => role === "master")?.[0] ??
-      fallbackMasterId,
-  );
-
-  for (const variant of variants) {
-    if (roles[variant.variantId] !== "none") {
-      continue;
-    }
-
-    roles[variant.variantId] = "child";
-    childPieces[variant.variantId] = defaultChildPieces(variant);
-    childMasterVariantId[variant.variantId] = firstMasterId;
-  }
-
-  return { roles, masterPackSizes, childMasterVariantId, childPieces };
+  return { roles, masterPackSizes, childMasterSku, childPieces };
 }
 
 export function ProductConfigGroup({
   group,
+  allMasters,
   generatingVariantId,
   saving,
   onGenerateSku,
@@ -223,7 +208,7 @@ export function ProductConfigGroup({
 }: ProductConfigGroupProps) {
   const [expanded, setExpanded] = useState(true);
   const [config, setConfig] = useState<VariantConfigState>(() =>
-    buildInitialConfig(group.variants),
+    buildInitialConfig(group.variants, allMasters),
   );
   const [localSaving, setLocalSaving] = useState(false);
 
@@ -241,23 +226,41 @@ export function ProductConfigGroup({
   ).length;
   const missingSkuCount = group.variants.filter((variant) => !variant.sku).length;
 
+  const childMasterOptions = useMemo(
+    () =>
+      buildChildMasterOptions({
+        inProductMasters: masterVariants
+          .filter((variant): variant is ConfigGroupVariant & { sku: string } =>
+            Boolean(variant.sku),
+          )
+          .map((variant) => ({
+            sku: variant.sku,
+            label: variantLabel(variant),
+            packSize:
+              Number.parseInt(config.masterPackSizes[variant.variantId] ?? "", 10) ||
+              variant.masterInfo?.packSize ||
+              variantPackHint(variant) ||
+              1,
+          })),
+        allMasters,
+      }),
+    [allMasters, config.masterPackSizes, masterVariants],
+  );
+
+  function defaultMasterSkuForChild(variant: ConfigGroupVariant): string {
+    const inProduct = masterVariants.find((master) => master.sku)?.sku;
+    if (inProduct) {
+      return inProduct;
+    }
+    return findMasterSkuForChild(group.variants, variant, allMasters);
+  }
+
   function setVariantRole(variantId: number, role: VariantRole) {
     setConfig((current) => {
-      if (
-        role !== "master" &&
-        current.roles[variantId] === "master" &&
-        group.variants.filter(
-          (item) => item.variantId !== variantId && current.roles[item.variantId] === "master",
-        ).length === 0
-      ) {
-        onError("Keep at least one master in this product group.");
-        return current;
-      }
-
       onError(null);
       const nextRoles = { ...current.roles, [variantId]: role };
       const nextMasterPackSizes = { ...current.masterPackSizes };
-      const nextChildMasterVariantId = { ...current.childMasterVariantId };
+      const nextChildMasterSku = { ...current.childMasterSku };
       const nextChildPieces = { ...current.childPieces };
 
       const variant = group.variants.find((item) => item.variantId === variantId);
@@ -271,20 +274,16 @@ export function ProductConfigGroup({
       }
 
       if (role === "child") {
-        const firstMaster = group.variants.find(
-          (item) => item.variantId !== variantId && nextRoles[item.variantId] === "master",
-        );
         nextChildPieces[variantId] =
           nextChildPieces[variantId] ?? defaultChildPieces(variant);
-        if (firstMaster) {
-          nextChildMasterVariantId[variantId] = firstMaster.variantId;
-        }
+        nextChildMasterSku[variantId] =
+          nextChildMasterSku[variantId] || defaultMasterSkuForChild(variant);
       }
 
       return {
         roles: nextRoles,
         masterPackSizes: nextMasterPackSizes,
-        childMasterVariantId: nextChildMasterVariantId,
+        childMasterSku: nextChildMasterSku,
         childPieces: nextChildPieces,
       };
     });
@@ -315,8 +314,8 @@ export function ProductConfigGroup({
       (variant) => config.roles[variant.variantId] === "child",
     );
 
-    if (masters.length === 0) {
-      onError("Mark at least one variant as Master.");
+    if (masters.length === 0 && children.length === 0) {
+      onError("Mark at least one variant as Master or Child.");
       return;
     }
 
@@ -326,6 +325,7 @@ export function ProductConfigGroup({
     try {
       const masterSkuByVariantId = new Map<number, string>();
       const savedChildSkus: string[] = [];
+      const syncMasterSkus = new Set<string>();
 
       for (const master of masters) {
         const pack = Number.parseInt(config.masterPackSizes[master.variantId] ?? "", 10);
@@ -355,16 +355,11 @@ export function ProductConfigGroup({
         }
 
         masterSkuByVariantId.set(master.variantId, masterSku);
+        syncMasterSkus.add(masterSku);
       }
 
       for (const child of children) {
-        const linkedMasterVariantId = config.childMasterVariantId[child.variantId];
-        const linkedMaster = group.variants.find(
-          (variant) => variant.variantId === linkedMasterVariantId,
-        );
-        const masterSku = linkedMasterVariantId
-          ? (masterSkuByVariantId.get(linkedMasterVariantId) ?? linkedMaster?.sku ?? undefined)
-          : undefined;
+        const masterSku = config.childMasterSku[child.variantId]?.trim();
 
         if (!masterSku) {
           onError(`Choose which master ${variantLabel(child)} links to.`);
@@ -398,11 +393,10 @@ export function ProductConfigGroup({
         }
 
         savedChildSkus.push(childSku);
+        syncMasterSkus.add(masterSku);
       }
 
-      const masterSkus = masters
-        .map((master) => masterSkuByVariantId.get(master.variantId) ?? master.sku)
-        .filter((sku): sku is string => Boolean(sku));
+      const masterSkus = [...syncMasterSkus];
 
       if (savedChildSkus.length > 0) {
         const syncRes = await fetch("/api/inventory/sync-listing-stock", {
@@ -426,12 +420,12 @@ export function ProductConfigGroup({
         }
 
         onSaved(
-          `Saved ${masterSkus.length} master(s) and updated Shopify stock for ${syncData.results.length} child listing(s).`,
+          `Saved ${masterSkus.length} master link(s) and updated Shopify stock for ${syncData.results.length} child listing(s).`,
         );
         return;
       }
 
-      onSaved(`Saved ${masterSkus.length} master SKU(s).`);
+      onSaved(`Saved ${masterSkus.length} master link(s).`);
     } catch {
       onError("Could not save product group.");
     } finally {
@@ -440,9 +434,6 @@ export function ProductConfigGroup({
   }
 
   async function handleUpdateShopifyStock() {
-    const masters = group.variants.filter(
-      (variant) => config.roles[variant.variantId] === "master" && variant.sku,
-    );
     const children = group.variants.filter(
       (variant) => config.roles[variant.variantId] === "child" && variant.sku,
     );
@@ -452,6 +443,19 @@ export function ProductConfigGroup({
       return;
     }
 
+    const masterSkus = [
+      ...new Set(
+        children
+          .map(
+            (variant) =>
+              config.childMasterSku[variant.variantId]?.trim() ??
+              variant.masterInfo?.sku ??
+              "",
+          )
+          .filter(Boolean),
+      ),
+    ];
+
     setLocalSaving(true);
     onError(null);
 
@@ -460,7 +464,7 @@ export function ProductConfigGroup({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          masterSkus: masters.map((variant) => variant.sku!),
+          masterSkus,
           childSkus: children.map((variant) => variant.sku!),
         }),
       });
@@ -563,8 +567,9 @@ export function ProductConfigGroup({
             Some config listings need <strong>more than one master</strong> (e.g. different
             bulk box sizes). Set role to <strong>Master</strong> for each bulk SKU with its
             pack size. Set <strong>Child</strong> for sold sizes and pick which master they
-            deduct from. After save, <strong>child listing stock on Shopify</strong> is updated
-            from the master piece pool (sellable units).
+            deduct from — including masters on <strong>other products</strong>. After save,{" "}
+            <strong>child listing stock on Shopify</strong> is updated from the master piece
+            pool (sellable units).
           </p>
 
           <div className="overflow-x-auto rounded-lg border border-border/60">
@@ -679,51 +684,30 @@ export function ProductConfigGroup({
                           </div>
                         ) : null}
                         {isChild ? (
-                          <div className="space-y-2">
-                            <div className="space-y-1">
-                              <p className="text-xs text-muted-foreground">Linked master</p>
-                              <select
-                                className="h-8 w-full min-w-[140px] rounded-md border border-input bg-background px-2 text-xs"
-                                value={config.childMasterVariantId[variant.variantId] ?? ""}
-                                disabled={busy || masterVariants.length === 0}
-                                onChange={(event) =>
-                                  setConfig((current) => ({
-                                    ...current,
-                                    childMasterVariantId: {
-                                      ...current.childMasterVariantId,
-                                      [variant.variantId]: Number(event.target.value),
-                                    },
-                                  }))
-                                }
-                              >
-                                {masterVariants.map((master) => (
-                                  <option key={master.variantId} value={master.variantId}>
-                                    {variantLabel(master)}
-                                    {master.sku ? ` (${master.sku})` : ""}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-xs text-muted-foreground">Pc per unit sold</p>
-                              <Input
-                                inputMode="decimal"
-                                value={config.childPieces[variant.variantId] ?? ""}
-                                disabled={busy}
-                                onChange={(event) =>
-                                  setConfig((current) => ({
-                                    ...current,
-                                    childPieces: {
-                                      ...current.childPieces,
-                                      [variant.variantId]: event.target.value,
-                                    },
-                                  }))
-                                }
-                                placeholder="Pc per unit"
-                                className="h-8 w-28"
-                              />
-                            </div>
-                          </div>
+                          <ChildMasterSelector
+                            masterSku={config.childMasterSku[variant.variantId] ?? ""}
+                            piecesPerUnit={config.childPieces[variant.variantId] ?? ""}
+                            options={childMasterOptions}
+                            disabled={busy}
+                            onMasterSkuChange={(sku) =>
+                              setConfig((current) => ({
+                                ...current,
+                                childMasterSku: {
+                                  ...current.childMasterSku,
+                                  [variant.variantId]: sku,
+                                },
+                              }))
+                            }
+                            onPiecesChange={(value) =>
+                              setConfig((current) => ({
+                                ...current,
+                                childPieces: {
+                                  ...current.childPieces,
+                                  [variant.variantId]: value,
+                                },
+                              }))
+                            }
+                          />
                         ) : null}
                         {role === "none" ? (
                           <span className="text-xs text-muted-foreground">Not mapped</span>

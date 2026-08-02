@@ -280,7 +280,7 @@ export function MasterChildConfigPanel({ onChanged }: MasterChildConfigPanelProp
                 <option value="">Select master SKU</option>
                 {masters.map((master) => (
                   <option key={master.sku} value={master.sku}>
-                    {master.sku}
+                    {master.sku} · {master.packSize.toLocaleString()} pc/box
                   </option>
                 ))}
               </select>

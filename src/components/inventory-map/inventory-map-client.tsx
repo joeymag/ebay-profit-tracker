@@ -10,6 +10,7 @@ import {
   ProductConfigGroup,
   type ProductConfigGroupData,
 } from "@/components/inventory-map/product-config-group";
+import { SingleVariantMapping } from "@/components/inventory-map/single-variant-mapping";
 import { ReorderBadge } from "@/components/stock/reorder-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -470,6 +471,7 @@ export function InventoryMapClient() {
                 <ProductConfigGroup
                   key={group.productId}
                   group={group}
+                  allMasters={masters}
                   generatingVariantId={generatingVariantId}
                   saving={loading}
                   onGenerateSku={generateSku}
@@ -485,7 +487,12 @@ export function InventoryMapClient() {
                 />
               ))}
 
-              {visibleSingleItems.map((item) => (
+              {visibleSingleItems.map((item) => {
+                const isMasterSku =
+                  item.sku != null &&
+                  masterBySku.has(item.sku.toUpperCase());
+
+                return (
                 <div
                   key={item.variantId}
                   className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-3 shadow-sm"
@@ -541,6 +548,22 @@ export function InventoryMapClient() {
                     <span>90d sold: {item.unitsSold90Days}</span>
                   </div>
 
+                  {item.sku && !isMasterSku ? (
+                    <SingleVariantMapping
+                      childSku={item.sku}
+                      allMasters={masters}
+                      initialMasterSku={
+                        item.childPiecesPerUnit ? item.masterInfo?.sku : undefined
+                      }
+                      initialPiecesPerUnit={item.childPiecesPerUnit}
+                      onSaved={(message) => {
+                        setActionMessage(message ?? `Updated mapping for ${item.sku}.`);
+                        setRefreshKey((value) => value + 1);
+                      }}
+                      onError={setError}
+                    />
+                  ) : null}
+
                   {item.sku ? (
                     <Button
                       render={<Link href="/stock" />}
@@ -569,7 +592,8 @@ export function InventoryMapClient() {
                     </Button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
