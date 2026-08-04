@@ -14,6 +14,7 @@ import type { InventoryMasterWithChildren } from "@/lib/inventory/master-child-t
 type SingleVariantMappingProps = {
   childSku: string;
   allMasters: InventoryMasterWithChildren[];
+  catalogMasters?: { sku: string; label: string; packSize: number }[];
   initialMasterSku?: string;
   initialPiecesPerUnit?: number;
   onSaved: (message?: string) => void;
@@ -23,6 +24,7 @@ type SingleVariantMappingProps = {
 export function SingleVariantMapping({
   childSku,
   allMasters,
+  catalogMasters = [],
   initialMasterSku,
   initialPiecesPerUnit,
   onSaved,
@@ -40,6 +42,7 @@ export function SingleVariantMapping({
   const options = buildChildMasterOptions({
     inProductMasters: [],
     allMasters,
+    catalogMasters,
   });
 
   async function saveMapping() {

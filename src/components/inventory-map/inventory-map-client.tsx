@@ -227,6 +227,31 @@ export function InventoryMapClient() {
     });
   }, [childMappingBySku, items, masterBoxesBySku, masterBySku]);
 
+  const catalogMasters = useMemo(() => {
+    const seen = new Set<string>();
+    const options: { sku: string; label: string; packSize: number }[] = [];
+
+    for (const item of enrichedItems) {
+      const sku = item.sku?.trim();
+      if (!sku) {
+        continue;
+      }
+      const key = sku.toUpperCase();
+      const master = masterBySku.get(key);
+      if (!master || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      options.push({
+        sku,
+        label: item.displayName,
+        packSize: master.packSize,
+      });
+    }
+
+    return options;
+  }, [enrichedItems, masterBySku]);
+
   async function assignSkuToVariant(
     variantId: number,
     options?: { refresh?: boolean; sku?: string },
@@ -594,6 +619,7 @@ export function InventoryMapClient() {
                   key={group.productId}
                   group={group}
                   allMasters={masters}
+                  catalogMasters={catalogMasters}
                   pendingSkuByVariantId={pendingSkuByVariantId}
                   generatingVariantId={generatingVariantId}
                   saving={loading || savingPendingSkus}
@@ -678,6 +704,7 @@ export function InventoryMapClient() {
                     <SingleVariantMapping
                       childSku={item.sku}
                       allMasters={masters}
+                      catalogMasters={catalogMasters}
                       initialMasterSku={
                         item.childPiecesPerUnit ? item.masterInfo?.sku : undefined
                       }

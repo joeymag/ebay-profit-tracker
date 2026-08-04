@@ -53,6 +53,7 @@ export type ProductConfigGroupData = {
 type ProductConfigGroupProps = {
   group: ProductConfigGroupData;
   allMasters: InventoryMasterWithChildren[];
+  catalogMasters: { sku: string; label: string; packSize: number }[];
   pendingSkuByVariantId: Record<number, string>;
   generatingVariantId: number | null;
   saving: boolean;
@@ -203,6 +204,7 @@ function buildInitialConfig(
 export function ProductConfigGroup({
   group,
   allMasters,
+  catalogMasters,
   pendingSkuByVariantId,
   generatingVariantId,
   saving,
@@ -254,29 +256,34 @@ export function ProductConfigGroup({
   const childMasterOptions = useMemo(
     () =>
       buildChildMasterOptions({
-        inProductMasters: masterVariants
-          .filter((variant): variant is ConfigGroupVariant & { sku: string } =>
-            Boolean(variant.sku),
-          )
-          .map((variant) => ({
-            sku: variant.sku,
+        inProductMasters: masterVariants.map((variant) => {
+          const sku = effectiveSku(variant) ?? "";
+          return {
+            sku,
             label: variantLabel(variant),
             packSize:
               Number.parseInt(config.masterPackSizes[variant.variantId] ?? "", 10) ||
               variant.masterInfo?.packSize ||
               variantPackHint(variant) ||
               1,
-          })),
+            variantId: variant.variantId,
+            needsSku: !sku,
+          };
+        }),
         allMasters,
+        catalogMasters,
       }),
-    [allMasters, config.masterPackSizes, masterVariants],
+    [allMasters, catalogMasters, config.masterPackSizes, masterVariants, pendingSkuByVariantId, group.variants],
   );
 
   function defaultMasterSkuForChild(variant: ConfigGroupVariant): string {
-    const inProduct = masterVariants.find((master) => master.sku)?.sku;
-    if (inProduct) {
-      return inProduct;
+    const inProductWithSku = masterVariants
+      .map((master) => effectiveSku(master))
+      .find((sku): sku is string => Boolean(sku));
+    if (inProductWithSku) {
+      return inProductWithSku;
     }
+
     return findMasterSkuForChild(group.variants, variant, allMasters);
   }
 
@@ -621,7 +628,9 @@ export function ProductConfigGroup({
             Some config listings need <strong>more than one master</strong> (e.g. different
             bulk box sizes). Set role to <strong>Master</strong> for each bulk SKU with its
             pack size. Set <strong>Child</strong> for sold sizes and pick which master they
-            deduct from — including masters on <strong>other products</strong>. Add SKUs with{" "}
+            deduct from — every variant marked <strong>Master</strong> in this product appears
+            under <strong>Masters in this product</strong>, and saved bulk SKUs from other
+            listings appear under <strong>Other master SKUs</strong>. Add SKUs with{" "}
             <strong>Add</strong> or <strong>Generate</strong>, then use{" "}
             <strong>Save SKUs to Shopify</strong> at the bottom when finished.{" "}
             <strong>Save masters &amp; children</strong> also saves any pending SKUs in this
