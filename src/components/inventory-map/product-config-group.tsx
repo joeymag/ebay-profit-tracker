@@ -214,7 +214,7 @@ export function ProductConfigGroup({
   onSaved,
   onError,
 }: ProductConfigGroupProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [config, setConfig] = useState<VariantConfigState>(() =>
     buildInitialConfig(group.variants, allMasters),
   );
@@ -558,8 +558,9 @@ export function ProductConfigGroup({
           <div className="min-w-0 space-y-1">
             <p className="text-base font-semibold leading-snug">{group.productTitle}</p>
             <p className="text-sm text-muted-foreground">
-              {group.variants.length} variants · mark one or more masters, link children
-              to the right bulk SKU
+              {expanded
+                ? `${group.variants.length} variants · mark one or more masters, link children to the right bulk SKU`
+                : `${group.variants.length} variants · click to expand`}
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
               <Badge variant="outline">{group.variants.length} variants</Badge>
