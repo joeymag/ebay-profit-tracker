@@ -130,6 +130,50 @@ function parseNextPageInfo(linkHeader: string | null): string | null {
   return null;
 }
 
+type ShopifyVariantRest = ShopifyProductRest["variants"][number];
+
+/** Shopify embeds at most 100 variants on the product list resource. */
+const EMBEDDED_VARIANT_LIMIT = 100;
+const VARIANTS_PAGE_LIMIT = 250;
+
+async function fetchAllVariantsForProduct(
+  productId: number,
+): Promise<ShopifyVariantRest[]> {
+  const variants: ShopifyVariantRest[] = [];
+  let pageInfo: string | null = null;
+  const fields =
+    "id,title,sku,inventory_management,inventory_quantity,option1,option2,option3";
+
+  for (let page = 0; page < 20; page += 1) {
+    const path = pageInfo
+      ? `/products/${productId}/variants.json?limit=${VARIANTS_PAGE_LIMIT}&fields=${fields}&page_info=${pageInfo}`
+      : `/products/${productId}/variants.json?limit=${VARIANTS_PAGE_LIMIT}&fields=${fields}`;
+
+    const { data, linkHeader } = await shopifyAdminFetchWithLink<{
+      variants: ShopifyVariantRest[];
+    }>(path);
+
+    variants.push(...(data.variants ?? []));
+    pageInfo = parseNextPageInfo(linkHeader);
+    if (!pageInfo) {
+      break;
+    }
+  }
+
+  return variants;
+}
+
+async function resolveProductVariants(
+  product: ShopifyProductRest,
+): Promise<ShopifyVariantRest[]> {
+  const embedded = product.variants ?? [];
+  if (embedded.length < EMBEDDED_VARIANT_LIMIT) {
+    return embedded;
+  }
+
+  return fetchAllVariantsForProduct(product.id);
+}
+
 /** Tracked Shopify variants with zero available inventory. */
 export async function listOutOfStockItems(options?: {
   maxPages?: number;
@@ -148,8 +192,16 @@ export async function listOutOfStockItems(options?: {
       products: ShopifyProductRest[];
     }>(path);
 
-    for (const product of data.products ?? []) {
-      for (const variant of product.variants ?? []) {
+    const products = data.products ?? [];
+    const variantLists = await Promise.all(
+      products.map((product) => resolveProductVariants(product)),
+    );
+
+    for (let index = 0; index < products.length; index += 1) {
+      const product = products[index]!;
+      const variants = variantLists[index] ?? [];
+
+      for (const variant of variants) {
         const sku = variant.sku?.trim();
         if (!sku) {
           continue;
@@ -237,8 +289,16 @@ export async function listInventoryMapItems(options?: {
       products: ShopifyProductRest[];
     }>(path);
 
-    for (const product of data.products ?? []) {
-      for (const variant of product.variants ?? []) {
+    const products = data.products ?? [];
+    const variantLists = await Promise.all(
+      products.map((product) => resolveProductVariants(product)),
+    );
+
+    for (let index = 0; index < products.length; index += 1) {
+      const product = products[index]!;
+      const variants = variantLists[index] ?? [];
+
+      for (const variant of variants) {
         if (variant.inventory_management !== "shopify") {
           continue;
         }
