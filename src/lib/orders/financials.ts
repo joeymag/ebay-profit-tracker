@@ -1,20 +1,11 @@
-import { isOrderCostsIncomplete } from "@/lib/orders/cost-completeness";
+import { isOrderCostsIncomplete, type CostCompletenessInput } from "@/lib/orders/cost-completeness";
 import { effectiveProductCost } from "@/lib/orders/product-cost-vat";
 import { computePlatformFee } from "@/lib/orders/platform-fees";
 import type { StoredOrder } from "@/lib/orders/types";
 
 export function computeOrderFinancials(
-  order: Pick<
-    StoredOrder,
-    | "revenue"
-    | "productCost"
-    | "shippingLabelCost"
-    | "tags"
-    | "ebayFeeRate"
-    | "ebayAdsFeeRate"
-    | "ebayFeesActual"
-    | "ebayAdsFeeActual"
-  >,
+  order: CostCompletenessInput &
+    Pick<StoredOrder, "revenue">,
 ): Pick<StoredOrder, "platformFee" | "cost" | "profit"> {
   const platformFee = computePlatformFee(
     order.revenue,

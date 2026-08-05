@@ -14,9 +14,11 @@ type SyncFeesResult =
       transactionsFetched: number;
       ebayOrders: number;
       matched: number;
+      perOrderMatched?: number;
       updated: number;
       updateFailures?: number;
       unmatchedOrderIds: number;
+      missingEbayOrderId?: number;
       sampleUnmatchedOrderIds?: string[];
       sampleTransactionOrderIds?: string[];
       syncedAt: string;
@@ -130,7 +132,15 @@ export function EbayFeesSyncButton() {
       }
 
       setMessage(
-        `Synced ${data.updated} orders · ${data.matched} matched from eBay · ${data.unmatchedOrderIds} not found in last ${data.days} days · ${data.transactionsFetched} transactions fetched.`,
+        `Synced ${data.updated} orders · ${data.matched} matched from eBay${
+          data.perOrderMatched
+            ? ` (${data.perOrderMatched} via per-order lookup)`
+            : ""
+        } · ${data.unmatchedOrderIds} not found${
+          data.missingEbayOrderId
+            ? ` · ${data.missingEbayOrderId} eBay orders missing order ID (re-sync Shopify orders)`
+            : ""
+        } · ${data.transactionsFetched} transactions fetched.`,
       );
       router.refresh();
     } catch {

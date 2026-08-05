@@ -1,4 +1,8 @@
 import type { EbayTransaction } from "@/lib/ebay/client";
+import {
+  ebayOrderIdLookupVariants,
+  normalizeEbayOrderIdKey,
+} from "@/lib/ebay/order-id";
 
 export type EbayOrderFeeBreakdown = {
   total: number;
@@ -56,27 +60,56 @@ function addFeeAmount(
   }
 }
 
-/** Normalize eBay order IDs so `12-34567-89012` matches `123456789012`. */
-export function normalizeEbayOrderIdKey(id: string): string {
-  return id.trim().replace(/-/g, "").toUpperCase();
+/** @deprecated Import from `@/lib/ebay/order-id` instead. */
+export { normalizeEbayOrderIdKey, ebayOrderIdLookupVariants } from "@/lib/ebay/order-id";
+
+const ORDER_REFERENCE_TYPES = new Set([
+  "ORDER_ID",
+  "LEGACY_ORDER_ID",
+  "ORDER",
+  "SALES_RECORD",
+]);
+
+function isOrderReferenceType(referenceType: string | undefined): boolean {
+  if (!referenceType) {
+    return false;
+  }
+
+  const normalized = referenceType.trim().toUpperCase();
+  if (ORDER_REFERENCE_TYPES.has(normalized)) {
+    return true;
+  }
+
+  return normalized.includes("ORDER");
+}
+
+function registerOrderId(ids: Set<string>, orderId: string) {
+  const trimmed = orderId.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  ids.add(trimmed);
+  ids.add(normalizeEbayOrderIdKey(trimmed));
+  for (const variant of ebayOrderIdLookupVariants(trimmed)) {
+    ids.add(variant);
+    ids.add(normalizeEbayOrderIdKey(variant));
+  }
 }
 
 function orderIdsFromTransaction(transaction: EbayTransaction): string[] {
   const ids = new Set<string>();
   const primary = transaction.orderId?.trim();
   if (primary) {
-    ids.add(primary);
-    ids.add(normalizeEbayOrderIdKey(primary));
+    registerOrderId(ids, primary);
   }
 
   for (const reference of transaction.references ?? []) {
     if (
-      reference.referenceType?.toUpperCase() === "ORDER_ID" &&
+      isOrderReferenceType(reference.referenceType) &&
       reference.referenceId?.trim()
     ) {
-      const referenceId = reference.referenceId.trim();
-      ids.add(referenceId);
-      ids.add(normalizeEbayOrderIdKey(referenceId));
+      registerOrderId(ids, reference.referenceId);
     }
   }
 
@@ -103,6 +136,7 @@ function breakdownFromTransaction(
 ): EbayOrderFeeBreakdown {
   const breakdown = emptyBreakdown();
   let hasLineItemFees = false;
+  const transactionType = transaction.transactionType?.trim().toUpperCase();
 
   for (const lineItem of transaction.orderLineItems ?? []) {
     for (const fee of lineItem.marketplaceFees ?? []) {
@@ -118,7 +152,7 @@ function breakdownFromTransaction(
 
   if (transaction.feeType) {
     const amount = parseAmount(transaction.amount?.value);
-    if (amount != null) {
+    if (amount != null && amount > 0) {
       addFeeAmount(breakdown, amount, transaction.feeType);
       return breakdown;
     }
@@ -126,12 +160,39 @@ function breakdownFromTransaction(
 
   if (!hasLineItemFees) {
     const total = parseAmount(transaction.totalFeeAmount?.value);
-    if (total != null) {
+    if (total != null && total > 0) {
+      addFeeAmount(breakdown, total);
+    }
+  }
+
+  // Some fee-only rows omit line items but still carry totalFeeAmount on SALE rows.
+  if (
+    breakdown.total <= 0 &&
+    transactionType === "SALE" &&
+    !transaction.feeType
+  ) {
+    const total = parseAmount(transaction.totalFeeAmount?.value);
+    if (total != null && total > 0) {
       addFeeAmount(breakdown, total);
     }
   }
 
   return breakdown;
+}
+
+/** Sum fees from transactions returned by a per-order Finances API lookup. */
+export function sumEbayFeesFromTransactions(
+  transactions: EbayTransaction[],
+): EbayOrderFeeBreakdown {
+  const combined = emptyBreakdown();
+
+  for (const breakdown of aggregateEbayFeesByOrderId(transactions).values()) {
+    combined.total += breakdown.total;
+    combined.ads += breakdown.ads;
+    combined.selling += breakdown.selling;
+  }
+
+  return combined;
 }
 
 /** Sum eBay fees per marketplace order ID, split into total / ads / selling. */

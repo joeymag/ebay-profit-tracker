@@ -158,9 +158,11 @@ export function OrderDetailView({
           </p>
           <p className="mt-1 text-muted-foreground">
             Still missing: {missingCosts.join(", ")}.
-            {missingCosts.some((item) => item.includes("eBay fees"))
-              ? " Product cost and postage are saved — sync eBay fees in Settings to clear this order."
-              : null}
+            {missingCosts.some((item) => item.includes("eBay order ID"))
+              ? " Run Sync orders on the Orders page so Shopify can store the eBay order ID, then sync eBay fees in Settings."
+              : missingCosts.some((item) => item.includes("eBay fees"))
+                ? " Product cost and postage are saved — sync eBay fees in Settings to clear this order."
+                : null}
           </p>
         </div>
       ) : null}

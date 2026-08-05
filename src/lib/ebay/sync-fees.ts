@@ -1,9 +1,15 @@
-import { fetchEbayTransactionsInRange } from "@/lib/ebay/client";
+import {
+  fetchEbayTransactionsForOrderVariants,
+  fetchEbayTransactionsInRange,
+} from "@/lib/ebay/client";
 import {
   aggregateEbayFeesByOrderId,
   lookupEbayFeeBreakdown,
   roundMoney,
+  sumEbayFeesFromTransactions,
+  type EbayOrderFeeBreakdown,
 } from "@/lib/ebay/parse-fees";
+import { ebayOrderIdLookupVariants } from "@/lib/ebay/order-id";
 import { withComputedFinancials } from "@/lib/orders/financials";
 import type { StoredOrder } from "@/lib/orders/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
@@ -14,9 +20,11 @@ export type SyncEbayFeesResult = {
   transactionsFetched: number;
   ebayOrders: number;
   matched: number;
+  perOrderMatched: number;
   updated: number;
   updateFailures: number;
   unmatchedOrderIds: number;
+  missingEbayOrderId: number;
   sampleUnmatchedOrderIds: string[];
   sampleTransactionOrderIds: string[];
   syncedAt: string;
@@ -36,6 +44,79 @@ type EbayOrderRow = {
 };
 
 const UPDATE_CHUNK_SIZE = 25;
+const PER_ORDER_LOOKUP_DELAY_MS = 200;
+const MAX_PER_ORDER_LOOKUPS = 100;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildStoredOrderFromRow(
+  row: EbayOrderRow,
+  ebayOrderId: string,
+  ebayFeesActual: number,
+  ebayAdsFeeActual: number,
+  syncedAt: string,
+): StoredOrder {
+  return {
+    shopifyId: row.shopify_id,
+    orderNumber: "",
+    createdAt: syncedAt,
+    cancelledAt: null,
+    financialStatus: "paid",
+    fulfillmentStatus: null,
+    tags: row.tags,
+    buyerName: null,
+    ebayUsername: null,
+    ebayOrderId,
+    amazonOrderId: null,
+    amazonDeliverByAt: null,
+    ebayDeliverByAt: null,
+    shippingAddress: null,
+    latitude: null,
+    longitude: null,
+    geocodeRegion: null,
+    geocodedAt: null,
+    currency: "GBP",
+    revenue: Number(row.revenue),
+    subtotal: Number(row.revenue),
+    tax: 0,
+    shippingCharged: 0,
+    shippingLabelCost:
+      row.shipping_label_cost != null
+        ? Number(row.shipping_label_cost)
+        : null,
+    ebayFeeRate: row.ebay_fee_rate != null ? Number(row.ebay_fee_rate) : null,
+    ebayAdsFeeRate:
+      row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,
+    ebayFeesActual,
+    ebayAdsFeeActual,
+    ebayFeesSyncedAt: syncedAt,
+    productCost: row.product_cost != null ? Number(row.product_cost) : null,
+    productCostManual: row.product_cost_manual ?? false,
+    shippingService: null,
+    shippingCarrier: null,
+    trackingNumbers: [],
+    trackingUrl: null,
+    shipmentStatus: null,
+    deliveredAt: null,
+    itemCount: 0,
+    platformFee: null,
+    cost: null,
+    profit: null,
+    lineItems: [],
+  };
+}
+
+function registerFeeBreakdown(
+  feesByOrderId: Map<string, EbayOrderFeeBreakdown>,
+  ebayOrderId: string,
+  breakdown: EbayOrderFeeBreakdown,
+) {
+  for (const variant of ebayOrderIdLookupVariants(ebayOrderId)) {
+    feesByOrderId.set(variant, breakdown);
+  }
+}
 
 export async function syncEbayFeesFromFinancesApi(options?: {
   days?: number;
@@ -58,16 +139,47 @@ export async function syncEbayFeesFromFinancesApi(options?: {
   }
 
   const ebayOrders = (rows ?? []).filter(
-    (row): row is EbayOrderRow =>
-      Boolean(row.ebay_order_id?.trim()),
+    (row): row is EbayOrderRow => Boolean(row.ebay_order_id?.trim()),
   );
+
+  const { count: missingEbayOrderIdCount } = await supabase
+    .from("orders")
+    .select("*", { count: "exact", head: true })
+    .is("ebay_order_id", null)
+    .ilike("tags", "%ebay%");
 
   const transactions = await fetchEbayTransactionsInRange(start, end);
   const feesByOrderId = aggregateEbayFeesByOrderId(transactions);
   const syncedAt = new Date().toISOString();
   let matched = 0;
+  let perOrderMatched = 0;
   let updated = 0;
   let updateFailures = 0;
+
+  const unmatchedRows = ebayOrders.filter(
+    (row) =>
+      !lookupEbayFeeBreakdown(feesByOrderId, row.ebay_order_id.trim()),
+  );
+
+  for (const row of unmatchedRows.slice(0, MAX_PER_ORDER_LOOKUPS)) {
+    const ebayOrderId = row.ebay_order_id.trim();
+
+    try {
+      const orderTransactions =
+        await fetchEbayTransactionsForOrderVariants(ebayOrderId);
+      const breakdown = sumEbayFeesFromTransactions(orderTransactions);
+      if (breakdown.total <= 0) {
+        continue;
+      }
+
+      registerFeeBreakdown(feesByOrderId, ebayOrderId, breakdown);
+      perOrderMatched += 1;
+    } catch {
+      // Try the next order; bulk sync should still succeed for matched rows.
+    }
+
+    await sleep(PER_ORDER_LOOKUP_DELAY_MS);
+  }
 
   const pendingUpdates: Array<{
     shopifyId: number;
@@ -91,55 +203,13 @@ export async function syncEbayFeesFromFinancesApi(options?: {
     const ebayFeesActual = roundMoney(feeBreakdown.total);
     const ebayAdsFeeActual = roundMoney(feeBreakdown.ads);
 
-    const order: StoredOrder = {
-      shopifyId: row.shopify_id,
-      orderNumber: "",
-      createdAt: syncedAt,
-      cancelledAt: null,
-      financialStatus: "paid",
-      fulfillmentStatus: null,
-      tags: row.tags,
-      buyerName: null,
-      ebayUsername: null,
+    const order = buildStoredOrderFromRow(
+      row,
       ebayOrderId,
-      amazonOrderId: null,
-      amazonDeliverByAt: null,
-      ebayDeliverByAt: null,
-      shippingAddress: null,
-      latitude: null,
-      longitude: null,
-      geocodeRegion: null,
-      geocodedAt: null,
-      currency: "GBP",
-      revenue: Number(row.revenue),
-      subtotal: Number(row.revenue),
-      tax: 0,
-      shippingCharged: 0,
-      shippingLabelCost:
-        row.shipping_label_cost != null
-          ? Number(row.shipping_label_cost)
-          : null,
-      ebayFeeRate: row.ebay_fee_rate != null ? Number(row.ebay_fee_rate) : null,
-      ebayAdsFeeRate:
-        row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,
       ebayFeesActual,
       ebayAdsFeeActual,
-      ebayFeesSyncedAt: syncedAt,
-      productCost: row.product_cost != null ? Number(row.product_cost) : null,
-      productCostManual: row.product_cost_manual ?? false,
-      shippingService: null,
-      shippingCarrier: null,
-      trackingNumbers: [],
-      trackingUrl: null,
-      shipmentStatus: null,
-      deliveredAt: null,
-      itemCount: 0,
-      platformFee: null,
-      cost: null,
-      profit: null,
-      lineItems: [],
-    };
-
+      syncedAt,
+    );
     const computed = withComputedFinancials(order);
     pendingUpdates.push({
       shopifyId: row.shopify_id,
@@ -196,9 +266,11 @@ export async function syncEbayFeesFromFinancesApi(options?: {
     transactionsFetched: transactions.length,
     ebayOrders: ebayOrders.length,
     matched,
+    perOrderMatched,
     updated,
     updateFailures,
     unmatchedOrderIds: ebayOrders.length - matched,
+    missingEbayOrderId: missingEbayOrderIdCount ?? 0,
     sampleUnmatchedOrderIds,
     sampleTransactionOrderIds,
     syncedAt,

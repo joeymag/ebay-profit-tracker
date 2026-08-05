@@ -2,6 +2,7 @@ import { getEbayAccessToken } from "@/lib/ebay/auth";
 import { getEbayConfig } from "@/lib/ebay/config";
 import { buildFinancesSignatureHeaders } from "@/lib/ebay/digital-signature";
 import { EbayApiError } from "@/lib/ebay/errors";
+import { ebayOrderIdLookupVariants } from "@/lib/ebay/order-id";
 
 export { EbayApiError } from "@/lib/ebay/errors";
 
@@ -105,9 +106,45 @@ export async function fetchEbayTransactionsInRange(
 export async function getEbayTransactionsForOrder(
   ebayOrderId: string,
 ): Promise<EbayTransaction[]> {
+  const transactions: EbayTransaction[] = [];
+  const limit = 200;
+  let offset = 0;
   const filter = encodeURIComponent(`orderId:{${ebayOrderId}}`);
-  const data = await ebayFinancesFetch<EbayTransactionsResponse>(
-    `/transaction?filter=${filter}&limit=200`,
-  );
-  return data.transactions ?? [];
+
+  while (true) {
+    const data = await ebayFinancesFetch<EbayTransactionsResponse>(
+      `/transaction?filter=${filter}&limit=${limit}&offset=${offset}`,
+    );
+    const batch = data.transactions ?? [];
+    transactions.push(...batch);
+
+    if (batch.length < limit) {
+      break;
+    }
+
+    offset += limit;
+    await sleep(150);
+  }
+
+  return transactions;
+}
+
+/** Try hyphenated and compact eBay order IDs until transactions are returned. */
+export async function fetchEbayTransactionsForOrderVariants(
+  ebayOrderId: string,
+): Promise<EbayTransaction[]> {
+  const variants = ebayOrderIdLookupVariants(ebayOrderId);
+
+  for (let index = 0; index < variants.length; index += 1) {
+    const transactions = await getEbayTransactionsForOrder(variants[index]!);
+    if (transactions.length) {
+      return transactions;
+    }
+
+    if (index < variants.length - 1) {
+      await sleep(150);
+    }
+  }
+
+  return [];
 }

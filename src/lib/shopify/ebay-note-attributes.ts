@@ -34,13 +34,38 @@ function parseIsoTimestamp(value: string | null): string | null {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
+function looksLikeEbayOrderId(value: string): boolean {
+  const compact = value.replace(/\s+/g, "");
+  return /^[\d-]{8,20}$/.test(compact);
+}
+
 export function parseEbayOrderIdFromNoteAttributes(
   noteAttributes: ShopifyNoteAttribute[] | null | undefined,
 ): string | null {
-  return readNoteAttribute(noteAttributes, [
+  const direct = readNoteAttribute(noteAttributes, [
     "eBay Order Id",
     "eBay Order ID",
+    "eBay Order Number",
+    "ebay order id",
+    "ebay order number",
   ]);
+  if (direct) {
+    return direct;
+  }
+
+  for (const attribute of noteAttributes ?? []) {
+    const key = normalizeAttributeKey(attribute.name);
+    if (!key.includes("ebay") || !key.includes("order")) {
+      continue;
+    }
+
+    const value = attribute.value?.trim();
+    if (value && looksLikeEbayOrderId(value)) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 /** eBay "Deliver by" deadline from note attributes. */
