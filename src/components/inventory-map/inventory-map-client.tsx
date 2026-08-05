@@ -11,7 +11,10 @@ import {
   type ProductConfigGroupData,
 } from "@/components/inventory-map/product-config-group";
 import { SingleVariantMapping } from "@/components/inventory-map/single-variant-mapping";
-import { VariantSkuAssign } from "@/components/inventory-map/variant-sku-assign";
+import {
+  VariantSkuAssign,
+  type PendingVariantIdentifiers,
+} from "@/components/inventory-map/variant-sku-assign";
 import { ReorderBadge } from "@/components/stock/reorder-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,12 +116,12 @@ export function InventoryMapClient() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [generatingVariantId, setGeneratingVariantId] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [pendingSkuByVariantId, setPendingSkuByVariantId] = useState<
-    Record<number, string>
+  const [pendingByVariantId, setPendingByVariantId] = useState<
+    Record<number, PendingVariantIdentifiers>
   >({});
   const [savingPendingSkus, setSavingPendingSkus] = useState(false);
 
-  const pendingSkuCount = Object.keys(pendingSkuByVariantId).length;
+  const pendingCount = Object.keys(pendingByVariantId).length;
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -252,24 +255,36 @@ export function InventoryMapClient() {
     return options;
   }, [enrichedItems, masterBySku]);
 
-  async function assignSkuToVariant(
+  async function assignVariantIdentifiers(
     variantId: number,
-    options?: { refresh?: boolean; sku?: string },
-  ): Promise<string | null> {
+    options?: { refresh?: boolean; sku?: string; barcode?: string },
+  ): Promise<{ sku: string | null; barcode: string | null } | null> {
     setGeneratingVariantId(variantId);
     setError(null);
 
     try {
+      const body: {
+        variantId: number;
+        sku?: string;
+        barcode?: string;
+      } = { variantId };
+
+      if (options?.sku?.trim()) {
+        body.sku = options.sku.trim();
+      }
+      if (options?.barcode?.trim()) {
+        body.barcode = options.barcode.trim();
+      } else if (options?.sku?.trim()) {
+        body.barcode = options.sku.trim();
+      }
+
       const res = await fetch("/api/shopify/inventory/generate-sku", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          variantId,
-          sku: options?.sku,
-        }),
+        body: JSON.stringify(body),
       });
       const data = (await res.json()) as
-        | { ok: true; sku: string }
+        | { ok: true; sku: string | null; barcode: string | null }
         | { ok: false; error: string };
 
       if (!data.ok) {
@@ -278,13 +293,14 @@ export function InventoryMapClient() {
       }
 
       if (options?.refresh) {
-        setActionMessage(`Assigned SKU ${data.sku}.`);
+        const label = data.sku ?? data.barcode ?? "variant";
+        setActionMessage(`Updated ${label} on Shopify.`);
         setRefreshKey((value) => value + 1);
       }
 
-      return data.sku;
+      return { sku: data.sku, barcode: data.barcode };
     } catch {
-      setError(options?.sku ? "Could not assign SKU." : "Could not generate SKU.");
+      setError("Could not save SKU or barcode to Shopify.");
       return null;
     } finally {
       setGeneratingVariantId(null);
@@ -312,28 +328,40 @@ export function InventoryMapClient() {
     }
   }
 
-  function stageSku(variantId: number, sku: string) {
-    const trimmed = sku.trim();
-    if (!trimmed) {
+  function stageVariant(variantId: number, input: PendingVariantIdentifiers) {
+    const sku = input.sku?.trim();
+    const barcode = input.barcode?.trim();
+
+    if (!sku && !barcode) {
       return;
     }
 
-    setPendingSkuByVariantId((current) => ({
-      ...current,
-      [variantId]: trimmed,
-    }));
+    setPendingByVariantId((current) => {
+      const existing = current[variantId] ?? {};
+      const next: PendingVariantIdentifiers = { ...existing };
+      if (sku) {
+        next.sku = sku;
+      }
+      if (barcode) {
+        next.barcode = barcode;
+      }
+      return {
+        ...current,
+        [variantId]: next,
+      };
+    });
     setError(null);
   }
 
-  function clearPendingSku(variantId: number) {
-    setPendingSkuByVariantId((current) => {
+  function clearPendingVariant(variantId: number) {
+    setPendingByVariantId((current) => {
       const next = { ...current };
       delete next[variantId];
       return next;
     });
   }
 
-  async function flushPendingSkus(
+  async function flushPendingVariants(
     variantIds: number[],
   ): Promise<{ ok: true; assigned: Record<number, string> } | { ok: false }> {
     const assigned: Record<number, string> = {};
@@ -344,21 +372,25 @@ export function InventoryMapClient() {
 
     try {
       for (const variantId of ids) {
-        const sku = pendingSkuByVariantId[variantId]?.trim();
-        if (!sku) {
+        const pending = pendingByVariantId[variantId];
+        if (!pending?.sku && !pending?.barcode) {
           continue;
         }
 
-        const result = await assignSkuToVariant(variantId, { sku, refresh: false });
+        const result = await assignVariantIdentifiers(variantId, {
+          sku: pending.sku,
+          barcode: pending.barcode ?? pending.sku,
+          refresh: false,
+        });
         if (!result) {
           return { ok: false };
         }
 
-        assigned[variantId] = result;
+        assigned[variantId] = result.sku ?? pending.sku ?? pending.barcode ?? "";
       }
 
       if (Object.keys(assigned).length > 0) {
-        setPendingSkuByVariantId((current) => {
+        setPendingByVariantId((current) => {
           const next = { ...current };
           for (const variantId of Object.keys(assigned).map(Number)) {
             delete next[variantId];
@@ -373,18 +405,20 @@ export function InventoryMapClient() {
     }
   }
 
-  async function saveAllPendingSkus() {
-    const variantIds = Object.keys(pendingSkuByVariantId).map(Number);
+  async function saveAllPendingVariants() {
+    const variantIds = Object.keys(pendingByVariantId).map(Number);
     if (variantIds.length === 0) {
       return;
     }
 
-    const result = await flushPendingSkus(variantIds);
+    const result = await flushPendingVariants(variantIds);
     if (!result.ok) {
       return;
     }
 
-    setActionMessage(`Saved ${Object.keys(result.assigned).length} SKU(s) to Shopify.`);
+    setActionMessage(
+      `Saved ${Object.keys(result.assigned).length} variant update(s) to Shopify.`,
+    );
     setRefreshKey((value) => value + 1);
   }
 
@@ -393,13 +427,15 @@ export function InventoryMapClient() {
     setActionMessage(null);
 
     const used = new Set(
-      Object.values(pendingSkuByVariantId).map((sku) => sku.toUpperCase()),
+      Object.values(pendingByVariantId)
+        .map((pending) => pending.sku?.toUpperCase())
+        .filter((sku): sku is string => Boolean(sku)),
     );
-    const next = { ...pendingSkuByVariantId };
+    const next = { ...pendingByVariantId };
     let staged = 0;
 
     for (const variantId of variantIds) {
-      if (next[variantId]) {
+      if (next[variantId]?.sku) {
         continue;
       }
 
@@ -414,17 +450,17 @@ export function InventoryMapClient() {
           continue;
         }
 
-        next[variantId] = sku;
+        next[variantId] = { sku, barcode: sku };
         used.add(key);
         staged += 1;
         break;
       }
     }
 
-    setPendingSkuByVariantId(next);
+    setPendingByVariantId(next);
     if (staged > 0) {
       setActionMessage(
-        `Staged ${staged} SKU(s). Add more or click Save SKUs to Shopify when ready.`,
+        `Staged ${staged} SKU(s). Add more or click Save to Shopify when ready.`,
       );
     }
   }
@@ -469,6 +505,7 @@ export function InventoryMapClient() {
       return (
         item.displayName.toLowerCase().includes(query) ||
         item.sku?.toLowerCase().includes(query) ||
+        item.barcode?.toLowerCase().includes(query) ||
         item.productTitle.toLowerCase().includes(query)
       );
     });
@@ -544,10 +581,11 @@ export function InventoryMapClient() {
               Inventory map
             </CardTitle>
             <CardDescription>
-              Live stock from Shopify for every tracked variant. Add SKUs locally,
-              then click <strong>Save SKUs to Shopify</strong> when you are done —
-              the page will not reload until then. Config products can set master
-              pack size and child pieces together. Update quantities on{" "}
+              Live stock from Shopify for every tracked variant. Add SKUs and barcodes
+              locally, then click <strong>Save to Shopify</strong> when you are done —
+              the page will not reload until then. Barcode defaults to the SKU if left
+              blank. Config products can set master pack size and child pieces together.
+              Update quantities on{" "}
               <Link href="/stock" className="text-primary hover:underline">
                 Stock control
               </Link>
@@ -572,7 +610,7 @@ export function InventoryMapClient() {
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <Input
-              placeholder="Search product or SKU…"
+              placeholder="Search product, SKU, or barcode…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="max-w-md"
@@ -620,13 +658,13 @@ export function InventoryMapClient() {
                   group={group}
                   allMasters={masters}
                   catalogMasters={catalogMasters}
-                  pendingSkuByVariantId={pendingSkuByVariantId}
+                  pendingByVariantId={pendingByVariantId}
                   generatingVariantId={generatingVariantId}
                   saving={loading || savingPendingSkus}
-                  onStageSku={stageSku}
-                  onClearPendingSku={clearPendingSku}
+                  onStageVariant={stageVariant}
+                  onClearPendingVariant={clearPendingVariant}
                   onSuggestSku={suggestSku}
-                  onFlushPendingSkus={flushPendingSkus}
+                  onFlushPendingVariants={flushPendingVariants}
                   onStageGeneratedSkus={stageGeneratedSkusForVariants}
                   onSaved={(message) => {
                     setActionMessage(
@@ -661,11 +699,18 @@ export function InventoryMapClient() {
                       </p>
                       {item.sku ? (
                         <p className="truncate font-mono text-xs text-muted-foreground">
-                          {item.sku}
+                          SKU: {item.sku}
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground">No SKU</p>
                       )}
+                      {item.barcode ? (
+                        <p className="truncate font-mono text-xs text-muted-foreground">
+                          Barcode: {item.barcode}
+                        </p>
+                      ) : item.sku ? (
+                        <p className="text-xs text-muted-foreground">No barcode</p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -717,6 +762,29 @@ export function InventoryMapClient() {
                     />
                   ) : null}
 
+                  {item.sku && !item.barcode ? (
+                    <VariantSkuAssign
+                      variantId={item.variantId}
+                      mode="barcode"
+                      existingSku={item.sku}
+                      pending={pendingByVariantId[item.variantId]}
+                      disabled={savingPendingSkus}
+                      onStage={stageVariant}
+                      onClearPending={clearPendingVariant}
+                    />
+                  ) : null}
+
+                  {!item.sku ? (
+                    <VariantSkuAssign
+                      variantId={item.variantId}
+                      pending={pendingByVariantId[item.variantId]}
+                      disabled={savingPendingSkus}
+                      onStage={stageVariant}
+                      onClearPending={clearPendingVariant}
+                      onSuggestSku={suggestSku}
+                    />
+                  ) : null}
+
                   {item.sku ? (
                     <Button
                       render={<Link href="/stock" />}
@@ -727,16 +795,7 @@ export function InventoryMapClient() {
                       <ScanBarcode className="size-4" />
                       Update in Stock control
                     </Button>
-                  ) : (
-                    <VariantSkuAssign
-                      variantId={item.variantId}
-                      pendingSku={pendingSkuByVariantId[item.variantId]}
-                      disabled={savingPendingSkus}
-                      onStage={stageSku}
-                      onClearPending={clearPendingSku}
-                      onSuggestSku={suggestSku}
-                    />
-                  )}
+                  ) : null}
                 </div>
                 );
               })}
@@ -756,14 +815,14 @@ export function InventoryMapClient() {
         </CardContent>
       </Card>
 
-      {pendingSkuCount > 0 ? (
+      {pendingCount > 0 ? (
         <div className="sticky bottom-4 z-20 mx-auto flex w-full max-w-2xl flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-card p-4 shadow-lg">
           <div className="space-y-0.5">
             <p className="text-sm font-medium">
-              {pendingSkuCount} SKU{pendingSkuCount === 1 ? "" : "s"} ready to save
+              {pendingCount} variant update{pendingCount === 1 ? "" : "s"} ready to save
             </p>
             <p className="text-xs text-muted-foreground">
-              SKUs are staged locally until you save them to Shopify.
+              SKUs and barcodes are staged locally until you save them to Shopify.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -771,19 +830,19 @@ export function InventoryMapClient() {
               type="button"
               variant="outline"
               disabled={savingPendingSkus}
-              onClick={() => setPendingSkuByVariantId({})}
+              onClick={() => setPendingByVariantId({})}
             >
               Clear all
             </Button>
             <Button
               type="button"
               disabled={savingPendingSkus}
-              onClick={() => void saveAllPendingSkus()}
+              onClick={() => void saveAllPendingVariants()}
             >
               {savingPendingSkus ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : null}
-              Save SKUs to Shopify
+              Save to Shopify
             </Button>
           </div>
         </div>

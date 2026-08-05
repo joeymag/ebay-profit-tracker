@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { EbayApiError } from "@/lib/ebay/client";
+import { EbayApiError } from "@/lib/ebay/errors";
 import { getEbayAccessToken } from "@/lib/ebay/auth";
 import { getEbayConfig } from "@/lib/ebay/config";
+import { fetchEbayTransactionsInRange } from "@/lib/ebay/client";
+import { hasEbaySigningKey } from "@/lib/ebay/signing-key-store";
 
 export async function GET() {
   const config = getEbayConfig();
@@ -20,10 +22,25 @@ export async function GET() {
 
   try {
     await getEbayAccessToken();
+
+    let financesOk = false;
+    let financesMessage = "Signing key not configured.";
+    if (await hasEbaySigningKey()) {
+      const end = new Date();
+      const start = new Date(end);
+      start.setUTCDate(start.getUTCDate() - 7);
+      const transactions = await fetchEbayTransactionsInRange(start, end);
+      financesOk = true;
+      financesMessage = `Finances API OK · ${transactions.length} transaction(s) in last 7 days.`;
+    }
+
     return NextResponse.json({
       ok: true,
       env: config.env,
       message: "eBay OAuth token is valid.",
+      financesOk,
+      financesMessage,
+      hasSigningKey: await hasEbaySigningKey(),
     });
   } catch (error) {
     if (error instanceof EbayApiError) {
@@ -33,6 +50,7 @@ export async function GET() {
           error: error.message,
           status: error.status,
           details: error.body?.slice(0, 500),
+          hasSigningKey: await hasEbaySigningKey(),
         },
         { status: 502 },
       );

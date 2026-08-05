@@ -1,6 +1,7 @@
 import { fetchEbayTransactionsInRange } from "@/lib/ebay/client";
 import {
   aggregateEbayFeesByOrderId,
+  lookupEbayFeeBreakdown,
   roundMoney,
 } from "@/lib/ebay/parse-fees";
 import { withComputedFinancials } from "@/lib/orders/financials";
@@ -14,7 +15,10 @@ export type SyncEbayFeesResult = {
   ebayOrders: number;
   matched: number;
   updated: number;
+  updateFailures: number;
   unmatchedOrderIds: number;
+  sampleUnmatchedOrderIds: string[];
+  sampleTransactionOrderIds: string[];
   syncedAt: string;
 };
 
@@ -30,6 +34,8 @@ type EbayOrderRow = {
   ebay_ads_fee_rate: number | null;
   ebay_fees_actual: number | null;
 };
+
+const UPDATE_CHUNK_SIZE = 25;
 
 export async function syncEbayFeesFromFinancesApi(options?: {
   days?: number;
@@ -61,10 +67,22 @@ export async function syncEbayFeesFromFinancesApi(options?: {
   const syncedAt = new Date().toISOString();
   let matched = 0;
   let updated = 0;
+  let updateFailures = 0;
+
+  const pendingUpdates: Array<{
+    shopifyId: number;
+    payload: {
+      ebay_fees_actual: number;
+      ebay_ads_fee_actual: number;
+      ebay_fees_synced_at: string;
+      cost: number | null;
+      profit: number | null;
+    };
+  }> = [];
 
   for (const row of ebayOrders) {
     const ebayOrderId = row.ebay_order_id.trim();
-    const feeBreakdown = feesByOrderId.get(ebayOrderId);
+    const feeBreakdown = lookupEbayFeeBreakdown(feesByOrderId, ebayOrderId);
     if (!feeBreakdown) {
       continue;
     }
@@ -123,21 +141,54 @@ export async function syncEbayFeesFromFinancesApi(options?: {
     };
 
     const computed = withComputedFinancials(order);
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({
+    pendingUpdates.push({
+      shopifyId: row.shopify_id,
+      payload: {
         ebay_fees_actual: ebayFeesActual,
         ebay_ads_fee_actual: ebayAdsFeeActual,
         ebay_fees_synced_at: syncedAt,
         cost: computed.cost,
         profit: computed.profit,
-      })
-      .eq("shopify_id", row.shopify_id);
+      },
+    });
+  }
 
-    if (!updateError) {
-      updated += 1;
+  for (let index = 0; index < pendingUpdates.length; index += UPDATE_CHUNK_SIZE) {
+    const chunk = pendingUpdates.slice(index, index + UPDATE_CHUNK_SIZE);
+    const results = await Promise.all(
+      chunk.map((entry) =>
+        supabase
+          .from("orders")
+          .update(entry.payload)
+          .eq("shopify_id", entry.shopifyId),
+      ),
+    );
+
+    for (const result of results) {
+      if (result.error) {
+        updateFailures += 1;
+      } else {
+        updated += 1;
+      }
     }
   }
+
+  const matchedOrderIdSet = new Set<string>();
+  for (const row of ebayOrders) {
+    if (lookupEbayFeeBreakdown(feesByOrderId, row.ebay_order_id.trim())) {
+      matchedOrderIdSet.add(row.ebay_order_id.trim());
+    }
+  }
+
+  const sampleUnmatchedOrderIds = ebayOrders
+    .map((row) => row.ebay_order_id.trim())
+    .filter((orderId) => !matchedOrderIdSet.has(orderId))
+    .slice(0, 5);
+
+  const sampleTransactionOrderIds = transactions
+    .map((transaction) => transaction.orderId?.trim())
+    .filter((orderId): orderId is string => Boolean(orderId))
+    .slice(0, 5);
 
   return {
     ok: true,
@@ -146,7 +197,10 @@ export async function syncEbayFeesFromFinancesApi(options?: {
     ebayOrders: ebayOrders.length,
     matched,
     updated,
+    updateFailures,
     unmatchedOrderIds: ebayOrders.length - matched,
+    sampleUnmatchedOrderIds,
+    sampleTransactionOrderIds,
     syncedAt,
   };
 }

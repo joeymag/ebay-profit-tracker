@@ -55,6 +55,7 @@ export type InventoryMapItem = {
   variantId: number;
   productId: number;
   sku: string | null;
+  barcode: string | null;
   productTitle: string;
   variantTitle: string;
   displayName: string;
@@ -80,6 +81,7 @@ type ShopifyProductRest = {
     id: number;
     title: string;
     sku: string | null;
+    barcode: string | null;
     inventory_management: string | null;
     inventory_quantity: number;
     option1: string | null;
@@ -142,7 +144,7 @@ async function fetchAllVariantsForProduct(
   const variants: ShopifyVariantRest[] = [];
   let pageInfo: string | null = null;
   const fields =
-    "id,title,sku,inventory_management,inventory_quantity,option1,option2,option3";
+    "id,title,sku,barcode,inventory_management,inventory_quantity,option1,option2,option3";
 
   for (let page = 0; page < 20; page += 1) {
     const path = pageInfo
@@ -304,10 +306,12 @@ export async function listInventoryMapItems(options?: {
         }
 
         const sku = variant.sku?.trim() || null;
+        const barcode = variant.barcode?.trim() || null;
         items.push({
           variantId: variant.id,
           productId: product.id,
           sku,
+          barcode,
           productTitle: product.title,
           variantTitle: variant.title,
           displayName: variantDisplayName(product.title, variant.title),
@@ -564,6 +568,55 @@ export function isShopifyInventoryError(error: unknown): error is Error {
   return error instanceof Error;
 }
 
+export async function setVariantIdentifiers(
+  variantId: number,
+  input: { sku?: string; barcode?: string | null },
+): Promise<{ sku: string | null; barcode: string | null }> {
+  const trimmedSku = input.sku?.trim();
+  let trimmedBarcode: string | null | undefined;
+
+  if (input.barcode !== undefined) {
+    trimmedBarcode = input.barcode?.trim() || null;
+  } else if (trimmedSku) {
+    trimmedBarcode = trimmedSku;
+  }
+
+  if (!trimmedSku && trimmedBarcode === undefined) {
+    throw new Error("SKU or barcode is required.");
+  }
+
+  const payload: { id: number; sku?: string; barcode?: string | null } = {
+    id: variantId,
+  };
+  if (trimmedSku) {
+    payload.sku = trimmedSku;
+  }
+  if (trimmedBarcode !== undefined) {
+    payload.barcode = trimmedBarcode;
+  }
+
+  try {
+    const data = await shopifyAdminFetch<{
+      variant: { id: number; sku: string | null; barcode: string | null };
+    }>(`/variants/${variantId}.json`, {
+      method: "PUT",
+      body: JSON.stringify({ variant: payload }),
+    });
+
+    return {
+      sku: data.variant?.sku?.trim() || null,
+      barcode: data.variant?.barcode?.trim() || null,
+    };
+  } catch (error) {
+    if (error instanceof ShopifyApiError && error.status === 403) {
+      throw new Error(
+        "Shopify rejected the variant update. Add Admin API scope write_products to your app, release a new version, and reinstall on your store.",
+      );
+    }
+    throw error;
+  }
+}
+
 export async function setVariantSku(
   variantId: number,
   sku: string,
@@ -573,29 +626,14 @@ export async function setVariantSku(
     throw new Error("SKU is required.");
   }
 
-  try {
-    const data = await shopifyAdminFetch<{ variant: { id: number; sku: string } }>(
-      `/variants/${variantId}.json`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          variant: { id: variantId, sku: trimmed },
-        }),
-      },
-    );
-
-    const assigned = data.variant?.sku?.trim();
-    if (!assigned) {
-      throw new Error("Shopify did not return the updated SKU.");
-    }
-
-    return assigned;
-  } catch (error) {
-    if (error instanceof ShopifyApiError && error.status === 403) {
-      throw new Error(
-        "Shopify rejected the SKU update. Add Admin API scope write_products to your app, release a new version, and reinstall on your store.",
-      );
-    }
-    throw error;
+  const result = await setVariantIdentifiers(variantId, {
+    sku: trimmed,
+    barcode: trimmed,
+  });
+  const assigned = result.sku;
+  if (!assigned) {
+    throw new Error("Shopify did not return the updated SKU.");
   }
+
+  return assigned;
 }

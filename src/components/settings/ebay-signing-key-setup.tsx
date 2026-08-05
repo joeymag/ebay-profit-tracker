@@ -66,6 +66,26 @@ export function EbaySigningKeySetup() {
     }
   }
 
+  async function regenerateSigningKey() {
+    setCreating(true);
+    setMessage(null);
+    setError(null);
+
+    try {
+      const clearRes = await fetch("/api/ebay/signing-key", { method: "DELETE" });
+      const clearData = (await clearRes.json()) as SigningKeyResult;
+      if (!clearData.ok) {
+        setError(clearData.error || "Could not clear the old signing key.");
+        return;
+      }
+
+      await createSigningKey();
+    } catch {
+      setError("Could not regenerate the signing key.");
+      setCreating(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -82,7 +102,8 @@ export function EbaySigningKeySetup() {
         <p className="text-sm text-muted-foreground">
           The Finances API requires a signing key (EU/UK regulatory requirement).
           Generate once after connecting eBay — the private key is stored in
-          Supabase and never shown again.
+          Supabase and never shown again. If fee sync fails with a signature
+          error, regenerate the key here.
         </p>
       </div>
 
@@ -92,7 +113,7 @@ export function EbaySigningKeySetup() {
         </Badge>
         {!hasSigningKey ? (
           <Button
-            onClick={createSigningKey}
+            onClick={() => void createSigningKey()}
             disabled={creating}
             type="button"
             variant="secondary"
@@ -106,7 +127,23 @@ export function EbaySigningKeySetup() {
               "Generate signing key"
             )}
           </Button>
-        ) : null}
+        ) : (
+          <Button
+            onClick={() => void regenerateSigningKey()}
+            disabled={creating}
+            type="button"
+            variant="outline"
+          >
+            {creating ? (
+              <>
+                <Loader2 className="animate-spin" />
+                Regenerating…
+              </>
+            ) : (
+              "Regenerate signing key"
+            )}
+          </Button>
+        )}
       </div>
 
       {message ? (

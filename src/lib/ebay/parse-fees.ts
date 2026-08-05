@@ -56,11 +56,17 @@ function addFeeAmount(
   }
 }
 
+/** Normalize eBay order IDs so `12-34567-89012` matches `123456789012`. */
+export function normalizeEbayOrderIdKey(id: string): string {
+  return id.trim().replace(/-/g, "").toUpperCase();
+}
+
 function orderIdsFromTransaction(transaction: EbayTransaction): string[] {
   const ids = new Set<string>();
   const primary = transaction.orderId?.trim();
   if (primary) {
     ids.add(primary);
+    ids.add(normalizeEbayOrderIdKey(primary));
   }
 
   for (const reference of transaction.references ?? []) {
@@ -68,11 +74,28 @@ function orderIdsFromTransaction(transaction: EbayTransaction): string[] {
       reference.referenceType?.toUpperCase() === "ORDER_ID" &&
       reference.referenceId?.trim()
     ) {
-      ids.add(reference.referenceId.trim());
+      const referenceId = reference.referenceId.trim();
+      ids.add(referenceId);
+      ids.add(normalizeEbayOrderIdKey(referenceId));
     }
   }
 
   return [...ids];
+}
+
+export function lookupEbayFeeBreakdown(
+  feesByOrderId: Map<string, EbayOrderFeeBreakdown>,
+  ebayOrderId: string,
+): EbayOrderFeeBreakdown | undefined {
+  const trimmed = ebayOrderId.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return (
+    feesByOrderId.get(trimmed) ??
+    feesByOrderId.get(normalizeEbayOrderIdKey(trimmed))
+  );
 }
 
 function breakdownFromTransaction(

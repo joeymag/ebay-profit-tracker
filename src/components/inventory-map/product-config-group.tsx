@@ -20,13 +20,17 @@ import {
   buildChildMasterOptions,
   ChildMasterSelector,
 } from "@/components/inventory-map/child-master-selector";
-import { VariantSkuAssign } from "@/components/inventory-map/variant-sku-assign";
+import {
+  VariantSkuAssign,
+  type PendingVariantIdentifiers,
+} from "@/components/inventory-map/variant-sku-assign";
 import { cn } from "@/lib/utils";
 
 export type ConfigGroupVariant = {
   variantId: number;
   productId: number;
   sku: string | null;
+  barcode: string | null;
   productTitle: string;
   variantTitle: string;
   displayName: string;
@@ -54,13 +58,13 @@ type ProductConfigGroupProps = {
   group: ProductConfigGroupData;
   allMasters: InventoryMasterWithChildren[];
   catalogMasters: { sku: string; label: string; packSize: number }[];
-  pendingSkuByVariantId: Record<number, string>;
+  pendingByVariantId: Record<number, PendingVariantIdentifiers>;
   generatingVariantId: number | null;
   saving: boolean;
-  onStageSku: (variantId: number, sku: string) => void;
-  onClearPendingSku: (variantId: number) => void;
+  onStageVariant: (variantId: number, input: PendingVariantIdentifiers) => void;
+  onClearPendingVariant: (variantId: number) => void;
   onSuggestSku: () => Promise<string | null>;
-  onFlushPendingSkus: (
+  onFlushPendingVariants: (
     variantIds: number[],
   ) => Promise<{ ok: true; assigned: Record<number, string> } | { ok: false }>;
   onStageGeneratedSkus: (variantIds: number[]) => Promise<void>;
@@ -205,13 +209,13 @@ export function ProductConfigGroup({
   group,
   allMasters,
   catalogMasters,
-  pendingSkuByVariantId,
+  pendingByVariantId,
   generatingVariantId,
   saving,
-  onStageSku,
-  onClearPendingSku,
+  onStageVariant,
+  onClearPendingVariant,
   onSuggestSku,
-  onFlushPendingSkus,
+  onFlushPendingVariants,
   onStageGeneratedSkus,
   onSaved,
   onError,
@@ -235,11 +239,12 @@ export function ProductConfigGroup({
     (variant) => config.roles[variant.variantId] === "child",
   ).length;
   const missingSkuCount = group.variants.filter(
-    (variant) => !variant.sku && !pendingSkuByVariantId[variant.variantId],
+    (variant) => !variant.sku && !pendingByVariantId[variant.variantId]?.sku,
   ).length;
-  const pendingSkuCount = group.variants.filter(
-    (variant) => !variant.sku && pendingSkuByVariantId[variant.variantId],
-  ).length;
+  const pendingSaveCount = group.variants.filter((variant) => {
+    const pending = pendingByVariantId[variant.variantId];
+    return Boolean(pending?.sku || pending?.barcode);
+  }).length;
 
   function effectiveSku(
     variant: ConfigGroupVariant,
@@ -248,7 +253,16 @@ export function ProductConfigGroup({
     return (
       variant.sku ??
       assignedDuringFlush?.[variant.variantId] ??
-      pendingSkuByVariantId[variant.variantId] ??
+      pendingByVariantId[variant.variantId]?.sku ??
+      null
+    );
+  }
+
+  function effectiveBarcode(variant: ConfigGroupVariant): string | null {
+    return (
+      variant.barcode ??
+      pendingByVariantId[variant.variantId]?.barcode ??
+      pendingByVariantId[variant.variantId]?.sku ??
       null
     );
   }
@@ -273,7 +287,7 @@ export function ProductConfigGroup({
         allMasters,
         catalogMasters,
       }),
-    [allMasters, catalogMasters, config.masterPackSizes, masterVariants, pendingSkuByVariantId, group.variants],
+    [allMasters, catalogMasters, config.masterPackSizes, masterVariants, pendingByVariantId, group.variants],
   );
 
   function defaultMasterSkuForChild(variant: ConfigGroupVariant): string {
@@ -324,7 +338,7 @@ export function ProductConfigGroup({
   async function handleGenerateAll() {
     const missing = group.variants
       .filter(
-        (variant) => !variant.sku && !pendingSkuByVariantId[variant.variantId],
+        (variant) => !variant.sku && !pendingByVariantId[variant.variantId]?.sku,
       )
       .map((variant) => variant.variantId);
     if (!missing.length) {
@@ -360,7 +374,7 @@ export function ProductConfigGroup({
     onError(null);
 
     try {
-      const flushResult = await onFlushPendingSkus(
+      const flushResult = await onFlushPendingVariants(
         group.variants.map((variant) => variant.variantId),
       );
       if (!flushResult.ok) {
@@ -481,11 +495,12 @@ export function ProductConfigGroup({
   }
 
   async function handleUpdateShopifyStock() {
-    const pendingInGroup = group.variants.some(
-      (variant) => !variant.sku && pendingSkuByVariantId[variant.variantId],
-    );
+    const pendingInGroup = group.variants.some((variant) => {
+      const pending = pendingByVariantId[variant.variantId];
+      return !variant.sku && pending?.sku;
+    });
     if (pendingInGroup) {
-      onError("Save pending SKUs to Shopify before updating listing stock.");
+      onError("Save pending SKUs and barcodes to Shopify before updating listing stock.");
       return;
     }
 
@@ -575,9 +590,9 @@ export function ProductConfigGroup({
                 {masterCount} master{masterCount === 1 ? "" : "s"}
               </Badge>
               <Badge variant="outline">{childCount} child</Badge>
-              {pendingSkuCount > 0 ? (
+              {pendingSaveCount > 0 ? (
                 <Badge variant="outline" className="border-amber-500/40 text-amber-700">
-                  {pendingSkuCount} SKU pending save
+                  {pendingSaveCount} pending save
                 </Badge>
               ) : null}
               {missingSkuCount > 0 ? (
@@ -630,11 +645,11 @@ export function ProductConfigGroup({
             pack size. Set <strong>Child</strong> for sold sizes and pick which master they
             deduct from — every variant marked <strong>Master</strong> in this product appears
             under <strong>Masters in this product</strong>, and saved bulk SKUs from other
-            listings appear under <strong>Other master SKUs</strong>. Add SKUs with{" "}
+            listings appear under <strong>Other master SKUs</strong>. Add SKUs and barcodes with{" "}
             <strong>Add</strong> or <strong>Generate</strong>, then use{" "}
-            <strong>Save SKUs to Shopify</strong> at the bottom when finished.{" "}
-            <strong>Save masters &amp; children</strong> also saves any pending SKUs in this
-            group before updating mappings and Shopify stock.
+            <strong>Save to Shopify</strong> at the bottom when finished. Barcode defaults to
+            the SKU if left blank. <strong>Save masters &amp; children</strong> also saves any
+            pending SKUs in this group before updating mappings and Shopify stock.
           </p>
 
           <div className="overflow-x-auto rounded-lg border border-border/60">
@@ -643,6 +658,7 @@ export function ProductConfigGroup({
                 <tr>
                   <th className="px-3 py-2 font-medium">Variant</th>
                   <th className="px-3 py-2 font-medium">SKU</th>
+                  <th className="px-3 py-2 font-medium">Barcode</th>
                   <th className="px-3 py-2 font-medium">Stock</th>
                   <th className="px-3 py-2 font-medium">Role</th>
                   <th className="px-3 py-2 font-medium">Master / pieces</th>
@@ -687,13 +703,39 @@ export function ProductConfigGroup({
                         ) : (
                           <VariantSkuAssign
                             variantId={variant.variantId}
-                            pendingSku={pendingSkuByVariantId[variant.variantId]}
+                            pending={pendingByVariantId[variant.variantId]}
                             compact
                             disabled={busy}
-                            onStage={onStageSku}
-                            onClearPending={onClearPendingSku}
+                            onStage={onStageVariant}
+                            onClearPending={onClearPendingVariant}
                             onSuggestSku={onSuggestSku}
                           />
+                        )}
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        {variant.barcode ? (
+                          <p className="font-mono text-xs">{variant.barcode}</p>
+                        ) : variant.sku ? (
+                          <VariantSkuAssign
+                            variantId={variant.variantId}
+                            mode="barcode"
+                            existingSku={variant.sku}
+                            pending={
+                              pendingByVariantId[variant.variantId]?.barcode
+                                ? pendingByVariantId[variant.variantId]
+                                : undefined
+                            }
+                            compact
+                            disabled={busy}
+                            onStage={onStageVariant}
+                            onClearPending={onClearPendingVariant}
+                          />
+                        ) : effectiveBarcode(variant) ? (
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {effectiveBarcode(variant)}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">With SKU</p>
                         )}
                       </td>
                       <td className="px-3 py-3 align-top">

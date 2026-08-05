@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 import { isSkuTaken, suggestUniqueSku } from "@/lib/inventory/sku-uniqueness";
 import {
   isShopifyInventoryError,
-  setVariantSku,
+  setVariantIdentifiers,
 } from "@/lib/shopify/inventory";
 
 type GenerateSkuBody = {
   variantId?: number;
   prefix?: string;
   sku?: string;
+  barcode?: string;
 };
 
 export async function POST(request: Request) {
@@ -30,9 +31,23 @@ export async function POST(request: Request) {
 
   const prefix = body.prefix?.trim() || "INV";
   const customSku = body.sku?.trim();
+  const customBarcode = body.barcode?.trim();
   const variantIdInt = Math.floor(variantId);
 
   try {
+    if (!customSku && customBarcode) {
+      const updated = await setVariantIdentifiers(variantIdInt, {
+        barcode: customBarcode,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        sku: updated.sku,
+        barcode: updated.barcode,
+        variantId: variantIdInt,
+      });
+    }
+
     let sku: string;
 
     if (customSku) {
@@ -55,17 +70,19 @@ export async function POST(request: Request) {
       sku = await suggestUniqueSku(prefix);
     }
 
-    const assignedSku = await setVariantSku(variantIdInt, sku);
+    const barcode = customBarcode || sku;
+    const updated = await setVariantIdentifiers(variantIdInt, { sku, barcode });
 
     return NextResponse.json({
       ok: true,
-      sku: assignedSku,
+      sku: updated.sku ?? sku,
+      barcode: updated.barcode ?? barcode,
       variantId: variantIdInt,
     });
   } catch (error) {
     const message = isShopifyInventoryError(error)
       ? error.message
-      : "Could not generate SKU.";
+      : "Could not update variant identifiers.";
 
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }

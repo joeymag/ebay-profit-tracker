@@ -9,7 +9,7 @@ export async function ebayFinancesFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const { financesBaseUrl } = getEbayConfig();
+  const { financesBaseUrl, marketplaceId } = getEbayConfig();
   const accessToken = await getEbayAccessToken();
   const url = `${financesBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
   const requestUrl = new URL(url);
@@ -25,6 +25,7 @@ export async function ebayFinancesFetch<T>(
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       Accept: "application/json",
+      "X-EBAY-C-MARKETPLACE-ID": marketplaceId,
       ...signatureHeaders,
       ...(init?.headers ?? {}),
     },

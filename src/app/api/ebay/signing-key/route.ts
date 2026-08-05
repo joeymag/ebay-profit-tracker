@@ -7,6 +7,11 @@ import {
   saveEbaySigningKey,
 } from "@/lib/ebay/signing-key-store";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
+import { createSupabaseAdmin } from "@/lib/supabase/client";
+import {
+  hasSupabaseServiceRoleKey,
+  isSupabaseConfigured,
+} from "@/lib/supabase/config";
 
 export async function GET() {
   return NextResponse.json({
@@ -62,4 +67,40 @@ export async function POST() {
 
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
+}
+
+export async function DELETE() {
+  if (!isSupabaseConfigured() || !hasSupabaseServiceRoleKey()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Cannot clear signing key without SUPABASE_SERVICE_ROLE_KEY configured.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const supabase = createSupabaseAdmin();
+  const { error } = await supabase
+    .from("ebay_oauth")
+    .update({
+      signing_private_key: null,
+      signing_jwe: null,
+      signing_key_id: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", "default");
+
+  if (error) {
+    return NextResponse.json(
+      { ok: false, error: error.message },
+      { status: 502 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    message: "Signing key cleared. Generate a new one, then sync fees again.",
+  });
 }
