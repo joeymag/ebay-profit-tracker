@@ -46,6 +46,7 @@ export function parseEbayOrderIdFromNoteAttributes(
     "eBay Order Id",
     "eBay Order ID",
     "eBay Order Number",
+    "eBay Order #",
     "ebay order id",
     "ebay order number",
   ]);

@@ -7,6 +7,7 @@ import {
   parseEbayDeliverByAtFromNoteAttributes,
   parseEbayOrderIdFromNoteAttributes,
 } from "@/lib/shopify/ebay-note-attributes";
+import { resolveShopifyLineItemSku } from "@/lib/shopify/ebay-line-item-sku";
 import { parseOrderShipping } from "@/lib/shopify/shipping";
 import { parseEbayUsernameForOrder } from "@/lib/orders/ebay-buyer";
 import { parseShippingAddress } from "@/lib/orders/shipping-address";
@@ -99,7 +100,7 @@ function normalizeOrder(order: ShopifyOrder): StoredOrder {
       id: item.id,
       title: item.title,
       quantity: item.quantity,
-      sku: item.sku?.trim() || null,
+      sku: resolveShopifyLineItemSku(item),
       temuSku,
       price: parseAmount(item.price),
       productId: item.product_id ?? null,
