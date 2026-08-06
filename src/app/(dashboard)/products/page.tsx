@@ -71,15 +71,17 @@ export default async function ProductsPage() {
               </CardHeader>
               <CardContent className="px-0 pb-0 pt-0">
                 <div className="overflow-x-auto">
-                  <Table>
+                  <Table className="table-fixed">
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-16 pl-6" />
-                        <TableHead>Product</TableHead>
-                        <TableHead>SKU</TableHead>
-                        <TableHead>Temu SKU</TableHead>
-                        <TableHead>Unit cost</TableHead>
-                        <TableHead className="pr-6 text-right">In orders</TableHead>
+                        <TableHead className="w-[36%]">Product</TableHead>
+                        <TableHead className="w-[16%]">SKU</TableHead>
+                        <TableHead className="w-[14%]">Temu SKU</TableHead>
+                        <TableHead className="w-[18%]">Unit cost</TableHead>
+                        <TableHead className="w-[10%] pr-6 text-right">
+                          In orders
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -87,7 +89,7 @@ export default async function ProductsPage() {
                         <TableRow>
                           <TableCell
                             colSpan={6}
-                            className="h-24 text-center text-muted-foreground"
+                            className="h-24 whitespace-normal text-center text-muted-foreground"
                           >
                             Click &quot;Import SKUs from orders&quot; to build
                             your catalog from synced orders.
@@ -103,28 +105,32 @@ export default async function ProductsPage() {
                                 : "border-border/40"
                             }
                           >
-                            <TableCell className="pl-6">
+                            <TableCell className="pl-6 align-top">
                               <LineItemImage
                                 src={product.imageUrl}
                                 alt={product.title}
                               />
                             </TableCell>
-                            <TableCell className="max-w-md text-base font-medium">
-                              {product.title}
+                            <TableCell className="min-w-0 whitespace-normal align-top text-base font-medium">
+                              <p className="line-clamp-2 break-words leading-snug">
+                                {product.title}
+                              </p>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="min-w-0 align-top whitespace-normal">
                               <Badge
                                 variant="outline"
-                                className="font-mono text-sm font-medium"
+                                className="max-w-full truncate bg-background font-mono text-sm font-medium"
+                                title={product.sku}
                               >
                                 {product.sku}
                               </Badge>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="min-w-0 align-top whitespace-normal">
                               {product.temuSku ? (
                                 <Badge
                                   variant="outline"
-                                  className="border-orange-500/30 bg-orange-500/10 font-mono text-sm font-medium text-orange-800 dark:text-orange-300"
+                                  className="max-w-full truncate border-orange-500/30 bg-orange-500/10 font-mono text-sm font-medium text-orange-800 dark:text-orange-300"
+                                  title={product.temuSku}
                                 >
                                   {product.temuSku}
                                 </Badge>
@@ -132,7 +138,7 @@ export default async function ProductsPage() {
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="align-top whitespace-normal">
                               <ProductCostInput
                                 sku={product.sku}
                                 initialCost={product.unitCost}
