@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { recalculateAllOrderProductCosts } from "@/lib/orders/apply-product-costs";
-import { updateProductCost } from "@/lib/products/store";
+import { upsertSkuCosts } from "@/lib/products/listing-costs";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 type RouteContext = {
@@ -19,11 +19,25 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { sku: encodedSku } = await context.params;
   const sku = decodeURIComponent(encodedSku);
 
-  let body: { unitCost?: number | null };
+  let body: {
+    unitCost?: number | null;
+    defaultPostage?: number | null;
+    title?: string | null;
+  };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  if (
+    body.unitCost === undefined &&
+    body.defaultPostage === undefined
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "Provide unitCost and/or defaultPostage." },
+      { status: 400 },
+    );
   }
 
   if (body.unitCost !== null && body.unitCost !== undefined) {
@@ -35,16 +49,38 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
   }
 
+  if (body.defaultPostage !== null && body.defaultPostage !== undefined) {
+    if (
+      typeof body.defaultPostage !== "number" ||
+      !Number.isFinite(body.defaultPostage) ||
+      body.defaultPostage < 0
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "defaultPostage must be a non-negative number or null.",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   try {
-    const product = await updateProductCost(
+    const costs = await upsertSkuCosts({
       sku,
-      body.unitCost === undefined ? null : body.unitCost,
-    );
-    const ordersUpdated = await recalculateAllOrderProductCosts();
+      title: body.title,
+      unitCost: body.unitCost,
+      defaultPostage: body.defaultPostage,
+    });
+
+    const ordersUpdated =
+      body.unitCost !== undefined
+        ? await recalculateAllOrderProductCosts()
+        : 0;
 
     return NextResponse.json({
       ok: true,
-      product,
+      costs,
       ordersUpdated,
     });
   } catch (error) {

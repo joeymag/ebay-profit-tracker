@@ -23,6 +23,10 @@ export type EbayListingVariation = {
   quantity: number | null;
   quantitySold: number | null;
   quantityAvailable: number | null;
+  /** Product unit cost ex-VAT from catalog (for pre-sale profit estimates). */
+  unitCost: number | null;
+  /** Default postage / label cost for this SKU. */
+  postageCost: number | null;
 };
 
 export type EbayListingDetails = {
@@ -133,6 +137,8 @@ function parseVariation(variationXml: string): EbayListingVariation {
     quantity,
     quantitySold,
     quantityAvailable,
+    unitCost: null,
+    postageCost: null,
   };
 }
 
@@ -200,6 +206,8 @@ export async function fetchEbayListingDetails(
           quantity,
           quantitySold,
           quantityAvailable,
+          unitCost: null,
+          postageCost: null,
         } satisfies EbayListingVariation,
       ];
 
@@ -207,6 +215,29 @@ export async function fetchEbayListingDetails(
     listingIds: [trimmedId],
   });
   const promoRate = promo.ratesByListingId[trimmedId];
+
+  let costBySku = new Map<
+    string,
+    { unitCost: number | null; defaultPostage: number | null }
+  >();
+  try {
+    const { getSkuCostSnapshots } = await import("@/lib/products/listing-costs");
+    costBySku = await getSkuCostSnapshots(
+      displayVariations.map((variation) => variation.sku),
+    );
+  } catch {
+    // Cost enrichment is best-effort; listing details should still load.
+  }
+
+  const variationsWithCosts = displayVariations.map((variation) => {
+    const sku = variation.sku?.trim();
+    const costs = sku ? costBySku.get(sku) : undefined;
+    return {
+      ...variation,
+      unitCost: costs?.unitCost ?? null,
+      postageCost: costs?.defaultPostage ?? null,
+    };
+  });
 
   return {
     listingId: extractXmlTag(itemXml, "ItemID") ?? trimmedId,
@@ -225,7 +256,7 @@ export async function fetchEbayListingDetails(
       extractXmlTag(itemXml, "PictureURL"),
     itemWebUrl: ebayListingUrl(trimmedId, marketplaceId),
     isMultiVariation,
-    variations: displayVariations,
+    variations: variationsWithCosts,
     promoRatePercent: promoRate?.bidPercentage ?? null,
     promoAdStatus: promoRate?.adStatus ?? null,
     promoCampaignName: promoRate?.campaignName ?? null,

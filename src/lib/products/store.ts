@@ -117,6 +117,7 @@ export async function syncProductsFromOrders(): Promise<{
         sku,
         title: item.title,
         unitCost: null,
+        defaultPostage: null,
         imageUrl: item.imageUrl,
         shopifyProductId: item.productId,
         temuSku: item.temuSku,

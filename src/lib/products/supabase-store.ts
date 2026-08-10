@@ -14,6 +14,8 @@ function rowToProduct(row: ProductRow, orderLineCount = 0): Product {
     sku: row.sku,
     title: row.title,
     unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
+    defaultPostage:
+      row.default_postage != null ? Number(row.default_postage) : null,
     imageUrl: row.image_url,
     shopifyProductId: row.shopify_product_id,
     temuSku: row.temu_sku,

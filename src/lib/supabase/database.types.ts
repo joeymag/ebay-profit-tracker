@@ -182,6 +182,7 @@ export type Database = {
           sku: string;
           title: string;
           unit_cost: number | null;
+          default_postage: number | null;
           image_url: string | null;
           shopify_product_id: number | null;
           temu_sku: string | null;
@@ -191,6 +192,7 @@ export type Database = {
           sku: string;
           title: string;
           unit_cost?: number | null;
+          default_postage?: number | null;
           image_url?: string | null;
           shopify_product_id?: number | null;
           temu_sku?: string | null;

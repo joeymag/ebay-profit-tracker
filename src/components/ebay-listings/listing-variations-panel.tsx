@@ -30,10 +30,10 @@ import type {
   EbayVariationEdit,
 } from "@/lib/ebay/listing-details";
 import {
-  computeEbayFees,
+  calculateEbayItemProfit,
   formatEbayFinalValueFeeSchedule,
-  type EbayFees,
-} from "@/lib/orders/platform-fees";
+  PRODUCT_COST_VAT_RATE,
+} from "@/lib/orders/ebay-profit-calculator";
 import { cn } from "@/lib/utils";
 
 type DetailsResponse =
@@ -53,6 +53,8 @@ type ReviseResponse =
 type DraftRow = {
   sku: string;
   price: string;
+  unitCost: string;
+  postage: string;
 };
 
 const SELLING_FEE_STORAGE_KEY = "ebay-listing-selling-fee-percent";
@@ -66,14 +68,20 @@ function formatQty(value: number | null | undefined): string {
   return value.toLocaleString("en-GB");
 }
 
+function moneyDraft(value: number | null | undefined): string {
+  return value != null ? String(value) : "";
+}
+
 function draftsFromVariations(variations: EbayListingVariation[]): DraftRow[] {
   return variations.map((row) => ({
     sku: row.sku ?? "",
     price: row.price != null ? String(row.price) : "",
+    unitCost: moneyDraft(row.unitCost),
+    postage: moneyDraft(row.postageCost),
   }));
 }
 
-function sameDraft(a: DraftRow, b: DraftRow): boolean {
+function sameEbayDraft(a: DraftRow, b: DraftRow): boolean {
   return a.sku.trim() === b.sku.trim() && a.price.trim() === b.price.trim();
 }
 
@@ -105,7 +113,11 @@ function parsePercentInput(value: string): number | null {
   return parsed;
 }
 
-function feeEstimateTitle(fees: EbayFees): string {
+function feeEstimateTitle(fees: {
+  finalValueFee: number;
+  sellingFee: number | null;
+  adsFee: number | null;
+}): string {
   const parts = [`FVF ${formatMoney(fees.finalValueFee)}`];
   if (fees.sellingFee != null) {
     parts.push(`Selling ${formatMoney(fees.sellingFee)}`);
@@ -114,6 +126,39 @@ function feeEstimateTitle(fees: EbayFees): string {
     parts.push(`Promo ${formatMoney(fees.adsFee)}`);
   }
   return parts.join(" · ");
+}
+
+function MoneyDraftInput({
+  value,
+  onChange,
+  onBlur,
+  disabled,
+  currency = "GBP",
+  placeholder = "0.00",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onBlur?: () => void;
+  disabled?: boolean;
+  currency?: string;
+  placeholder?: string;
+}) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">
+        {currency === "GBP" ? "£" : currency}
+      </span>
+      <Input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+        inputMode="decimal"
+        placeholder={placeholder}
+        className="pl-7 text-right tabular-nums"
+        disabled={disabled}
+      />
+    </div>
+  );
 }
 
 type ListingVariationsPanelProps = {
@@ -195,7 +240,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       if (!draft || !original) {
         continue;
       }
-      if (!sameDraft(draft, original)) {
+      if (!sameEbayDraft(draft, original)) {
         indexes.push(index);
       }
     }
@@ -213,33 +258,26 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     );
   }, [listing]);
 
-  const sellingFeeRate = useMemo(() => {
-    const percent = parsePercentInput(sellingFeePercent);
-    return percent == null ? null : percent / 100;
-  }, [sellingFeePercent]);
-
-  const promoFeeRate = useMemo(() => {
-    if (listing?.promoRatePercent == null) {
-      return null;
-    }
-    if (
-      !Number.isFinite(listing.promoRatePercent) ||
-      listing.promoRatePercent < 0
-    ) {
-      return null;
-    }
-    return listing.promoRatePercent / 100;
-  }, [listing?.promoRatePercent]);
-
   const feeEstimates = useMemo(() => {
+    const sellingPercent = parsePercentInput(sellingFeePercent) ?? 0;
+    const promoPercent = listing?.promoRatePercent ?? 0;
+
     return drafts.map((draft) => {
       const price = parseMoneyInput(draft.price);
-      if (price == null) {
+      const unitCost = parseMoneyInput(draft.unitCost);
+      if (price == null || unitCost == null) {
         return null;
       }
-      return computeEbayFees(price, sellingFeeRate, promoFeeRate);
+
+      return calculateEbayItemProfit({
+        sellPrice: price,
+        productCostExVat: unitCost,
+        ebayFeeRatePercent: sellingPercent,
+        ebayAdsFeeRatePercent: promoPercent,
+        postage: parseMoneyInput(draft.postage) ?? 0,
+      });
     });
-  }, [drafts, promoFeeRate, sellingFeeRate]);
+  }, [drafts, listing?.promoRatePercent, sellingFeePercent]);
 
   function updateSellingFeePercent(value: string) {
     setSellingFeePercent(value);
@@ -258,6 +296,103 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     );
     setSaveMessage(null);
     setSaveError(null);
+  }
+
+  async function saveRowCosts(index: number) {
+    if (!listing) {
+      return;
+    }
+
+    const draft = drafts[index];
+    const variation = listing.variations[index];
+    if (!draft || !variation) {
+      return;
+    }
+
+    const sku = draft.sku.trim() || variation.sku?.trim() || "";
+    if (!sku) {
+      return;
+    }
+
+    const originalCost = moneyDraft(variation.unitCost);
+    const originalPostage = moneyDraft(variation.postageCost);
+    const costChanged = draft.unitCost.trim() !== originalCost.trim();
+    const postageChanged = draft.postage.trim() !== originalPostage.trim();
+
+    if (!costChanged && !postageChanged) {
+      return;
+    }
+
+    const unitCostRaw = draft.unitCost.trim();
+    const postageRaw = draft.postage.trim();
+    const unitCost =
+      unitCostRaw === "" ? null : Number.parseFloat(unitCostRaw);
+    const defaultPostage =
+      postageRaw === "" ? null : Number.parseFloat(postageRaw);
+
+    if (
+      unitCostRaw !== "" &&
+      (unitCost == null || !Number.isFinite(unitCost) || unitCost < 0)
+    ) {
+      setSaveError(`Invalid product cost on row ${index + 1}.`);
+      return;
+    }
+    if (
+      postageRaw !== "" &&
+      (defaultPostage == null ||
+        !Number.isFinite(defaultPostage) ||
+        defaultPostage < 0)
+    ) {
+      setSaveError(`Invalid postage on row ${index + 1}.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/products/${encodeURIComponent(sku)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          unitCost: costChanged ? unitCost : undefined,
+          defaultPostage: postageChanged ? defaultPostage : undefined,
+          title: listing.title ?? variation.specifics,
+        }),
+      });
+      const payload = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        costs?: { unitCost: number | null; defaultPostage: number | null };
+      };
+
+      if (!payload.ok) {
+        setSaveError(payload.error ?? `Could not save costs for ${sku}.`);
+        return;
+      }
+
+      setListing((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          variations: current.variations.map((row, rowIndex) =>
+            rowIndex === index
+              ? {
+                  ...row,
+                  unitCost: costChanged
+                    ? (payload.costs?.unitCost ?? null)
+                    : row.unitCost,
+                  postageCost: postageChanged
+                    ? (payload.costs?.defaultPostage ?? null)
+                    : row.postageCost,
+                }
+              : row,
+          ),
+        };
+      });
+      setSaveMessage(`Saved cost/postage for ${sku}.`);
+    } catch {
+      setSaveError(`Could not save costs for ${sku}.`);
+    }
   }
 
   async function pushToEbay() {
@@ -509,9 +644,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                 {listing.isMultiVariation ? "Variations" : "Listing stock"}
               </CardTitle>
               <CardDescription>
-                Est. fees use FVF ({formatEbayFinalValueFeeSchedule()}), your
-                selling fee % (+VAT), and this listing&apos;s promo rate (+VAT).
-                Updates live as you edit price.
+                Enter product cost (ex-VAT) and postage for a rough profit
+                before sale. Fees use FVF ({formatEbayFinalValueFeeSchedule()}
+                ), selling fee % (+{(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}%
+                VAT), and this listing&apos;s promo rate. Cost/postage save when
+                you leave the field.
               </CardDescription>
             </div>
             <div className="w-full max-w-[11rem] space-y-1.5">
@@ -541,24 +678,30 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <Table className="table-fixed">
+            <Table className="min-w-[1100px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[20%] pl-6">Variation</TableHead>
-                  <TableHead className="w-[18%]">SKU</TableHead>
-                  <TableHead className="w-[14%]">Price</TableHead>
-                  <TableHead className="w-[14%] text-right">Est. fees</TableHead>
-                  <TableHead className="w-[11%] text-right">Available</TableHead>
-                  <TableHead className="w-[11%] text-right">Sold</TableHead>
-                  <TableHead className="w-[12%] pr-6 text-right">Listed qty</TableHead>
+                  <TableHead className="pl-6">Variation</TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead className="w-[8.5rem]">Price</TableHead>
+                  <TableHead className="w-[8.5rem]">Cost ex-VAT</TableHead>
+                  <TableHead className="w-[8.5rem]">Postage</TableHead>
+                  <TableHead className="w-[7.5rem] text-right">Est. fees</TableHead>
+                  <TableHead className="w-[7.5rem] text-right">Est. profit</TableHead>
+                  <TableHead className="pr-6 text-right">Available</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {listing.variations.map((row, index) => {
-                  const draft = drafts[index] ?? { sku: "", price: "" };
+                  const draft = drafts[index] ?? {
+                    sku: "",
+                    price: "",
+                    unitCost: "",
+                    postage: "",
+                  };
                   const dirty = dirtyIndexes.includes(index);
                   const currency = row.currency ?? listing.currency ?? "GBP";
-                  const fees = feeEstimates[index] ?? null;
+                  const estimate = feeEstimates[index] ?? null;
 
                   return (
                     <TableRow
@@ -575,7 +718,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                           </p>
                         ) : null}
                       </TableCell>
-                      <TableCell className="min-w-0 align-top whitespace-normal">
+                      <TableCell className="min-w-[9rem] align-top whitespace-normal">
                         <Input
                           value={draft.sku}
                           onChange={(event) =>
@@ -586,35 +729,50 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                           disabled={saving}
                         />
                       </TableCell>
-                      <TableCell className="align-top whitespace-normal">
-                        <div className="relative">
-                          <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">
-                            {currency === "GBP" ? "£" : currency}
-                          </span>
-                          <Input
-                            value={draft.price}
-                            onChange={(event) =>
-                              updateDraft(index, { price: event.target.value })
-                            }
-                            inputMode="decimal"
-                            placeholder="0.00"
-                            className="pl-7 text-right tabular-nums"
-                            disabled={saving}
-                          />
-                        </div>
+                      <TableCell className="align-top">
+                        <MoneyDraftInput
+                          value={draft.price}
+                          currency={currency}
+                          disabled={saving}
+                          onChange={(value) =>
+                            updateDraft(index, { price: value })
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <MoneyDraftInput
+                          value={draft.unitCost}
+                          currency={currency}
+                          disabled={saving}
+                          onChange={(value) =>
+                            updateDraft(index, { unitCost: value })
+                          }
+                          onBlur={() => void saveRowCosts(index)}
+                        />
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <MoneyDraftInput
+                          value={draft.postage}
+                          currency={currency}
+                          disabled={saving}
+                          onChange={(value) =>
+                            updateDraft(index, { postage: value })
+                          }
+                          onBlur={() => void saveRowCosts(index)}
+                        />
                       </TableCell>
                       <TableCell className="text-right align-top">
-                        {fees ? (
+                        {estimate ? (
                           <div
                             className="space-y-0.5"
-                            title={feeEstimateTitle(fees)}
+                            title={feeEstimateTitle(estimate.ebayFees)}
                           >
                             <p className="tabular-nums font-medium">
-                              {formatMoney(fees.total, currency)}
+                              {formatMoney(estimate.ebayFees.total, currency)}
                             </p>
                             <p className="text-xs text-muted-foreground tabular-nums">
-                              {fees.adsFee != null
-                                ? `incl. promo ${formatMoney(fees.adsFee, currency)}`
+                              {estimate.ebayFees.adsFee != null
+                                ? `incl. promo ${formatMoney(estimate.ebayFees.adsFee, currency)}`
                                 : "no promo"}
                             </p>
                           </div>
@@ -622,14 +780,33 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                           <span className="text-muted-foreground">—</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums align-middle font-medium">
+                      <TableCell className="text-right align-top">
+                        {estimate ? (
+                          <div className="space-y-0.5">
+                            <p
+                              className={cn(
+                                "tabular-nums font-semibold",
+                                estimate.profit >= 0
+                                  ? "text-emerald-700 dark:text-emerald-300"
+                                  : "text-destructive",
+                              )}
+                            >
+                              {formatMoney(estimate.profit, currency)}
+                            </p>
+                            <p className="text-xs text-muted-foreground tabular-nums">
+                              {estimate.marginPercent != null
+                                ? `${estimate.marginPercent.toFixed(1)}% margin`
+                                : "—"}
+                            </p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            Add cost
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="pr-6 text-right tabular-nums align-middle font-medium">
                         {formatQty(row.quantityAvailable)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums align-middle text-muted-foreground">
-                        {formatQty(row.quantitySold)}
-                      </TableCell>
-                      <TableCell className="pr-6 text-right tabular-nums align-middle text-muted-foreground">
-                        {formatQty(row.quantity)}
                       </TableCell>
                     </TableRow>
                   );
