@@ -44,7 +44,7 @@ export async function GET() {
         {
           ok: false,
           error: needsReconnect
-            ? "Inventory access not granted. Reconnect eBay in Settings to add the sell.inventory scope."
+            ? "eBay access not granted for listings. Reconnect eBay in Settings."
             : error.message,
           code: needsReconnect ? "SCOPE_REQUIRED" : "EBAY_API_ERROR",
           status: error.status,

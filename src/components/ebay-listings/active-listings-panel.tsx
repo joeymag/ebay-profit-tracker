@@ -35,6 +35,7 @@ type ActiveListingsResponse =
       inventoryItemsScanned: number;
       publishedCount: number;
       unpublishedCount: number;
+      source?: string;
       fetchedAt: string;
     }
   | {
@@ -124,7 +125,7 @@ export function ActiveEbayListingsPanel() {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        Loading active listings from eBay Inventory API…
+        Loading active listings from eBay Seller Hub…
       </div>
     );
   }
@@ -169,29 +170,29 @@ export function ActiveEbayListingsPanel() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Published offers on {data.marketplaceId}
+            Live on {data.marketplaceId}
           </CardContent>
         </Card>
         <Card className="surface-card">
           <CardHeader className="pb-2">
-            <CardDescription>Inventory SKUs scanned</CardDescription>
+            <CardDescription>With SKU</CardDescription>
             <CardTitle className="text-2xl tabular-nums">
-              {data.inventoryItemsScanned.toLocaleString("en-GB")}
+              {data.listings
+                .filter((listing) => listing.sku && listing.sku !== listing.listingId)
+                .length.toLocaleString("en-GB")}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            From eBay Inventory API
+            Seller SKU set on the listing
           </CardContent>
         </Card>
         <Card className="surface-card">
           <CardHeader className="pb-2">
-            <CardDescription>Unpublished offers</CardDescription>
-            <CardTitle className="text-2xl tabular-nums">
-              {data.unpublishedCount.toLocaleString("en-GB")}
-            </CardTitle>
+            <CardDescription>Source</CardDescription>
+            <CardTitle className="text-2xl">Seller Hub</CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Draft / unpublished inventory offers
+            Trading API · same eBay login as fee sync
           </CardContent>
         </Card>
       </div>
@@ -230,11 +231,10 @@ export function ActiveEbayListingsPanel() {
             <div className="space-y-2 p-6 text-sm text-muted-foreground">
               {data.listings.length === 0 ? (
                 <>
-                  <p>No published Inventory API listings found.</p>
+                  <p>No active listings returned from eBay Seller Hub.</p>
                   <p>
-                    If your live eBay listings were created outside the Inventory
-                    API (classic Seller Hub listings), they may not appear here.
-                    Reconnect eBay in Settings if inventory scope was missing.
+                    Confirm eBay is connected in Settings, then refresh. If this
+                    persists, reconnect eBay so the Trading API token is current.
                   </p>
                 </>
               ) : (
@@ -321,9 +321,9 @@ export function ActiveEbayListingsPanel() {
       </Card>
 
       <p className="text-sm text-muted-foreground">
-        Uses the same connected eBay account as fee sync (
-        <code className="text-xs">sell.inventory</code> scope). Open a listing ID
-        to view it on eBay.
+        Loads classic Seller Hub active listings via the Trading API, using the
+        same connected eBay account as fee sync. Open a listing ID to view it on
+        eBay.
       </p>
     </div>
   );

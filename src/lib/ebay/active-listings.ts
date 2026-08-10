@@ -1,5 +1,10 @@
-import { ebayInventoryFetch } from "@/lib/ebay/inventory-client";
 import { getEbayConfig } from "@/lib/ebay/config";
+import {
+  ebayTradingCall,
+  extractXmlAttr,
+  extractXmlBlocks,
+  extractXmlTag,
+} from "@/lib/ebay/trading-client";
 import { ebayListingUrl } from "@/lib/ebay/traffic-report-types";
 
 export type ActiveEbayListing = {
@@ -20,67 +25,18 @@ export type ActiveEbayListing = {
 export type ActiveEbayListingsResult = {
   marketplaceId: string;
   listings: ActiveEbayListing[];
+  /** Kept for UI compatibility — Trading API entry count. */
   inventoryItemsScanned: number;
   publishedCount: number;
   unpublishedCount: number;
+  source: "trading";
   fetchedAt: string;
 };
 
-type InventoryItem = {
-  sku?: string;
-  product?: {
-    title?: string;
-    imageUrls?: string[];
-  };
-  availability?: {
-    shipToLocationAvailability?: {
-      quantity?: number;
-    };
-  };
-};
+const ENTRIES_PER_PAGE = 200;
+const MAX_PAGES = 25;
 
-type InventoryItemsResponse = {
-  inventoryItems?: InventoryItem[];
-  total?: number;
-  size?: number;
-  limit?: number;
-  offset?: number;
-  next?: string;
-};
-
-type EbayOffer = {
-  offerId?: string;
-  sku?: string;
-  marketplaceId?: string;
-  format?: string;
-  status?: string;
-  availableQuantity?: number;
-  listing?: {
-    listingId?: string;
-    listingStatus?: string;
-  };
-  pricingSummary?: {
-    price?: {
-      value?: string;
-      currency?: string;
-    };
-  };
-};
-
-type OffersResponse = {
-  offers?: EbayOffer[];
-  total?: number;
-};
-
-const INVENTORY_PAGE_SIZE = 100;
-const OFFER_CONCURRENCY = 8;
-const MAX_INVENTORY_ITEMS = 1000;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseAmount(value: string | undefined): number | null {
+function parseAmount(value: string | null): number | null {
   if (!value) {
     return null;
   }
@@ -89,142 +45,90 @@ function parseAmount(value: string | undefined): number | null {
   return Number.isFinite(amount) ? amount : null;
 }
 
-function firstImageUrl(item: InventoryItem): string | null {
-  const url = item.product?.imageUrls?.[0]?.trim();
-  return url || null;
-}
-
-async function fetchAllInventoryItems(): Promise<InventoryItem[]> {
-  const items: InventoryItem[] = [];
-  let offset = 0;
-
-  while (items.length < MAX_INVENTORY_ITEMS) {
-    const data = await ebayInventoryFetch<InventoryItemsResponse>(
-      `/inventory_item?limit=${INVENTORY_PAGE_SIZE}&offset=${offset}`,
-    );
-    const batch = data.inventoryItems ?? [];
-    items.push(...batch);
-
-    if (batch.length < INVENTORY_PAGE_SIZE) {
-      break;
-    }
-
-    offset += INVENTORY_PAGE_SIZE;
-    await sleep(100);
+function parseItem(itemXml: string, marketplaceId: string): ActiveEbayListing | null {
+  const listingId = extractXmlTag(itemXml, "ItemID");
+  if (!listingId) {
+    return null;
   }
 
-  return items.slice(0, MAX_INVENTORY_ITEMS);
-}
+  const sku = extractXmlTag(itemXml, "SKU")?.trim() || listingId;
+  const title = extractXmlTag(itemXml, "Title");
+  const listingType = extractXmlTag(itemXml, "ListingType");
+  const quantityAvailable =
+    parseAmount(extractXmlTag(itemXml, "QuantityAvailable")) ??
+    parseAmount(extractXmlTag(itemXml, "Quantity"));
+  const price =
+    parseAmount(extractXmlTag(itemXml, "CurrentPrice")) ??
+    parseAmount(extractXmlTag(itemXml, "BuyItNowPrice")) ??
+    parseAmount(extractXmlTag(itemXml, "StartPrice"));
+  const currency =
+    extractXmlAttr(itemXml, "CurrentPrice", "currencyID") ??
+    extractXmlAttr(itemXml, "BuyItNowPrice", "currencyID") ??
+    extractXmlAttr(itemXml, "StartPrice", "currencyID");
+  const listingStatus =
+    extractXmlTag(itemXml, "ListingStatus") ?? "Active";
+  const imageUrl =
+    extractXmlTag(itemXml, "GalleryURL") ??
+    extractXmlTag(itemXml, "PictureURL");
 
-async function fetchOffersForSku(sku: string): Promise<EbayOffer[]> {
-  const encodedSku = encodeURIComponent(sku);
-  const data = await ebayInventoryFetch<OffersResponse>(
-    `/offer?sku=${encodedSku}&limit=25`,
-  );
-  return data.offers ?? [];
-}
-
-async function mapWithConcurrency<T, R>(
-  values: T[],
-  concurrency: number,
-  mapper: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(values.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < values.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(values[index]!);
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, values.length) },
-    () => worker(),
-  );
-  await Promise.all(workers);
-  return results;
-}
-
-function isPublishedOffer(offer: EbayOffer): boolean {
-  const status = offer.status?.trim().toUpperCase();
-  const listingStatus = offer.listing?.listingStatus?.trim().toUpperCase();
-  return status === "PUBLISHED" || listingStatus === "ACTIVE";
+  return {
+    sku,
+    title,
+    listingId,
+    offerId: null,
+    status: listingStatus,
+    format: listingType,
+    marketplaceId,
+    price,
+    currency,
+    quantity: quantityAvailable,
+    imageUrl,
+    itemWebUrl: ebayListingUrl(listingId, marketplaceId),
+  };
 }
 
 /**
- * Active (published) eBay listings via Inventory API — same OAuth token as fee sync.
+ * Active eBay listings via Trading API GetMyeBaySelling (classic Seller Hub).
+ * Uses the same OAuth user token as fee sync (X-EBAY-API-IAF-TOKEN).
  */
 export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResult> {
   const { marketplaceId } = getEbayConfig();
-  const inventoryItems = await fetchAllInventoryItems();
-
-  const offersBySku = await mapWithConcurrency(
-    inventoryItems,
-    OFFER_CONCURRENCY,
-    async (item) => {
-      const sku = item.sku?.trim();
-      if (!sku) {
-        return [] as EbayOffer[];
-      }
-
-      try {
-        return await fetchOffersForSku(sku);
-      } catch {
-        return [] as EbayOffer[];
-      }
-    },
-  );
-
   const listings: ActiveEbayListing[] = [];
-  let unpublishedCount = 0;
+  let page = 1;
+  let totalPages = 1;
 
-  inventoryItems.forEach((item, index) => {
-    const sku = item.sku?.trim();
-    if (!sku) {
-      return;
+  while (page <= totalPages && page <= MAX_PAGES) {
+    const xml = await ebayTradingCall(
+      "GetMyeBaySelling",
+      `
+  <ErrorLanguage>en_GB</ErrorLanguage>
+  <WarningLevel>High</WarningLevel>
+  <ActiveList>
+    <Include>true</Include>
+    <IncludeWatchCount>false</IncludeWatchCount>
+    <Pagination>
+      <EntriesPerPage>${ENTRIES_PER_PAGE}</EntriesPerPage>
+      <PageNumber>${page}</PageNumber>
+    </Pagination>
+  </ActiveList>
+  <DetailLevel>ReturnAll</DetailLevel>`,
+    );
+
+    const activeListXml = extractXmlTag(xml, "ActiveList") ?? "";
+    const itemBlocks = extractXmlBlocks(activeListXml, "Item");
+    for (const block of itemBlocks) {
+      const listing = parseItem(block, marketplaceId);
+      if (listing) {
+        listings.push(listing);
+      }
     }
 
-    const offers = offersBySku[index] ?? [];
-    const publishedOffers = offers.filter(isPublishedOffer);
-    const unpublishedOffers = offers.filter((offer) => !isPublishedOffer(offer));
-    unpublishedCount += unpublishedOffers.length;
-
-    if (!publishedOffers.length && !offers.length) {
-      // Inventory SKU with no offer yet — skip from "active listings"
-      return;
-    }
-
-    for (const offer of publishedOffers.length ? publishedOffers : []) {
-      const listingId = offer.listing?.listingId?.trim() || null;
-      const offerMarketplace = offer.marketplaceId?.trim() || marketplaceId;
-      const price = parseAmount(offer.pricingSummary?.price?.value);
-      const currency = offer.pricingSummary?.price?.currency?.trim() || null;
-      const quantity =
-        offer.availableQuantity ??
-        item.availability?.shipToLocationAvailability?.quantity ??
-        null;
-
-      listings.push({
-        sku,
-        title: item.product?.title?.trim() || null,
-        listingId,
-        offerId: offer.offerId?.trim() || null,
-        status: offer.status?.trim() || offer.listing?.listingStatus?.trim() || "PUBLISHED",
-        format: offer.format?.trim() || null,
-        marketplaceId: offerMarketplace,
-        price,
-        currency,
-        quantity,
-        imageUrl: firstImageUrl(item),
-        itemWebUrl: listingId
-          ? ebayListingUrl(listingId, offerMarketplace)
-          : null,
-      });
-    }
-  });
+    const totalPagesRaw =
+      extractXmlTag(activeListXml, "TotalNumberOfPages") ??
+      extractXmlTag(xml, "TotalNumberOfPages");
+    totalPages = Math.max(1, Number.parseInt(totalPagesRaw ?? "1", 10) || 1);
+    page += 1;
+  }
 
   listings.sort((a, b) => {
     const titleA = a.title?.toLowerCase() ?? a.sku.toLowerCase();
@@ -235,9 +139,10 @@ export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResul
   return {
     marketplaceId,
     listings,
-    inventoryItemsScanned: inventoryItems.length,
+    inventoryItemsScanned: listings.length,
     publishedCount: listings.length,
-    unpublishedCount,
+    unpublishedCount: 0,
+    source: "trading",
     fetchedAt: new Date().toISOString(),
   };
 }
