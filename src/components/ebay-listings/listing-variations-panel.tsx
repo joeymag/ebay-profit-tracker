@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, ExternalLink, Loader2, Upload } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Loader2, Save, Upload } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -173,6 +173,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingCosts, setSavingCosts] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [sellingFeePercent, setSellingFeePercent] = useState(
@@ -247,6 +248,31 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     return indexes;
   }, [drafts, originals]);
 
+  const dirtyCostIndexes = useMemo(() => {
+    if (!listing) {
+      return [] as number[];
+    }
+
+    const indexes: number[] = [];
+    for (let index = 0; index < drafts.length; index += 1) {
+      const draft = drafts[index];
+      const variation = listing.variations[index];
+      if (!draft || !variation) {
+        continue;
+      }
+
+      const originalCost = moneyDraft(variation.unitCost);
+      const originalPostage = moneyDraft(variation.postageCost);
+      if (
+        draft.unitCost.trim() !== originalCost.trim() ||
+        draft.postage.trim() !== originalPostage.trim()
+      ) {
+        indexes.push(index);
+      }
+    }
+    return indexes;
+  }, [drafts, listing]);
+
   const stockTotal = useMemo(() => {
     if (!listing) {
       return 0;
@@ -298,20 +324,25 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     setSaveError(null);
   }
 
-  async function saveRowCosts(index: number) {
+  async function saveRowCosts(
+    index: number,
+  ): Promise<{ ok: true; sku: string } | { ok: false; error: string }> {
     if (!listing) {
-      return;
+      return { ok: false, error: "Listing is not loaded." };
     }
 
     const draft = drafts[index];
     const variation = listing.variations[index];
     if (!draft || !variation) {
-      return;
+      return { ok: false, error: `Missing row ${index + 1}.` };
     }
 
     const sku = draft.sku.trim() || variation.sku?.trim() || "";
     if (!sku) {
-      return;
+      return {
+        ok: false,
+        error: `Add a SKU on row ${index + 1} before saving costs.`,
+      };
     }
 
     const originalCost = moneyDraft(variation.unitCost);
@@ -320,7 +351,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     const postageChanged = draft.postage.trim() !== originalPostage.trim();
 
     if (!costChanged && !postageChanged) {
-      return;
+      return { ok: true, sku };
     }
 
     const unitCostRaw = draft.unitCost.trim();
@@ -334,8 +365,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       unitCostRaw !== "" &&
       (unitCost == null || !Number.isFinite(unitCost) || unitCost < 0)
     ) {
-      setSaveError(`Invalid product cost on row ${index + 1}.`);
-      return;
+      return { ok: false, error: `Invalid product cost on row ${index + 1}.` };
     }
     if (
       postageRaw !== "" &&
@@ -343,8 +373,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
         !Number.isFinite(defaultPostage) ||
         defaultPostage < 0)
     ) {
-      setSaveError(`Invalid postage on row ${index + 1}.`);
-      return;
+      return { ok: false, error: `Invalid postage on row ${index + 1}.` };
     }
 
     try {
@@ -364,8 +393,10 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       };
 
       if (!payload.ok) {
-        setSaveError(payload.error ?? `Could not save costs for ${sku}.`);
-        return;
+        return {
+          ok: false,
+          error: payload.error ?? `Could not save costs for ${sku}.`,
+        };
       }
 
       setListing((current) => {
@@ -389,9 +420,39 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           ),
         };
       });
-      setSaveMessage(`Saved cost/postage for ${sku}.`);
+
+      return { ok: true, sku };
     } catch {
-      setSaveError(`Could not save costs for ${sku}.`);
+      return { ok: false, error: `Could not save costs for ${sku}.` };
+    }
+  }
+
+  async function saveCosts() {
+    if (!listing || dirtyCostIndexes.length === 0) {
+      return;
+    }
+
+    setSavingCosts(true);
+    setSaveError(null);
+    setSaveMessage(null);
+
+    let savedCount = 0;
+
+    try {
+      for (const index of dirtyCostIndexes) {
+        const result = await saveRowCosts(index);
+        if (!result.ok) {
+          setSaveError(result.error);
+          return;
+        }
+        savedCount += 1;
+      }
+
+      setSaveMessage(
+        `Saved cost/postage for ${savedCount} variation${savedCount === 1 ? "" : "s"}.`,
+      );
+    } finally {
+      setSavingCosts(false);
     }
   }
 
@@ -520,7 +581,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           variant="outline"
           size="sm"
           onClick={() => void load()}
-          disabled={saving}
+          disabled={saving || savingCosts}
         >
           Refresh
         </Button>
@@ -535,9 +596,31 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
         </a>
         <Button
           type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void saveCosts()}
+          disabled={saving || savingCosts || dirtyCostIndexes.length === 0}
+        >
+          {savingCosts ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Saving costs…
+            </>
+          ) : (
+            <>
+              <Save className="size-4" />
+              Save cost
+              {dirtyCostIndexes.length > 0
+                ? ` / postage (${dirtyCostIndexes.length})`
+                : " / postage"}
+            </>
+          )}
+        </Button>
+        <Button
+          type="button"
           size="sm"
           onClick={() => void pushToEbay()}
-          disabled={saving || dirtyIndexes.length === 0}
+          disabled={saving || savingCosts || dirtyIndexes.length === 0}
         >
           {saving ? (
             <>
@@ -606,9 +689,14 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                     {listing.status.replaceAll("_", " ").toLowerCase()}
                   </Badge>
                 ) : null}
+                {dirtyCostIndexes.length > 0 ? (
+                  <Badge variant="secondary">
+                    {dirtyCostIndexes.length} cost unsaved
+                  </Badge>
+                ) : null}
                 {dirtyIndexes.length > 0 ? (
                   <Badge variant="destructive">
-                    {dirtyIndexes.length} unsaved
+                    {dirtyIndexes.length} eBay unsaved
                   </Badge>
                 ) : null}
               </CardDescription>
@@ -647,8 +735,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                 Enter product cost (ex-VAT) and postage for a rough profit
                 before sale. Fees use FVF ({formatEbayFinalValueFeeSchedule()}
                 ), selling fee % (+{(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}%
-                VAT), and this listing&apos;s promo rate. Cost/postage save when
-                you leave the field.
+                VAT), and this listing&apos;s promo rate. Click{" "}
+                <span className="font-medium text-foreground">
+                  Save cost / postage
+                </span>{" "}
+                when ready.
               </CardDescription>
             </div>
             <div className="w-full max-w-[11rem] space-y-1.5">
@@ -726,14 +817,14 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                           }
                           placeholder="SKU"
                           className="font-mono text-sm"
-                          disabled={saving}
+                          disabled={saving || savingCosts}
                         />
                       </TableCell>
                       <TableCell className="align-top">
                         <MoneyDraftInput
                           value={draft.price}
                           currency={currency}
-                          disabled={saving}
+                          disabled={saving || savingCosts}
                           onChange={(value) =>
                             updateDraft(index, { price: value })
                           }
@@ -743,22 +834,20 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                         <MoneyDraftInput
                           value={draft.unitCost}
                           currency={currency}
-                          disabled={saving}
+                          disabled={saving || savingCosts}
                           onChange={(value) =>
                             updateDraft(index, { unitCost: value })
                           }
-                          onBlur={() => void saveRowCosts(index)}
                         />
                       </TableCell>
                       <TableCell className="align-top">
                         <MoneyDraftInput
                           value={draft.postage}
                           currency={currency}
-                          disabled={saving}
+                          disabled={saving || savingCosts}
                           onChange={(value) =>
                             updateDraft(index, { postage: value })
                           }
-                          onBlur={() => void saveRowCosts(index)}
                         />
                       </TableCell>
                       <TableCell className="text-right align-top">
