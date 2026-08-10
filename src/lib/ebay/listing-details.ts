@@ -1,15 +1,22 @@
 import { getEbayConfig } from "@/lib/ebay/config";
 import {
   ebayTradingCall,
+  escapeXml,
   extractXmlAttr,
   extractXmlBlocks,
   extractXmlTag,
 } from "@/lib/ebay/trading-client";
 import { ebayListingUrl } from "@/lib/ebay/traffic-report-types";
 
+export type EbayVariationSpecific = {
+  name: string;
+  value: string;
+};
+
 export type EbayListingVariation = {
   sku: string | null;
   specifics: string;
+  specificsPairs: EbayVariationSpecific[];
   price: number | null;
   currency: string | null;
   quantity: number | null;
@@ -36,6 +43,29 @@ export type EbayListingDetails = {
   fetchedAt: string;
 };
 
+export type EbayVariationEdit = {
+  /** Original SKU from eBay (used when identifying single-SKU updates). */
+  originalSku: string | null;
+  sku: string | null;
+  price: number | null;
+  specificsPairs: EbayVariationSpecific[];
+};
+
+export type ReviseEbayListingInput = {
+  listingId: string;
+  isMultiVariation: boolean;
+  format: string | null;
+  currency: string;
+  variations: EbayVariationEdit[];
+};
+
+export type ReviseEbayListingResult = {
+  listingId: string;
+  updatedCount: number;
+  ack: string | null;
+  warnings: string[];
+};
+
 function parseAmount(value: string | null): number | null {
   if (!value) {
     return null;
@@ -54,21 +84,23 @@ function parseIntSafe(value: string | null): number | null {
   return Number.isFinite(amount) ? amount : null;
 }
 
-function formatSpecifics(variationXml: string): string {
+function parseSpecificsPairs(variationXml: string): EbayVariationSpecific[] {
   const lists = extractXmlBlocks(variationXml, "NameValueList");
-  const parts: string[] = [];
+  const pairs: EbayVariationSpecific[] = [];
 
   for (const list of lists) {
-    const name = extractXmlTag(list, "Name");
-    const value = extractXmlTag(list, "Value");
+    const name = extractXmlTag(list, "Name")?.trim();
+    const value = extractXmlTag(list, "Value")?.trim();
     if (name && value) {
-      parts.push(`${name}: ${value}`);
-    } else if (value) {
-      parts.push(value);
+      pairs.push({ name, value });
     }
   }
 
-  return parts.join(" · ");
+  return pairs;
+}
+
+function formatSpecifics(pairs: EbayVariationSpecific[]): string {
+  return pairs.map((pair) => `${pair.name}: ${pair.value}`).join(" · ");
 }
 
 function parseVariation(variationXml: string): EbayListingVariation {
@@ -85,10 +117,12 @@ function parseVariation(variationXml: string): EbayListingVariation {
   const currency =
     extractXmlAttr(variationXml, "StartPrice", "currencyID") ??
     extractXmlAttr(variationXml, "CurrentPrice", "currencyID");
+  const specificsPairs = parseSpecificsPairs(variationXml);
 
   return {
     sku: extractXmlTag(variationXml, "SKU")?.trim() || null,
-    specifics: formatSpecifics(variationXml),
+    specifics: formatSpecifics(specificsPairs) || "Variation",
+    specificsPairs,
     price,
     currency,
     quantity,
@@ -114,7 +148,7 @@ export async function fetchEbayListingDetails(
     `
   <ErrorLanguage>en_GB</ErrorLanguage>
   <WarningLevel>High</WarningLevel>
-  <ItemID>${trimmedId}</ItemID>
+  <ItemID>${escapeXml(trimmedId)}</ItemID>
   <IncludeItemSpecifics>true</IncludeItemSpecifics>
   <DetailLevel>ReturnAll</DetailLevel>`,
   );
@@ -147,27 +181,27 @@ export async function fetchEbayListingDetails(
     extractXmlAttr(itemXml, "StartPrice", "currencyID");
 
   const isMultiVariation = variations.length > 0;
+  const itemSku = extractXmlTag(itemXml, "SKU")?.trim() || null;
 
-  // Single-SKU listing: surface one synthetic variation row for a consistent table.
-  const displayVariations =
-    isMultiVariation
-      ? variations
-      : [
-          {
-            sku: extractXmlTag(itemXml, "SKU")?.trim() || null,
-            specifics: "Single listing",
-            price,
-            currency,
-            quantity,
-            quantitySold,
-            quantityAvailable,
-          } satisfies EbayListingVariation,
-        ];
+  const displayVariations = isMultiVariation
+    ? variations
+    : [
+        {
+          sku: itemSku,
+          specifics: "Single listing",
+          specificsPairs: [],
+          price,
+          currency,
+          quantity,
+          quantitySold,
+          quantityAvailable,
+        } satisfies EbayListingVariation,
+      ];
 
   return {
     listingId: extractXmlTag(itemXml, "ItemID") ?? trimmedId,
     title: extractXmlTag(itemXml, "Title"),
-    sku: extractXmlTag(itemXml, "SKU")?.trim() || null,
+    sku: itemSku,
     status: extractXmlTag(itemXml, "ListingStatus"),
     format: extractXmlTag(itemXml, "ListingType"),
     marketplaceId,
@@ -183,5 +217,142 @@ export async function fetchEbayListingDetails(
     isMultiVariation,
     variations: displayVariations,
     fetchedAt: new Date().toISOString(),
+  };
+}
+
+function variationSpecificsXml(pairs: EbayVariationSpecific[]): string {
+  if (!pairs.length) {
+    return "";
+  }
+
+  const lists = pairs
+    .map(
+      (pair) => `
+        <NameValueList>
+          <Name>${escapeXml(pair.name)}</Name>
+          <Value>${escapeXml(pair.value)}</Value>
+        </NameValueList>`,
+    )
+    .join("");
+
+  return `
+      <VariationSpecifics>
+        ${lists}
+      </VariationSpecifics>`;
+}
+
+function reviseCallName(format: string | null): string {
+  const normalized = format?.trim().toLowerCase() ?? "";
+  if (
+    !normalized ||
+    normalized.includes("fixedprice") ||
+    normalized.includes("storesfixedprice")
+  ) {
+    return "ReviseFixedPriceItem";
+  }
+
+  return "ReviseItem";
+}
+
+/**
+ * Push SKU / price edits to eBay via Trading API revise call.
+ */
+export async function reviseEbayListingSkuAndPrice(
+  input: ReviseEbayListingInput,
+): Promise<ReviseEbayListingResult> {
+  const listingId = input.listingId.trim();
+  if (!listingId) {
+    throw new Error("Listing ID is required.");
+  }
+
+  if (!input.variations.length) {
+    throw new Error("No variation updates were provided.");
+  }
+
+  const currency = (input.currency || "GBP").trim().toUpperCase();
+  const callName = reviseCallName(input.format);
+
+  let itemBody: string;
+
+  if (input.isMultiVariation) {
+    const variationXml = input.variations
+      .map((variation) => {
+        if (!variation.specificsPairs.length) {
+          throw new Error(
+            `Variation "${variation.originalSku ?? "unknown"}" is missing option specifics needed to update eBay.`,
+          );
+        }
+
+        const skuXml =
+          variation.sku != null && variation.sku.trim()
+            ? `<SKU>${escapeXml(variation.sku.trim())}</SKU>`
+            : "";
+        const priceXml =
+          variation.price != null && Number.isFinite(variation.price)
+            ? `<StartPrice currencyID="${escapeXml(currency)}">${variation.price.toFixed(2)}</StartPrice>`
+            : "";
+
+        return `
+      <Variation>
+        ${skuXml}
+        ${priceXml}
+        ${variationSpecificsXml(variation.specificsPairs)}
+      </Variation>`;
+      })
+      .join("");
+
+    itemBody = `
+  <Item>
+    <ItemID>${escapeXml(listingId)}</ItemID>
+    <Variations>
+      ${variationXml}
+    </Variations>
+  </Item>`;
+  } else {
+    const variation = input.variations[0]!;
+    const skuXml =
+      variation.sku != null
+        ? `<SKU>${escapeXml(variation.sku.trim())}</SKU>`
+        : "";
+    const priceXml =
+      variation.price != null && Number.isFinite(variation.price)
+        ? `<StartPrice currencyID="${escapeXml(currency)}">${variation.price.toFixed(2)}</StartPrice>`
+        : "";
+
+    itemBody = `
+  <Item>
+    <ItemID>${escapeXml(listingId)}</ItemID>
+    ${skuXml}
+    ${priceXml}
+  </Item>`;
+  }
+
+  const xml = await ebayTradingCall(
+    callName,
+    `
+  <ErrorLanguage>en_GB</ErrorLanguage>
+  <WarningLevel>High</WarningLevel>
+  ${itemBody}`,
+  );
+
+  const ack = extractXmlTag(xml, "Ack");
+  const warnings = extractXmlBlocks(xml, "Errors")
+    .map((block) => {
+      const severity = extractXmlTag(block, "SeverityCode")?.toUpperCase();
+      if (severity === "ERROR") {
+        return null;
+      }
+      return (
+        extractXmlTag(block, "LongMessage") ??
+        extractXmlTag(block, "ShortMessage")
+      );
+    })
+    .filter((message): message is string => Boolean(message));
+
+  return {
+    listingId,
+    updatedCount: input.variations.length,
+    ack,
+    warnings,
   };
 }

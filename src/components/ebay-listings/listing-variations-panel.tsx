@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Loader2, Upload } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -22,24 +23,31 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { EbayListingDetails } from "@/lib/ebay/listing-details";
-import { formatMoney } from "@/lib/format";
+import type {
+  EbayListingDetails,
+  EbayListingVariation,
+  EbayVariationEdit,
+} from "@/lib/ebay/listing-details";
 import { cn } from "@/lib/utils";
 
 type DetailsResponse =
   | { ok: true; listing: EbayListingDetails }
   | { ok: false; error: string; code?: string; details?: string };
 
-function formatPrice(
-  price: number | null | undefined,
-  currency: string | null | undefined,
-): string {
-  if (price == null) {
-    return "—";
-  }
+type ReviseResponse =
+  | {
+      ok: true;
+      listingId: string;
+      updatedCount: number;
+      ack: string | null;
+      warnings: string[];
+    }
+  | { ok: false; error: string; details?: string };
 
-  return formatMoney(price, currency ?? "GBP");
-}
+type DraftRow = {
+  sku: string;
+  price: string;
+};
 
 function formatQty(value: number | null | undefined): string {
   if (value == null) {
@@ -49,20 +57,37 @@ function formatQty(value: number | null | undefined): string {
   return value.toLocaleString("en-GB");
 }
 
+function draftsFromVariations(variations: EbayListingVariation[]): DraftRow[] {
+  return variations.map((row) => ({
+    sku: row.sku ?? "",
+    price: row.price != null ? String(row.price) : "",
+  }));
+}
+
+function sameDraft(a: DraftRow, b: DraftRow): boolean {
+  return a.sku.trim() === b.sku.trim() && a.price.trim() === b.price.trim();
+}
+
 type ListingVariationsPanelProps = {
   listingId: string;
 };
 
 export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProps) {
   const [listing, setListing] = useState<EbayListingDetails | null>(null);
+  const [drafts, setDrafts] = useState<DraftRow[]>([]);
   const [error, setError] = useState<Extract<DetailsResponse, { ok: false }> | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSaveMessage(null);
+    setSaveError(null);
 
     try {
       const response = await fetch(
@@ -72,13 +97,16 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
 
       if (!payload.ok) {
         setListing(null);
+        setDrafts([]);
         setError(payload);
         return;
       }
 
       setListing(payload.listing);
+      setDrafts(draftsFromVariations(payload.listing.variations));
     } catch {
       setListing(null);
+      setDrafts([]);
       setError({
         ok: false,
         error: "Could not reach the listing details endpoint.",
@@ -92,6 +120,26 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     void load();
   }, [load]);
 
+  const originals = useMemo(
+    () => (listing ? draftsFromVariations(listing.variations) : []),
+    [listing],
+  );
+
+  const dirtyIndexes = useMemo(() => {
+    const indexes: number[] = [];
+    for (let index = 0; index < drafts.length; index += 1) {
+      const draft = drafts[index];
+      const original = originals[index];
+      if (!draft || !original) {
+        continue;
+      }
+      if (!sameDraft(draft, original)) {
+        indexes.push(index);
+      }
+    }
+    return indexes;
+  }, [drafts, originals]);
+
   const stockTotal = useMemo(() => {
     if (!listing) {
       return 0;
@@ -102,6 +150,89 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       0,
     );
   }, [listing]);
+
+  function updateDraft(index: number, patch: Partial<DraftRow>) {
+    setDrafts((current) =>
+      current.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row,
+      ),
+    );
+    setSaveMessage(null);
+    setSaveError(null);
+  }
+
+  async function pushToEbay() {
+    if (!listing || dirtyIndexes.length === 0) {
+      return;
+    }
+
+    const updates: EbayVariationEdit[] = [];
+
+    for (const index of dirtyIndexes) {
+      const draft = drafts[index]!;
+      const variation = listing.variations[index]!;
+      const priceRaw = draft.price.trim();
+      let price: number | null = null;
+
+      if (priceRaw !== "") {
+        price = Number.parseFloat(priceRaw);
+        if (!Number.isFinite(price) || price < 0) {
+          setSaveError(`Invalid price on row ${index + 1}.`);
+          return;
+        }
+      } else {
+        setSaveError(`Price is required on row ${index + 1}.`);
+        return;
+      }
+
+      updates.push({
+        originalSku: variation.sku,
+        sku: draft.sku.trim() || null,
+        price,
+        specificsPairs: variation.specificsPairs,
+      });
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    setSaveMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/ebay/listings/${encodeURIComponent(listingId)}/revise`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            isMultiVariation: listing.isMultiVariation,
+            format: listing.format,
+            currency: listing.currency ?? "GBP",
+            variations: updates,
+          }),
+        },
+      );
+      const payload = (await response.json()) as ReviseResponse;
+
+      if (!payload.ok) {
+        setSaveError(
+          [payload.error, payload.details].filter(Boolean).join(" — "),
+        );
+        return;
+      }
+
+      const warningText = payload.warnings.length
+        ? ` Warnings: ${payload.warnings.slice(0, 2).join(" · ")}`
+        : "";
+      setSaveMessage(
+        `Pushed ${payload.updatedCount} update${payload.updatedCount === 1 ? "" : "s"} to eBay (${payload.ack ?? "Success"}).${warningText}`,
+      );
+      await load();
+    } catch {
+      setSaveError("Could not reach the eBay revise endpoint.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -150,7 +281,13 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           <ArrowLeft className="size-4" />
           All listings
         </Link>
-        <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void load()}
+          disabled={saving}
+        >
           Refresh
         </Button>
         <a
@@ -162,7 +299,38 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           Open on eBay
           <ExternalLink className="size-3.5" />
         </a>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void pushToEbay()}
+          disabled={saving || dirtyIndexes.length === 0}
+        >
+          {saving ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Pushing to eBay…
+            </>
+          ) : (
+            <>
+              <Upload className="size-4" />
+              Push {dirtyIndexes.length || ""} change
+              {dirtyIndexes.length === 1 ? "" : "s"} to eBay
+            </>
+          )}
+        </Button>
       </div>
+
+      {saveMessage ? (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <p>{saveMessage}</p>
+        </div>
+      ) : null}
+      {saveError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {saveError}
+        </div>
+      ) : null}
 
       <Card className="surface-card">
         <CardHeader className="border-b border-border/50 bg-muted/20">
@@ -190,6 +358,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                     {listing.status.replaceAll("_", " ").toLowerCase()}
                   </Badge>
                 ) : null}
+                {dirtyIndexes.length > 0 ? (
+                  <Badge variant="destructive">
+                    {dirtyIndexes.length} unsaved
+                  </Badge>
+                ) : null}
               </CardDescription>
               <p className="text-sm text-muted-foreground">
                 Total available stock across rows:{" "}
@@ -208,7 +381,8 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             {listing.isMultiVariation ? "Variations" : "Listing stock"}
           </CardTitle>
           <CardDescription>
-            SKU, price, and quantity from eBay Seller Hub (Trading API GetItem)
+            Edit SKU and price, then push changes to eBay. Stock is read-only
+            here.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -216,49 +390,75 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[28%] pl-6">Variation</TableHead>
+                  <TableHead className="w-[24%] pl-6">Variation</TableHead>
                   <TableHead className="w-[22%]">SKU</TableHead>
-                  <TableHead className="w-[14%] text-right">Price</TableHead>
+                  <TableHead className="w-[16%]">Price</TableHead>
                   <TableHead className="w-[12%] text-right">Available</TableHead>
                   <TableHead className="w-[12%] text-right">Sold</TableHead>
-                  <TableHead className="w-[12%] pr-6 text-right">Listed qty</TableHead>
+                  <TableHead className="w-[14%] pr-6 text-right">Listed qty</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {listing.variations.map((row, index) => (
-                  <TableRow key={`${row.sku ?? "nosku"}-${index}`}>
-                    <TableCell className="min-w-0 whitespace-normal pl-6 align-top">
-                      <p className="break-words text-sm font-medium leading-snug">
-                        {row.specifics || "—"}
-                      </p>
-                    </TableCell>
-                    <TableCell className="min-w-0 align-top whitespace-normal">
-                      {row.sku ? (
-                        <Badge
-                          variant="outline"
-                          className="max-w-full truncate bg-background font-mono text-sm font-medium"
-                          title={row.sku}
-                        >
-                          {row.sku}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums align-top">
-                      {formatPrice(row.price, row.currency ?? listing.currency)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums align-top font-medium">
-                      {formatQty(row.quantityAvailable)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums align-top text-muted-foreground">
-                      {formatQty(row.quantitySold)}
-                    </TableCell>
-                    <TableCell className="pr-6 text-right tabular-nums align-top text-muted-foreground">
-                      {formatQty(row.quantity)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {listing.variations.map((row, index) => {
+                  const draft = drafts[index] ?? { sku: "", price: "" };
+                  const dirty = dirtyIndexes.includes(index);
+                  const currency = row.currency ?? listing.currency ?? "GBP";
+
+                  return (
+                    <TableRow
+                      key={`${row.sku ?? "nosku"}-${index}`}
+                      className={dirty ? "bg-amber-500/5" : undefined}
+                    >
+                      <TableCell className="min-w-0 whitespace-normal pl-6 align-top">
+                        <p className="break-words text-sm font-medium leading-snug">
+                          {row.specifics || "—"}
+                        </p>
+                        {dirty ? (
+                          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                            Edited
+                          </p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="min-w-0 align-top whitespace-normal">
+                        <Input
+                          value={draft.sku}
+                          onChange={(event) =>
+                            updateDraft(index, { sku: event.target.value })
+                          }
+                          placeholder="SKU"
+                          className="font-mono text-sm"
+                          disabled={saving}
+                        />
+                      </TableCell>
+                      <TableCell className="align-top whitespace-normal">
+                        <div className="relative">
+                          <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">
+                            {currency === "GBP" ? "£" : currency}
+                          </span>
+                          <Input
+                            value={draft.price}
+                            onChange={(event) =>
+                              updateDraft(index, { price: event.target.value })
+                            }
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            className="pl-7 text-right tabular-nums"
+                            disabled={saving}
+                          />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums align-middle font-medium">
+                        {formatQty(row.quantityAvailable)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums align-middle text-muted-foreground">
+                        {formatQty(row.quantitySold)}
+                      </TableCell>
+                      <TableCell className="pr-6 text-right tabular-nums align-middle text-muted-foreground">
+                        {formatQty(row.quantity)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

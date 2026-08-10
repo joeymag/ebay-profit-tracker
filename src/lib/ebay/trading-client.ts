@@ -94,7 +94,7 @@ ${requestBodyXml}
   }
 
   const ack = extractXmlTag(text, "Ack");
-  if (ack && ack.toUpperCase() === "FAILURE") {
+  if (ack && ["FAILURE", "PARTIALFAILURE"].includes(ack.toUpperCase())) {
     const shortMessage =
       extractXmlTag(text, "ShortMessage") ??
       extractXmlTag(text, "LongMessage") ??
@@ -144,6 +144,15 @@ export function extractXmlBlocks(xml: string, tag: string): string[] {
     blocks.push(match[1] ?? "");
   }
   return blocks;
+}
+
+export function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function decodeXmlEntities(value: string): string {
