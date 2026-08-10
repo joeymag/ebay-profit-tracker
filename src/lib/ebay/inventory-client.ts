@@ -4,21 +4,56 @@ import { EbayApiError } from "@/lib/ebay/errors";
 
 type InventoryItemResponse = Record<string, unknown>;
 
+/** eBay Inventory LocaleEnum values (hyphenated). */
+function ebayContentLanguage(marketplaceId: string): string {
+  switch (marketplaceId.trim().toUpperCase()) {
+    case "EBAY_US":
+    case "EBAY_MOTORS_US":
+      return "en-US";
+    case "EBAY_GB":
+      return "en-GB";
+    case "EBAY_DE":
+      return "de-DE";
+    case "EBAY_FR":
+      return "fr-FR";
+    case "EBAY_IT":
+      return "it-IT";
+    case "EBAY_ES":
+      return "es-ES";
+    case "EBAY_AU":
+      return "en-AU";
+    case "EBAY_CA":
+      return "en-CA";
+    default:
+      return "en-GB";
+  }
+}
+
 export async function ebayInventoryFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const { apiBaseUrl } = getEbayConfig();
+  const { apiBaseUrl, marketplaceId } = getEbayConfig();
   const accessToken = await getEbayAccessToken();
   const url = `${apiBaseUrl}/sell/inventory/v1${path.startsWith("/") ? path : `/${path}`}`;
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const locale = ebayContentLanguage(marketplaceId);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/json",
+  };
+
+  // Content-Language is required for create/update; do not send language
+  // headers on GET (eBay returns 25709 for invalid Accept/Content-Language).
+  if (method !== "GET" && method !== "HEAD" && method !== "DELETE") {
+    headers["Content-Type"] = "application/json";
+    headers["Content-Language"] = locale;
+  }
 
   const response = await fetch(url, {
     ...init,
     headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "Content-Language": "en-GB",
+      ...headers,
       ...(init?.headers ?? {}),
     },
   });
