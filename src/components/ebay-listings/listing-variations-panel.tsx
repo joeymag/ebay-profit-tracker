@@ -179,6 +179,10 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   const [sellingFeePercent, setSellingFeePercent] = useState(
     DEFAULT_SELLING_FEE_PERCENT,
   );
+  const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [bulkPostage, setBulkPostage] = useState("");
 
   useEffect(() => {
     try {
@@ -206,15 +210,20 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       if (!payload.ok) {
         setListing(null);
         setDrafts([]);
+        setSelectedIndexes(new Set());
         setError(payload);
         return;
       }
 
       setListing(payload.listing);
       setDrafts(draftsFromVariations(payload.listing.variations));
+      setSelectedIndexes(
+        new Set(payload.listing.variations.map((_, index) => index)),
+      );
     } catch {
       setListing(null);
       setDrafts([]);
+      setSelectedIndexes(new Set());
       setError({
         ok: false,
         error: "Could not reach the listing details endpoint.",
@@ -321,6 +330,61 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       ),
     );
     setSaveMessage(null);
+    setSaveError(null);
+  }
+
+  const allRowsSelected =
+    drafts.length > 0 && selectedIndexes.size === drafts.length;
+  const someRowsSelected =
+    selectedIndexes.size > 0 && selectedIndexes.size < drafts.length;
+
+  function toggleRowSelected(index: number, checked: boolean) {
+    setSelectedIndexes((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(index);
+      } else {
+        next.delete(index);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll(checked: boolean) {
+    if (!checked) {
+      setSelectedIndexes(new Set());
+      return;
+    }
+    setSelectedIndexes(new Set(drafts.map((_, index) => index)));
+  }
+
+  function applyBulkPostage() {
+    const trimmed = bulkPostage.trim();
+    if (trimmed === "") {
+      setSaveError("Enter a postage amount to apply.");
+      return;
+    }
+
+    const amount = Number.parseFloat(trimmed);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setSaveError("Enter a valid postage amount.");
+      return;
+    }
+
+    if (selectedIndexes.size === 0) {
+      setSaveError("Select at least one variation to apply postage.");
+      return;
+    }
+
+    const value = String(amount);
+    setDrafts((current) =>
+      current.map((row, index) =>
+        selectedIndexes.has(index) ? { ...row, postage: value } : row,
+      ),
+    );
+    setSaveMessage(
+      `Applied £${amount.toFixed(2)} postage to ${selectedIndexes.size} variation${selectedIndexes.size === 1 ? "" : "s"}. Click Save cost / postage to keep it.`,
+    );
     setSaveError(null);
   }
 
@@ -725,7 +789,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       </Card>
 
       <Card className="surface-card overflow-hidden">
-        <CardHeader className="border-b border-border/50 bg-muted/20">
+        <CardHeader className="border-b border-border/50 bg-muted/20 space-y-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="space-y-1.5">
               <CardTitle>
@@ -733,13 +797,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
               </CardTitle>
               <CardDescription>
                 Enter product cost (ex-VAT) and postage for a rough profit
-                before sale. Fees use FVF ({formatEbayFinalValueFeeSchedule()}
-                ), selling fee % (+{(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}%
-                VAT), and this listing&apos;s promo rate. Click{" "}
+                before sale. Select rows to bulk-set postage, then click{" "}
                 <span className="font-medium text-foreground">
                   Save cost / postage
-                </span>{" "}
-                when ready.
+                </span>
+                .
               </CardDescription>
             </div>
             <div className="w-full max-w-[11rem] space-y-1.5">
@@ -766,13 +828,69 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
               </div>
             </div>
           </div>
+          <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-background/60 p-3 sm:flex-row sm:items-end">
+            <div className="w-full max-w-[11rem] space-y-1.5">
+              <label
+                htmlFor="bulk-postage"
+                className="text-sm font-medium leading-none"
+              >
+                Bulk postage
+              </label>
+              <div className="relative">
+                <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">
+                  £
+                </span>
+                <Input
+                  id="bulk-postage"
+                  value={bulkPostage}
+                  onChange={(event) => setBulkPostage(event.target.value)}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  className="pl-7 text-right tabular-nums"
+                  disabled={saving || savingCosts}
+                />
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={applyBulkPostage}
+              disabled={
+                saving || savingCosts || selectedIndexes.size === 0
+              }
+            >
+              Apply to {selectedIndexes.size || 0} selected
+            </Button>
+            <p className="text-sm text-muted-foreground sm:pb-2">
+              {allRowsSelected
+                ? "All variations selected"
+                : `${selectedIndexes.size} of ${drafts.length} selected`}
+            </p>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <Table className="min-w-[1100px]">
+            <Table className="min-w-[1140px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="pl-6">Variation</TableHead>
+                  <TableHead className="w-12 pl-6">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all variations"
+                      checked={allRowsSelected}
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate = someRowsSelected;
+                        }
+                      }}
+                      onChange={(event) =>
+                        toggleSelectAll(event.target.checked)
+                      }
+                      className="size-4 rounded border-input accent-primary"
+                      disabled={saving || savingCosts}
+                    />
+                  </TableHead>
+                  <TableHead>Variation</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead className="w-[8.5rem]">Price</TableHead>
                   <TableHead className="w-[8.5rem]">Cost ex-VAT</TableHead>
@@ -791,15 +909,34 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                     postage: "",
                   };
                   const dirty = dirtyIndexes.includes(index);
+                  const selected = selectedIndexes.has(index);
                   const currency = row.currency ?? listing.currency ?? "GBP";
                   const estimate = feeEstimates[index] ?? null;
 
                   return (
                     <TableRow
                       key={`${row.sku ?? "nosku"}-${index}`}
-                      className={dirty ? "bg-amber-500/5" : undefined}
+                      className={
+                        dirty
+                          ? "bg-amber-500/5"
+                          : selected
+                            ? "bg-muted/30"
+                            : undefined
+                      }
                     >
-                      <TableCell className="min-w-0 whitespace-normal pl-6 align-top">
+                      <TableCell className="pl-6 align-middle">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${row.specifics || `row ${index + 1}`}`}
+                          checked={selected}
+                          onChange={(event) =>
+                            toggleRowSelected(index, event.target.checked)
+                          }
+                          className="size-4 rounded border-input accent-primary"
+                          disabled={saving || savingCosts}
+                        />
+                      </TableCell>
+                      <TableCell className="min-w-0 whitespace-normal align-top">
                         <p className="break-words text-sm font-medium leading-snug">
                           {row.specifics || "—"}
                         </p>
