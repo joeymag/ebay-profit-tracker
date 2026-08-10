@@ -51,11 +51,14 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  // Supabase email/magic-link flows land with ?code= on arbitrary paths.
+  // Do not hijack eBay (or other) OAuth callbacks that also use ?code=.
   const authCode = request.nextUrl.searchParams.get("code");
   if (
     authCode &&
     pathname !== "/auth/callback" &&
-    !pathname.startsWith("/auth/confirm")
+    !pathname.startsWith("/auth/confirm") &&
+    !isPublicApiPath(pathname)
   ) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/callback";
