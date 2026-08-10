@@ -11,6 +11,7 @@ export const navItems = [
   { title: "Customers", href: "/customers", icon: "users" as const, group: "main" as const },
   { title: "Top products", href: "/top-products", icon: "trophy" as const, group: "main" as const },
   { title: "eBay analytics", href: "/ebay-analytics", icon: "bar-chart" as const, group: "main" as const },
+  { title: "Active listings", href: "/ebay-listings", icon: "tags" as const, group: "main" as const },
   { title: "eBay messages", href: "/ebay-messages", icon: "mail" as const, group: "main" as const },
   { title: "Order map", href: "/map", icon: "map" as const, group: "main" as const },
   { title: "Inventory map", href: "/inventory-map", icon: "layout-grid" as const, group: "main" as const },
