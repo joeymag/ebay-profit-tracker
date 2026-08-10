@@ -4,8 +4,8 @@ import { EbayApiError } from "@/lib/ebay/errors";
 
 type InventoryItemResponse = Record<string, unknown>;
 
-/** eBay Inventory LocaleEnum values (hyphenated). */
-function ebayContentLanguage(marketplaceId: string): string {
+/** eBay Inventory LocaleEnum — single value only (no q-weights). */
+function ebayInventoryLocale(marketplaceId: string): string {
   switch (marketplaceId.trim().toUpperCase()) {
     case "EBAY_US":
     case "EBAY_MOTORS_US":
@@ -37,25 +37,27 @@ export async function ebayInventoryFetch<T>(
   const accessToken = await getEbayAccessToken();
   const url = `${apiBaseUrl}/sell/inventory/v1${path.startsWith("/") ? path : `/${path}`}`;
   const method = init?.method?.toUpperCase() ?? "GET";
-  const locale = ebayContentLanguage(marketplaceId);
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: "application/json",
-  };
+  const locale = ebayInventoryLocale(marketplaceId);
 
-  // Content-Language is required for create/update; do not send language
-  // headers on GET (eBay returns 25709 for invalid Accept/Content-Language).
+  // Build headers last so we override any Accept-Language Next.js may forward
+  // from the browser (e.g. "en-GB,en;q=0.9"), which eBay rejects with 25709.
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  headers.set("Accept", "application/json");
+  headers.set("Accept-Language", locale);
+
   if (method !== "GET" && method !== "HEAD" && method !== "DELETE") {
-    headers["Content-Type"] = "application/json";
-    headers["Content-Language"] = locale;
+    headers.set("Content-Type", "application/json");
+    headers.set("Content-Language", locale);
+  } else {
+    headers.delete("Content-Language");
   }
 
   const response = await fetch(url, {
     ...init,
-    headers: {
-      ...headers,
-      ...(init?.headers ?? {}),
-    },
+    method,
+    cache: "no-store",
+    headers,
   });
 
   const text = await response.text();
