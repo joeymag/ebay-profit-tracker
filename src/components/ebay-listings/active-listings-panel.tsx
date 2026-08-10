@@ -36,6 +36,9 @@ type ActiveListingsResponse =
       publishedCount: number;
       unpublishedCount: number;
       source?: string;
+      promoCampaignsScanned?: number;
+      promoAdsScanned?: number;
+      promoWarning?: string | null;
       fetchedAt: string;
     }
   | {
@@ -54,6 +57,14 @@ function formatPrice(
   }
 
   return formatMoney(price, currency ?? "GBP");
+}
+
+function formatPromoRate(rate: number | null | undefined): string {
+  if (rate == null) {
+    return "—";
+  }
+
+  return `${rate.toFixed(rate % 1 === 0 ? 0 : 1)}%`;
 }
 
 export function ActiveEbayListingsPanel() {
@@ -113,6 +124,8 @@ export function ActiveEbayListingsPanel() {
         listing.listingId,
         listing.offerId,
         listing.status,
+        listing.promoCampaignName,
+        listing.promoRatePercent != null ? `${listing.promoRatePercent}%` : null,
       ]
         .filter(Boolean)
         .join(" ")
@@ -175,6 +188,22 @@ export function ActiveEbayListingsPanel() {
         </Card>
         <Card className="surface-card">
           <CardHeader className="pb-2">
+            <CardDescription>With promo rate</CardDescription>
+            <CardTitle className="text-2xl tabular-nums">
+              {data.listings
+                .filter((listing) => listing.promoRatePercent != null)
+                .length.toLocaleString("en-GB")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Promoted Listings ads found
+            {data.promoCampaignsScanned != null
+              ? ` · ${data.promoCampaignsScanned} campaign${data.promoCampaignsScanned === 1 ? "" : "s"}`
+              : ""}
+          </CardContent>
+        </Card>
+        <Card className="surface-card">
+          <CardHeader className="pb-2">
             <CardDescription>With SKU</CardDescription>
             <CardTitle className="text-2xl tabular-nums">
               {data.listings
@@ -186,16 +215,16 @@ export function ActiveEbayListingsPanel() {
             Seller SKU set on the listing
           </CardContent>
         </Card>
-        <Card className="surface-card">
-          <CardHeader className="pb-2">
-            <CardDescription>Source</CardDescription>
-            <CardTitle className="text-2xl">Seller Hub</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Trading API · same eBay login as fee sync
-          </CardContent>
-        </Card>
       </div>
+
+      {data.promoWarning ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          {data.promoWarning}{" "}
+          <Link href="/settings" className="underline underline-offset-2">
+            Open Settings
+          </Link>
+        </div>
+      ) : null}
 
       <Card className="surface-card overflow-hidden">
         <CardHeader className="border-b border-border/50 bg-muted/20">
@@ -247,11 +276,12 @@ export function ActiveEbayListingsPanel() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-16 pl-6" />
-                    <TableHead className="w-[34%]">Listing</TableHead>
-                    <TableHead className="w-[16%]">SKU</TableHead>
-                    <TableHead className="w-[14%]">Listing ID</TableHead>
-                    <TableHead className="w-[12%] text-right">Price</TableHead>
-                    <TableHead className="w-[10%] text-right">Qty</TableHead>
+                    <TableHead className="w-[30%]">Listing</TableHead>
+                    <TableHead className="w-[14%]">SKU</TableHead>
+                    <TableHead className="w-[12%]">Listing ID</TableHead>
+                    <TableHead className="w-[10%] text-right">Price</TableHead>
+                    <TableHead className="w-[10%] text-right">Promo</TableHead>
+                    <TableHead className="w-[8%] text-right">Qty</TableHead>
                     <TableHead className="w-[10%] pr-6">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -342,6 +372,29 @@ export function ActiveEbayListingsPanel() {
                       <TableCell className="text-right tabular-nums align-top">
                         {formatPrice(listing.price, listing.currency)}
                       </TableCell>
+                      <TableCell className="text-right align-top">
+                        {listing.promoRatePercent != null ? (
+                          <div className="space-y-1">
+                            <Badge
+                              variant="secondary"
+                              className="tabular-nums"
+                              title={
+                                listing.promoCampaignName
+                                  ? `${listing.promoCampaignName}${
+                                      listing.promoAdStatus
+                                        ? ` · ${listing.promoAdStatus}`
+                                        : ""
+                                    }`
+                                  : listing.promoAdStatus ?? undefined
+                              }
+                            >
+                              {formatPromoRate(listing.promoRatePercent)}
+                            </Badge>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums align-top">
                         {listing.quantity != null
                           ? listing.quantity.toLocaleString("en-GB")
@@ -363,9 +416,9 @@ export function ActiveEbayListingsPanel() {
       </Card>
 
       <p className="text-sm text-muted-foreground">
-        Loads classic Seller Hub active listings via the Trading API, using the
-        same connected eBay account as fee sync. Click a listing to see all
-        variations with SKU, price, and stock.
+        Loads Seller Hub listings via the Trading API and Promoted Listings ad
+        rates via the Marketing API (same eBay login as fee sync). Click a
+        listing to edit SKU/price or view variations.
       </p>
     </div>
   );

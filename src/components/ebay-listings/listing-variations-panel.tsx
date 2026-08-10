@@ -353,6 +353,20 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                 ) : (
                   <Badge variant="outline">Single SKU</Badge>
                 )}
+                {listing.promoRatePercent != null ? (
+                  <Badge
+                    variant="secondary"
+                    className="tabular-nums"
+                    title={listing.promoCampaignName ?? undefined}
+                  >
+                    Promo {listing.promoRatePercent.toFixed(
+                      listing.promoRatePercent % 1 === 0 ? 0 : 1,
+                    )}
+                    %
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">No promo</Badge>
+                )}
                 {listing.status ? (
                   <Badge variant="outline">
                     {listing.status.replaceAll("_", " ").toLowerCase()}
@@ -364,6 +378,19 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   </Badge>
                 ) : null}
               </CardDescription>
+              {listing.promoWarning ? (
+                <p className="text-sm text-amber-700 dark:text-amber-300">
+                  {listing.promoWarning}{" "}
+                  <Link href="/settings" className="underline underline-offset-2">
+                    Settings
+                  </Link>
+                </p>
+              ) : listing.promoCampaignName ? (
+                <p className="text-sm text-muted-foreground">
+                  Campaign: {listing.promoCampaignName}
+                  {listing.promoAdStatus ? ` · ${listing.promoAdStatus}` : ""}
+                </p>
+              ) : null}
               <p className="text-sm text-muted-foreground">
                 Total available stock across rows:{" "}
                 <span className="tabular-nums text-foreground">

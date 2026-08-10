@@ -1,4 +1,5 @@
 import { getEbayConfig } from "@/lib/ebay/config";
+import { fetchEbayPromoRatesByListingId } from "@/lib/ebay/promo-rates";
 import {
   ebayTradingCall,
   escapeXml,
@@ -40,6 +41,10 @@ export type EbayListingDetails = {
   itemWebUrl: string;
   isMultiVariation: boolean;
   variations: EbayListingVariation[];
+  promoRatePercent: number | null;
+  promoAdStatus: string | null;
+  promoCampaignName: string | null;
+  promoWarning: string | null;
   fetchedAt: string;
 };
 
@@ -198,6 +203,11 @@ export async function fetchEbayListingDetails(
         } satisfies EbayListingVariation,
       ];
 
+  const promo = await fetchEbayPromoRatesByListingId({
+    listingIds: [trimmedId],
+  });
+  const promoRate = promo.ratesByListingId[trimmedId];
+
   return {
     listingId: extractXmlTag(itemXml, "ItemID") ?? trimmedId,
     title: extractXmlTag(itemXml, "Title"),
@@ -216,6 +226,10 @@ export async function fetchEbayListingDetails(
     itemWebUrl: ebayListingUrl(trimmedId, marketplaceId),
     isMultiVariation,
     variations: displayVariations,
+    promoRatePercent: promoRate?.bidPercentage ?? null,
+    promoAdStatus: promoRate?.adStatus ?? null,
+    promoCampaignName: promoRate?.campaignName ?? null,
+    promoWarning: promo.warning,
     fetchedAt: new Date().toISOString(),
   };
 }

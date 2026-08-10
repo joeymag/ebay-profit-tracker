@@ -1,4 +1,5 @@
 import { getEbayConfig } from "@/lib/ebay/config";
+import { fetchEbayPromoRatesByListingId } from "@/lib/ebay/promo-rates";
 import {
   ebayTradingCall,
   extractXmlAttr,
@@ -20,6 +21,10 @@ export type ActiveEbayListing = {
   quantity: number | null;
   imageUrl: string | null;
   itemWebUrl: string | null;
+  /** Promoted Listings ad rate percent (e.g. 12 = 12%). */
+  promoRatePercent: number | null;
+  promoAdStatus: string | null;
+  promoCampaignName: string | null;
 };
 
 export type ActiveEbayListingsResult = {
@@ -30,6 +35,9 @@ export type ActiveEbayListingsResult = {
   publishedCount: number;
   unpublishedCount: number;
   source: "trading";
+  promoCampaignsScanned: number;
+  promoAdsScanned: number;
+  promoWarning: string | null;
   fetchedAt: string;
 };
 
@@ -84,6 +92,9 @@ function parseItem(itemXml: string, marketplaceId: string): ActiveEbayListing | 
     quantity: quantityAvailable,
     imageUrl,
     itemWebUrl: ebayListingUrl(listingId, marketplaceId),
+    promoRatePercent: null,
+    promoAdStatus: null,
+    promoCampaignName: null,
   };
 }
 
@@ -136,13 +147,36 @@ export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResul
     return titleA.localeCompare(titleB, "en-GB");
   });
 
+  const promo = await fetchEbayPromoRatesByListingId();
+  const enriched = listings.map((listing) => {
+    const listingId = listing.listingId?.trim();
+    if (!listingId) {
+      return listing;
+    }
+
+    const rate = promo.ratesByListingId[listingId];
+    if (!rate) {
+      return listing;
+    }
+
+    return {
+      ...listing,
+      promoRatePercent: rate.bidPercentage,
+      promoAdStatus: rate.adStatus,
+      promoCampaignName: rate.campaignName,
+    };
+  });
+
   return {
     marketplaceId,
-    listings,
-    inventoryItemsScanned: listings.length,
-    publishedCount: listings.length,
+    listings: enriched,
+    inventoryItemsScanned: enriched.length,
+    publishedCount: enriched.length,
     unpublishedCount: 0,
     source: "trading",
+    promoCampaignsScanned: promo.campaignsScanned,
+    promoAdsScanned: promo.adsScanned,
+    promoWarning: promo.warning,
     fetchedAt: new Date().toISOString(),
   };
 }
