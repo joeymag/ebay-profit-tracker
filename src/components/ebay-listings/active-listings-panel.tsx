@@ -247,7 +247,7 @@ export function ActiveEbayListingsPanel() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-16 pl-6" />
-                    <TableHead className="w-[38%]">Listing</TableHead>
+                    <TableHead className="w-[34%]">Listing</TableHead>
                     <TableHead className="w-[16%]">SKU</TableHead>
                     <TableHead className="w-[14%]">Listing ID</TableHead>
                     <TableHead className="w-[12%] text-right">Price</TableHead>
@@ -256,23 +256,49 @@ export function ActiveEbayListingsPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((listing) => (
-                    <TableRow key={`${listing.sku}-${listing.offerId ?? listing.listingId}`}>
+                  {filtered.map((listing) => {
+                    const detailHref = listing.listingId
+                      ? `/ebay-listings/${encodeURIComponent(listing.listingId)}`
+                      : null;
+
+                    return (
+                    <TableRow
+                      key={`${listing.sku}-${listing.offerId ?? listing.listingId}`}
+                      className={detailHref ? "cursor-pointer hover:bg-muted/40" : undefined}
+                    >
                       <TableCell className="pl-6 align-top">
-                        <LineItemImage
-                          src={listing.imageUrl}
-                          alt={listing.title ?? listing.sku}
-                        />
+                        {detailHref ? (
+                          <Link href={detailHref}>
+                            <LineItemImage
+                              src={listing.imageUrl}
+                              alt={listing.title ?? listing.sku}
+                            />
+                          </Link>
+                        ) : (
+                          <LineItemImage
+                            src={listing.imageUrl}
+                            alt={listing.title ?? listing.sku}
+                          />
+                        )}
                       </TableCell>
                       <TableCell className="min-w-0 whitespace-normal align-top">
-                        <p className="line-clamp-2 font-medium leading-snug">
-                          {listing.title ?? listing.sku}
-                        </p>
-                        {listing.format ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {listing.format.replaceAll("_", " ").toLowerCase()}
+                        {detailHref ? (
+                          <Link href={detailHref} className="block space-y-1">
+                            <p className="line-clamp-2 font-medium leading-snug hover:underline">
+                              {listing.title ?? listing.sku}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {listing.format
+                                ? `${listing.format.replaceAll("_", " ").toLowerCase()} · `
+                                : null}
+                              Click for variations / stock
+                            </p>
+                          </Link>
+                        ) : (
+                          <p className="line-clamp-2 font-medium leading-snug">
+                            {listing.title ?? listing.sku}
                           </p>
-                        ) : null}
+                        )}
                       </TableCell>
                       <TableCell className="min-w-0 align-top whitespace-normal font-mono text-sm">
                         <Badge
@@ -285,15 +311,30 @@ export function ActiveEbayListingsPanel() {
                       </TableCell>
                       <TableCell className="align-top whitespace-normal">
                         {listing.listingId ? (
-                          <a
-                            href={listing.itemWebUrl ?? undefined}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 font-mono text-sm text-muted-foreground hover:text-foreground"
-                          >
-                            {listing.listingId}
-                            <ExternalLink className="size-3" />
-                          </a>
+                          <div className="flex flex-col gap-1">
+                            {detailHref ? (
+                              <Link
+                                href={detailHref}
+                                className="font-mono text-sm hover:underline"
+                              >
+                                {listing.listingId}
+                              </Link>
+                            ) : (
+                              <span className="font-mono text-sm">{listing.listingId}</span>
+                            )}
+                            {listing.itemWebUrl ? (
+                              <a
+                                href={listing.itemWebUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                eBay
+                                <ExternalLink className="size-3" />
+                              </a>
+                            ) : null}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -312,7 +353,8 @@ export function ActiveEbayListingsPanel() {
                         </Badge>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -322,8 +364,8 @@ export function ActiveEbayListingsPanel() {
 
       <p className="text-sm text-muted-foreground">
         Loads classic Seller Hub active listings via the Trading API, using the
-        same connected eBay account as fee sync. Open a listing ID to view it on
-        eBay.
+        same connected eBay account as fee sync. Click a listing to see all
+        variations with SKU, price, and stock.
       </p>
     </div>
   );
