@@ -23,11 +23,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatMoney } from "@/lib/format";
 import type {
   EbayListingDetails,
   EbayListingVariation,
   EbayVariationEdit,
 } from "@/lib/ebay/listing-details";
+import {
+  computeEbayFees,
+  formatEbayFinalValueFeeSchedule,
+  type EbayFees,
+} from "@/lib/orders/platform-fees";
 import { cn } from "@/lib/utils";
 
 type DetailsResponse =
@@ -49,6 +55,9 @@ type DraftRow = {
   price: string;
 };
 
+const SELLING_FEE_STORAGE_KEY = "ebay-listing-selling-fee-percent";
+const DEFAULT_SELLING_FEE_PERCENT = "12.8";
+
 function formatQty(value: number | null | undefined): string {
   if (value == null) {
     return "—";
@@ -68,6 +77,45 @@ function sameDraft(a: DraftRow, b: DraftRow): boolean {
   return a.sku.trim() === b.sku.trim() && a.price.trim() === b.price.trim();
 }
 
+function parseMoneyInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parsePercentInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function feeEstimateTitle(fees: EbayFees): string {
+  const parts = [`FVF ${formatMoney(fees.finalValueFee)}`];
+  if (fees.sellingFee != null) {
+    parts.push(`Selling ${formatMoney(fees.sellingFee)}`);
+  }
+  if (fees.adsFee != null) {
+    parts.push(`Promo ${formatMoney(fees.adsFee)}`);
+  }
+  return parts.join(" · ");
+}
+
 type ListingVariationsPanelProps = {
   listingId: string;
 };
@@ -82,6 +130,20 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [sellingFeePercent, setSellingFeePercent] = useState(
+    DEFAULT_SELLING_FEE_PERCENT,
+  );
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SELLING_FEE_STORAGE_KEY);
+      if (stored != null && stored.trim() !== "") {
+        setSellingFeePercent(stored);
+      }
+    } catch {
+      // Ignore private-mode / blocked storage.
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,6 +212,43 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       0,
     );
   }, [listing]);
+
+  const sellingFeeRate = useMemo(() => {
+    const percent = parsePercentInput(sellingFeePercent);
+    return percent == null ? null : percent / 100;
+  }, [sellingFeePercent]);
+
+  const promoFeeRate = useMemo(() => {
+    if (listing?.promoRatePercent == null) {
+      return null;
+    }
+    if (
+      !Number.isFinite(listing.promoRatePercent) ||
+      listing.promoRatePercent < 0
+    ) {
+      return null;
+    }
+    return listing.promoRatePercent / 100;
+  }, [listing?.promoRatePercent]);
+
+  const feeEstimates = useMemo(() => {
+    return drafts.map((draft) => {
+      const price = parseMoneyInput(draft.price);
+      if (price == null) {
+        return null;
+      }
+      return computeEbayFees(price, sellingFeeRate, promoFeeRate);
+    });
+  }, [drafts, promoFeeRate, sellingFeeRate]);
+
+  function updateSellingFeePercent(value: string) {
+    setSellingFeePercent(value);
+    try {
+      window.localStorage.setItem(SELLING_FEE_STORAGE_KEY, value);
+    } catch {
+      // Ignore private-mode / blocked storage.
+    }
+  }
 
   function updateDraft(index: number, patch: Partial<DraftRow>) {
     setDrafts((current) =>
@@ -404,25 +503,54 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
 
       <Card className="surface-card overflow-hidden">
         <CardHeader className="border-b border-border/50 bg-muted/20">
-          <CardTitle>
-            {listing.isMultiVariation ? "Variations" : "Listing stock"}
-          </CardTitle>
-          <CardDescription>
-            Edit SKU and price, then push changes to eBay. Stock is read-only
-            here.
-          </CardDescription>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-1.5">
+              <CardTitle>
+                {listing.isMultiVariation ? "Variations" : "Listing stock"}
+              </CardTitle>
+              <CardDescription>
+                Est. fees use FVF ({formatEbayFinalValueFeeSchedule()}), your
+                selling fee % (+VAT), and this listing&apos;s promo rate (+VAT).
+                Updates live as you edit price.
+              </CardDescription>
+            </div>
+            <div className="w-full max-w-[11rem] space-y-1.5">
+              <label
+                htmlFor="listing-selling-fee"
+                className="text-sm font-medium leading-none"
+              >
+                Selling fee %
+              </label>
+              <div className="relative">
+                <Input
+                  id="listing-selling-fee"
+                  value={sellingFeePercent}
+                  onChange={(event) =>
+                    updateSellingFeePercent(event.target.value)
+                  }
+                  inputMode="decimal"
+                  placeholder="12.8"
+                  className="pr-7 text-right tabular-nums"
+                />
+                <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm text-muted-foreground">
+                  %
+                </span>
+              </div>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[24%] pl-6">Variation</TableHead>
-                  <TableHead className="w-[22%]">SKU</TableHead>
-                  <TableHead className="w-[16%]">Price</TableHead>
-                  <TableHead className="w-[12%] text-right">Available</TableHead>
-                  <TableHead className="w-[12%] text-right">Sold</TableHead>
-                  <TableHead className="w-[14%] pr-6 text-right">Listed qty</TableHead>
+                  <TableHead className="w-[20%] pl-6">Variation</TableHead>
+                  <TableHead className="w-[18%]">SKU</TableHead>
+                  <TableHead className="w-[14%]">Price</TableHead>
+                  <TableHead className="w-[14%] text-right">Est. fees</TableHead>
+                  <TableHead className="w-[11%] text-right">Available</TableHead>
+                  <TableHead className="w-[11%] text-right">Sold</TableHead>
+                  <TableHead className="w-[12%] pr-6 text-right">Listed qty</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -430,6 +558,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   const draft = drafts[index] ?? { sku: "", price: "" };
                   const dirty = dirtyIndexes.includes(index);
                   const currency = row.currency ?? listing.currency ?? "GBP";
+                  const fees = feeEstimates[index] ?? null;
 
                   return (
                     <TableRow
@@ -473,6 +602,25 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                             disabled={saving}
                           />
                         </div>
+                      </TableCell>
+                      <TableCell className="text-right align-top">
+                        {fees ? (
+                          <div
+                            className="space-y-0.5"
+                            title={feeEstimateTitle(fees)}
+                          >
+                            <p className="tabular-nums font-medium">
+                              {formatMoney(fees.total, currency)}
+                            </p>
+                            <p className="text-xs text-muted-foreground tabular-nums">
+                              {fees.adsFee != null
+                                ? `incl. promo ${formatMoney(fees.adsFee, currency)}`
+                                : "no promo"}
+                            </p>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums align-middle font-medium">
                         {formatQty(row.quantityAvailable)}
