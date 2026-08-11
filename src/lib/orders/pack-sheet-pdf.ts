@@ -336,13 +336,13 @@ export async function buildA4LabelPickSheetPdf(
     const testBanner =
       "TEST — Royal Mail S19 layout · print 100% (no fit-to-page) · label at bottom";
     page.drawText(testBanner, {
-      x: (A4_WIDTH - fontBold.widthOfTextAtSize(testBanner, 7.5)) / 2,
+      x: (A4_WIDTH - fontBold.widthOfTextAtSize(testBanner, 9)) / 2,
       y,
-      size: 7.5,
+      size: 9,
       font: fontBold,
       color: rgb(0.75, 0.15, 0.15),
     });
-    y -= 14;
+    y -= 16;
   }
 
   const channel = getSalesChannel(order.tags);
@@ -350,7 +350,7 @@ export async function buildA4LabelPickSheetPdf(
   page.drawText(options?.testMode ? "PICK LIST (TEST)" : "PICK LIST", {
     x: PICK_MARGIN_X,
     y,
-    size: 14,
+    size: 18,
     font: fontBold,
     color: rgb(0.1, 0.1, 0.1),
   });
@@ -358,12 +358,12 @@ export async function buildA4LabelPickSheetPdf(
     x:
       A4_WIDTH -
       PICK_MARGIN_X -
-      fontBold.widthOfTextAtSize(order.orderNumber, 14),
+      fontBold.widthOfTextAtSize(order.orderNumber, 18),
     y,
-    size: 14,
+    size: 18,
     font: fontBold,
   });
-  y -= 15;
+  y -= 20;
 
   const meta = [
     channel !== "Other" ? channel : null,
@@ -376,24 +376,24 @@ export async function buildA4LabelPickSheetPdf(
     .join(" · ");
 
   if (meta) {
-    page.drawText(meta.slice(0, 110), {
+    page.drawText(meta.slice(0, 95), {
       x: PICK_MARGIN_X,
       y,
-      size: 8,
+      size: 11,
       font,
       color: rgb(0.35, 0.35, 0.35),
     });
-    y -= 13;
+    y -= 16;
   }
 
   page.drawText("Ship to", {
     x: PICK_MARGIN_X,
     y,
-    size: 8,
+    size: 11,
     font: fontBold,
     color: rgb(0.35, 0.35, 0.35),
   });
-  y -= 11;
+  y -= 14;
 
   const shipLines = [
     order.buyerName,
@@ -404,62 +404,62 @@ export async function buildA4LabelPickSheetPdf(
   ].filter((line): line is string => Boolean(line?.trim()));
 
   for (const line of shipLines) {
-    if (y < pickBottom + 40) {
+    if (y < pickBottom + 48) {
       break;
     }
-    page.drawText(line.slice(0, 95), {
+    page.drawText(line.slice(0, 80), {
       x: PICK_MARGIN_X,
       y,
-      size: 10,
+      size: 13,
       font,
     });
-    y -= 12;
+    y -= 16;
   }
 
-  y -= 6;
+  y -= 8;
 
   const colCheck = PICK_MARGIN_X;
-  const colQty = PICK_MARGIN_X + 18;
-  const colSku = PICK_MARGIN_X + 48;
-  const colTitle = PICK_MARGIN_X + 170;
+  const colQty = PICK_MARGIN_X + 22;
+  const colSku = PICK_MARGIN_X + 58;
+  const colTitle = PICK_MARGIN_X + 200;
   const titleWidth = A4_WIDTH - PICK_MARGIN_X - colTitle;
 
   page.drawText("Qty", {
     x: colQty,
     y,
-    size: 8,
+    size: 11,
     font: fontBold,
     color: rgb(0.35, 0.35, 0.35),
   });
   page.drawText("SKU", {
     x: colSku,
     y,
-    size: 8,
+    size: 11,
     font: fontBold,
     color: rgb(0.35, 0.35, 0.35),
   });
   page.drawText("Item", {
     x: colTitle,
     y,
-    size: 8,
+    size: 11,
     font: fontBold,
     color: rgb(0.35, 0.35, 0.35),
   });
-  y -= 4;
+  y -= 5;
   page.drawLine({
     start: { x: PICK_MARGIN_X, y },
     end: { x: A4_WIDTH - PICK_MARGIN_X, y },
     thickness: 0.5,
     color: rgb(0.7, 0.7, 0.7),
   });
-  y -= 13;
+  y -= 16;
 
   for (const item of order.lineItems) {
-    if (y < pickBottom + 18) {
+    if (y < pickBottom + 22) {
       page.drawText("…more items on order — check Shopify", {
         x: PICK_MARGIN_X,
         y,
-        size: 8,
+        size: 10,
         font,
         color: rgb(0.45, 0.45, 0.45),
       });
@@ -469,35 +469,37 @@ export async function buildA4LabelPickSheetPdf(
     const sku =
       resolveLineItemSkuForDisplay(item.sku, item.title, item.temuSku) || "—";
     const qty = String(item.quantity);
-    const titleLines = wrapText(item.title || "Item", font, 9, titleWidth).slice(
-      0,
-      2,
-    );
-    const rowHeight = Math.max(14, titleLines.length * 11);
+    const titleLines = wrapText(
+      item.title || "Item",
+      font,
+      12,
+      titleWidth,
+    ).slice(0, 2);
+    const rowHeight = Math.max(18, titleLines.length * 14);
 
-    drawCheckbox(page, colCheck, y, 10);
+    drawCheckbox(page, colCheck, y, 12);
     page.drawText(qty, {
       x: colQty,
       y,
-      size: 11,
+      size: 14,
       font: fontBold,
     });
-    page.drawText(sku.slice(0, 28), {
+    page.drawText(sku.slice(0, 24), {
       x: colSku,
       y,
-      size: 9,
+      size: 12,
       font,
     });
     titleLines.forEach((line, index) => {
       page.drawText(line, {
         x: colTitle,
-        y: y - index * 11,
-        size: 9,
+        y: y - index * 14,
+        size: 12,
         font,
       });
     });
 
-    y -= rowHeight + 6;
+    y -= rowHeight + 8;
   }
 
   const footer = options?.testMode
@@ -506,7 +508,7 @@ export async function buildA4LabelPickSheetPdf(
   page.drawText(footer, {
     x: PICK_MARGIN_X,
     y: pickBottom,
-    size: 7,
+    size: 9,
     font,
     color: rgb(0.5, 0.5, 0.5),
   });
