@@ -184,6 +184,7 @@ export function BuyShippingLabelCard({
   async function openPackSheet(options?: {
     documentUrl?: string | null;
     shippingLabelId?: string | null;
+    test?: boolean;
   }) {
     setBuildingPackSheet(true);
     setError(null);
@@ -191,11 +192,15 @@ export function BuyShippingLabelCard({
       const response = await fetch(`/api/orders/${shopifyId}/pack-sheet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          labelDocumentUrl: options?.documentUrl || undefined,
-          shippingLabelId:
-            options?.shippingLabelId || purchasedLabelId || undefined,
-        }),
+        body: JSON.stringify(
+          options?.test
+            ? { test: true }
+            : {
+                labelDocumentUrl: options?.documentUrl || undefined,
+                shippingLabelId:
+                  options?.shippingLabelId || purchasedLabelId || undefined,
+              },
+        ),
       });
 
       if (!response.ok) {
@@ -340,6 +345,31 @@ export function BuyShippingLabelCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void openPackSheet({ test: true })}
+            disabled={purchasing || loadingOptions || buildingPackSheet}
+          >
+            {buildingPackSheet ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Building test sheet…
+              </>
+            ) : (
+              <>
+                <Printer className="size-4" />
+                Print test A4 sheet
+              </>
+            )}
+          </Button>
+          <p className="w-full text-xs text-muted-foreground">
+            Prints a fake 4×6&quot; label + this order&apos;s pick list so you can
+            check printer alignment. Use 100% scale (do not fit to page).
+          </p>
+        </div>
+
         {canReprint ? (
           <div className="flex flex-wrap gap-2 rounded-lg border border-border bg-muted/30 px-3 py-3">
             <Button

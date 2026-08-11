@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   buildA4LabelPickSheetPdf,
+  buildTestA4PackSheetPdf,
   fetchShopifyLabelPdfBytes,
   isAllowedShopifyLabelDocumentUrl,
 } from "@/lib/orders/pack-sheet-pdf";
@@ -22,7 +23,11 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { labelDocumentUrl?: string; shippingLabelId?: string };
+  let body: {
+    labelDocumentUrl?: string;
+    shippingLabelId?: string;
+    test?: boolean;
+  };
   try {
     body = await request.json();
   } catch {
@@ -38,6 +43,19 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
+    if (body.test) {
+      const pdfBytes = await buildTestA4PackSheetPdf(order);
+      const filename = `test-pack-sheet-${order.orderNumber.replace(/[^\w.-]+/g, "_")}.pdf`;
+      return new NextResponse(Buffer.from(pdfBytes), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `inline; filename="${filename}"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     let labelDocumentUrl = body.labelDocumentUrl?.trim() || "";
     const shippingLabelId =
       body.shippingLabelId?.trim() || order.shippingLabelGid?.trim() || "";
