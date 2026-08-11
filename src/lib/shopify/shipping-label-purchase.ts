@@ -65,7 +65,8 @@ type OrderFulfillmentOrdersQuery = {
         requestStatus: string | null;
         fulfillAt: string | null;
         destination: {
-          name: string | null;
+          firstName: string | null;
+          lastName: string | null;
           city: string | null;
           countryCode: string | null;
         } | null;
@@ -134,14 +135,15 @@ export async function getLabelFulfillmentOrders(
         id
         name
         displayFulfillmentStatus
-        fulfillmentOrders(first: 10, displayQuery: "status:OPEN OR status:IN_PROGRESS") {
+        fulfillmentOrders(first: 20, displayable: true) {
           nodes {
             id
             status
             requestStatus
             fulfillAt
             destination {
-              name
+              firstName
+              lastName
               city
               countryCode
             }
@@ -165,19 +167,26 @@ export async function getLabelFulfillmentOrders(
     throw new Error(`Shopify order ${shopifyOrderId} was not found.`);
   }
 
+  const openStatuses = new Set(["OPEN", "IN_PROGRESS", "SCHEDULED"]);
+
   const fulfillmentOrders = data.order.fulfillmentOrders.nodes
+    .filter((node) => openStatuses.has(node.status))
     .map((node) => {
       const remaining = node.lineItems.nodes.reduce(
         (sum, item) => sum + (item.remainingQuantity ?? 0),
         0,
       );
+      const destinationName = [node.destination?.firstName, node.destination?.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
       return {
         id: node.id,
         numericId: parseShopifyGid(node.id),
         status: node.status,
         requestStatus: node.requestStatus,
         fulfillable: remaining > 0,
-        destinationName: node.destination?.name ?? null,
+        destinationName: destinationName || null,
         destinationCity: node.destination?.city ?? null,
         destinationCountry: node.destination?.countryCode ?? null,
         locationName: node.assignedLocation?.name ?? null,
