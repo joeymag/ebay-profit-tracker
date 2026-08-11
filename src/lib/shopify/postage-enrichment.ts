@@ -46,8 +46,21 @@ export type PostageEnrichOptions = {
    * shipping_label_cost stored (keeps quick sync fast).
    */
   onlyMissingPostage?: boolean;
+  /** Only consider orders created/updated within this many days. */
+  recentDays?: number;
+  /** Hard cap on Shopify label event lookups (prevents Vercel timeouts). */
+  maxLabelLookups?: number;
   concurrency?: number;
 };
+
+function isRecentOrder(order: StoredOrder, recentDays: number): boolean {
+  const created = Date.parse(order.createdAt);
+  if (!Number.isFinite(created)) {
+    return true;
+  }
+  const cutoff = Date.now() - recentDays * 24 * 60 * 60 * 1000;
+  return created >= cutoff;
+}
 
 /**
  * Pull tracking + Shopify Shipping label purchase costs onto orders.
@@ -60,14 +73,38 @@ export async function enrichOrdersWithPostageAndTracking(
   orders: StoredOrder[];
   withPostage: number;
   withTracking: number;
+  labelLookups: number;
 }> {
-  const fulfilledIds = orders
-    .filter(
-      (order) =>
-        order.fulfillmentStatus === "fulfilled" ||
-        order.fulfillmentStatus === "partial",
-    )
-    .map((order) => order.shopifyId);
+  const recentDays = options.recentDays;
+  const maxLabelLookups = options.maxLabelLookups;
+
+  let fulfilledOrders = orders.filter(
+    (order) =>
+      order.fulfillmentStatus === "fulfilled" ||
+      order.fulfillmentStatus === "partial",
+  );
+
+  if (recentDays != null) {
+    fulfilledOrders = fulfilledOrders.filter((order) =>
+      isRecentOrder(order, recentDays),
+    );
+  }
+
+  // Newest first so capped lookups prefer recent label purchases.
+  fulfilledOrders = [...fulfilledOrders].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  );
+
+  let fulfilledIds = fulfilledOrders.map((order) => order.shopifyId);
+
+  if (options.onlyMissingPostage && fulfilledIds.length) {
+    const alreadyHave = await getShopifyIdsWithPostageCost(fulfilledIds);
+    fulfilledIds = fulfilledIds.filter((id) => !alreadyHave.has(id));
+  }
+
+  if (maxLabelLookups != null && fulfilledIds.length > maxLabelLookups) {
+    fulfilledIds = fulfilledIds.slice(0, maxLabelLookups);
+  }
 
   if (!fulfilledIds.length) {
     const withTracking = orders.filter((o) => o.trackingNumbers.length > 0)
@@ -75,29 +112,20 @@ export async function enrichOrdersWithPostageAndTracking(
     const withPostage = orders.filter(
       (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
     ).length;
-    return { orders, withPostage, withTracking };
+    return { orders, withPostage, withTracking, labelLookups: 0 };
   }
 
   const fulfillmentsMap = await fetchFulfillmentsForOrders(fulfilledIds, {
     concurrency: options.concurrency ?? 8,
   });
 
-  const labelCandidateIds = [
+  const labelLookupIds = [
     ...new Set([...fulfilledIds, ...fulfillmentsMap.keys()]),
   ];
 
-  let labelLookupIds = labelCandidateIds;
-  if (options.onlyMissingPostage) {
-    const alreadyHave = await getShopifyIdsWithPostageCost(labelCandidateIds);
-    labelLookupIds = labelCandidateIds.filter((id) => !alreadyHave.has(id));
-  }
-
-  const labelCosts =
-    labelLookupIds.length > 0
-      ? await fetchShippingLabelCostsForOrders(labelLookupIds, {
-          concurrency: 3,
-        })
-      : new Map<number, number>();
+  const labelCosts = await fetchShippingLabelCostsForOrders(labelLookupIds, {
+    concurrency: 3,
+  });
 
   const ordersEnriched = orders.map((order) => {
     const fulfillmentData = fulfillmentsMap.get(order.shopifyId);
@@ -130,5 +158,10 @@ export async function enrichOrdersWithPostageAndTracking(
     (o) => o.trackingNumbers.length > 0,
   ).length;
 
-  return { orders: ordersEnriched, withPostage, withTracking };
+  return {
+    orders: ordersEnriched,
+    withPostage,
+    withTracking,
+    labelLookups: labelLookupIds.length,
+  };
 }

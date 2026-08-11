@@ -27,7 +27,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await runOrderSync({ mode, incremental: false });
+    const result = await runOrderSync({
+      mode,
+      incremental: false,
+      // Full catalog cost recalc is too slow for Vercel; saveOrders updates imported rows.
+      skipRecalculateCosts: true,
+    });
 
     return NextResponse.json({
       ok: true,

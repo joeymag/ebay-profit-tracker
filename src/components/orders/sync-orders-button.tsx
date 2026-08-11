@@ -40,7 +40,18 @@ export function SyncOrdersButton({
       const res = await fetch(`/api/shopify/orders/sync?mode=${mode}`, {
         method: "POST",
       });
-      const data = (await res.json()) as SyncResult;
+
+      let data: SyncResult;
+      try {
+        data = (await res.json()) as SyncResult;
+      } catch {
+        setError(
+          res.status === 504 || res.status === 408
+            ? "Sync timed out on the server. Try Quick sync again, or wait for auto-sync."
+            : `Sync failed (HTTP ${res.status}). Try again after redeploy.`,
+        );
+        return;
+      }
 
       if (!data.ok) {
         setError(
@@ -66,8 +77,8 @@ export function SyncOrdersButton({
     } catch {
       setError(
         mode === "full"
-          ? "Full sync timed out — try Quick sync on Vercel, or run full sync locally."
-          : "Could not reach the sync endpoint. Check Vercel env vars and redeploy.",
+          ? "Full sync timed out — try Quick sync, or wait for auto-sync to pick up postage labels."
+          : "Sync timed out or could not reach the server. Try Quick sync again after redeploy, or rely on auto-sync for postage.",
       );
     } finally {
       setLoading(false);

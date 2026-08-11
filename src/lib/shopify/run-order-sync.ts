@@ -43,6 +43,10 @@ export type RunOrderSyncResult = {
 const DEFAULT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 const SYNC_OVERLAP_MS = 10 * 60 * 1000;
 
+/** Keep manual quick sync under Vercel/browser timeouts. */
+const QUICK_POSTAGE_RECENT_DAYS = 60;
+const QUICK_POSTAGE_MAX_LOOKUPS = 20;
+
 export function resolveIncrementalSince(lastSyncAt: string | null): string {
   if (lastSyncAt) {
     return new Date(new Date(lastSyncAt).getTime() - SYNC_OVERLAP_MS).toISOString();
@@ -55,6 +59,7 @@ async function enrichOrdersForFullSync(orders: StoredOrder[]): Promise<{
   orders: StoredOrder[];
   withPostage: number;
   withTracking: number;
+  labelLookups: number;
 }> {
   const ordersWithImages = await enrichOrdersWithLineItemImages(orders, {
     concurrency: 5,
@@ -86,23 +91,36 @@ export async function runOrderSync(
   let ordersEnriched = orders;
   let withPostage = 0;
   let withTracking = orders.filter((o) => o.trackingNumbers.length > 0).length;
+  let labelLookups = 0;
 
   if (mode === "full") {
     const enriched = await enrichOrdersForFullSync(orders);
     ordersEnriched = enriched.orders;
     withPostage = enriched.withPostage;
     withTracking = enriched.withTracking;
-  } else {
-    // Quick + auto-sync: pull Shopify Shipping label costs automatically.
-    // Incremental always re-checks fulfilled orders (label may have just been bought).
-    // Full-catalog quick sync only looks up orders still missing postage.
+    labelLookups = enriched.labelLookups;
+  } else if (incremental) {
+    // Auto-sync: small batch — always check for newly bought labels.
     const enriched = await enrichOrdersWithPostageAndTracking(orders, {
-      onlyMissingPostage: !incremental,
+      onlyMissingPostage: false,
       concurrency: 8,
     });
     ordersEnriched = enriched.orders;
     withPostage = enriched.withPostage;
     withTracking = enriched.withTracking;
+    labelLookups = enriched.labelLookups;
+  } else {
+    // Manual quick sync: light postage backfill only (avoids timeouts).
+    const enriched = await enrichOrdersWithPostageAndTracking(orders, {
+      onlyMissingPostage: true,
+      recentDays: QUICK_POSTAGE_RECENT_DAYS,
+      maxLabelLookups: QUICK_POSTAGE_MAX_LOOKUPS,
+      concurrency: 6,
+    });
+    ordersEnriched = enriched.orders;
+    withPostage = enriched.withPostage;
+    withTracking = enriched.withTracking;
+    labelLookups = enriched.labelLookups;
   }
 
   let removedCancelled = 0;
@@ -124,10 +142,11 @@ export async function runOrderSync(
   });
 
   const productsSync = mode === "full" ? await syncProductsFromOrders() : null;
-  const ordersRecalculated =
-    options.skipRecalculateCosts || incremental
-      ? 0
-      : await recalculateAllOrderProductCosts();
+  const shouldRecalculate =
+    !options.skipRecalculateCosts && !incremental && mode === "full";
+  const ordersRecalculated = shouldRecalculate
+    ? await recalculateAllOrderProductCosts()
+    : 0;
 
   return {
     ok: true,
@@ -146,7 +165,9 @@ export async function runOrderSync(
     updatedSince,
     hint:
       mode === "quick" && !incremental
-        ? "Quick sync also pulls Shopify postage label costs for orders still missing postage."
+        ? labelLookups > 0
+          ? `Checked ${labelLookups} recent order(s) for Shopify postage labels.`
+          : "Quick sync finished. Auto-sync applies postage when new labels are bought."
         : incremental
           ? "Auto-sync imports changed Shopify orders and applies postage when a shipping label was purchased."
           : undefined,
