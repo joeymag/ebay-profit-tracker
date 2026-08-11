@@ -320,9 +320,9 @@ export function BuyShippingLabelCard({
               Buy shipping label
             </CardTitle>
             <CardDescription>
-              Buy Shopify&apos;s default/cheapest rate, then print an A4 sheet
-              with the shipping label and pick list together. Package defaults
-              are remembered in this browser.
+              Buy Shopify&apos;s default/cheapest rate, then print an A4 Royal
+              Mail S19 sheet (pick list on top, shipping label in the bottom
+              peel zone). Package defaults are remembered in this browser.
               {alreadyHasPostage
                 ? " This order already has a postage cost saved."
                 : null}
@@ -365,8 +365,9 @@ export function BuyShippingLabelCard({
             )}
           </Button>
           <p className="w-full text-xs text-muted-foreground">
-            Prints a fake 4×6&quot; label + this order&apos;s pick list so you can
-            check printer alignment. Use 100% scale (do not fit to page).
+            Prints a Royal Mail S19 layout test (160×105mm label at the bottom,
+            pick list above the perforation) using this order. Print at 100%
+            scale — do not fit to page.
           </p>
         </div>
 
