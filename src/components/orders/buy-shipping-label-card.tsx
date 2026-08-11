@@ -24,6 +24,8 @@ type FulfillmentOrderOption = {
   destinationCountry: string | null;
   locationName: string | null;
   lineItemCount: number;
+  buyerDeliveryName: string | null;
+  buyerServiceCode: string | null;
 };
 
 type OptionsResponse =
@@ -212,6 +214,9 @@ export function BuyShippingLabelCard({
     !purchasing &&
     !loadingOptions;
 
+  const selectedFo =
+    fulfillmentOrders.find((fo) => fo.id === selectedFoId) ?? null;
+
   return (
     <Card className="surface-card">
       <CardHeader>
@@ -222,9 +227,10 @@ export function BuyShippingLabelCard({
               Buy shipping label
             </CardTitle>
             <CardDescription>
-              Purchase a Shopify Shipping label for this order. Shopify picks
-              the default/cheapest available rate. Package defaults are
-              remembered in this browser.
+              Shopify&apos;s API cannot list live label prices or services
+              here. Buying below purchases Shopify&apos;s default/cheapest
+              rate. To compare carriers and costs, open the order in Shopify
+              Admin.
               {alreadyHasPostage
                 ? " This order already has a postage cost saved."
                 : null}
@@ -284,6 +290,24 @@ export function BuyShippingLabelCard({
                   </option>
                 ))}
               </select>
+              {selectedFo?.buyerDeliveryName || selectedFo?.buyerServiceCode ? (
+                <p className="text-sm text-muted-foreground">
+                  Buyer chose at checkout:{" "}
+                  <span className="font-medium text-foreground">
+                    {selectedFo.buyerDeliveryName ||
+                      selectedFo.buyerServiceCode}
+                  </span>
+                  {selectedFo.buyerDeliveryName && selectedFo.buyerServiceCode
+                    ? ` (${selectedFo.buyerServiceCode})`
+                    : null}
+                  . That is not a live Shopify Shipping rate quote.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No buyer delivery method on this fulfillment order. Live
+                  carrier rates are only shown in Shopify Admin.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -337,9 +361,23 @@ export function BuyShippingLabelCard({
                     Buying label…
                   </>
                 ) : (
-                  "Buy shipping label"
+                  "Buy cheapest label"
                 )}
               </Button>
+              {shopifyAdminUrl ? (
+                <a
+                  href={shopifyAdminUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    buttonVariants({ variant: "outline" }),
+                    purchasing && "pointer-events-none opacity-50",
+                  )}
+                >
+                  Compare rates in Shopify
+                  <ExternalLink className="size-3.5" />
+                </a>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"

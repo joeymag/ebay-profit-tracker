@@ -19,6 +19,9 @@ export type LabelFulfillmentOrder = {
   destinationCountry: string | null;
   locationName: string | null;
   lineItemCount: number;
+  /** Buyer-selected delivery option from checkout (not a live Shopify Shipping rate). */
+  buyerDeliveryName: string | null;
+  buyerServiceCode: string | null;
 };
 
 export type PackageDimensionsCm = {
@@ -72,6 +75,11 @@ type OrderFulfillmentOrdersQuery = {
         } | null;
         assignedLocation: {
           name: string | null;
+        } | null;
+        deliveryMethod: {
+          presentedName: string | null;
+          serviceCode: string | null;
+          methodType: string | null;
         } | null;
         lineItems: {
           nodes: Array<{ id: string; remainingQuantity: number }>;
@@ -150,6 +158,11 @@ export async function getLabelFulfillmentOrders(
             assignedLocation {
               name
             }
+            deliveryMethod {
+              presentedName
+              serviceCode
+              methodType
+            }
             lineItems(first: 50) {
               nodes {
                 id
@@ -191,6 +204,8 @@ export async function getLabelFulfillmentOrders(
         destinationCountry: node.destination?.countryCode ?? null,
         locationName: node.assignedLocation?.name ?? null,
         lineItemCount: remaining,
+        buyerDeliveryName: node.deliveryMethod?.presentedName ?? null,
+        buyerServiceCode: node.deliveryMethod?.serviceCode ?? null,
       } satisfies LabelFulfillmentOrder;
     })
     .filter((fo) => fo.fulfillable);
@@ -319,10 +334,16 @@ export async function getShopifyShippingLabelPurchaseStatus(
 export async function syncPostageCostAfterLabelPurchase(
   shopifyOrderId: number,
 ): Promise<number | null> {
-  const cost = await fetchOrderShippingLabelCost(shopifyOrderId);
-  if (cost > 0) {
-    await updateOrderCosts(shopifyOrderId, { shippingLabelCost: cost });
-    return cost;
+  // Order events can lag a few seconds behind PURCHASED status.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    const cost = await fetchOrderShippingLabelCost(shopifyOrderId);
+    if (cost > 0) {
+      await updateOrderCosts(shopifyOrderId, { shippingLabelCost: cost });
+      return cost;
+    }
   }
   return null;
 }
