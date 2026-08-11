@@ -156,6 +156,7 @@ function normalizeOrder(order: ShopifyOrder): StoredOrder {
       order.total_shipping_price_set?.shop_money.amount,
     ),
     shippingLabelCost: null,
+    shippingLabelGid: null,
     productCost: null,
     productCostManual: false,
     shippingCarrier,

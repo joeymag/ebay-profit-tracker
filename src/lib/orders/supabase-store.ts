@@ -54,6 +54,7 @@ function orderToRow(order: StoredOrder, syncedAt: string): OrderRow {
     tax: order.tax,
     shipping_charged: order.shippingCharged,
     shipping_label_cost: order.shippingLabelCost,
+    shipping_label_gid: order.shippingLabelGid,
     ebay_fee_rate: order.ebayFeeRate,
     ebay_ads_fee_rate: order.ebayAdsFeeRate,
     ebay_fees_actual: order.ebayFeesActual,
@@ -111,6 +112,7 @@ function rowToOrder(
       row.shipping_label_cost != null
         ? Number(row.shipping_label_cost)
         : null,
+    shippingLabelGid: row.shipping_label_gid ?? null,
     ebayFeeRate: row.ebay_fee_rate != null ? Number(row.ebay_fee_rate) : null,
     ebayAdsFeeRate:
       row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,
@@ -292,7 +294,7 @@ export async function saveOrdersToSupabase(
   const { data: existingRows } = await supabase
     .from("orders")
     .select(
-      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
+      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
     );
 
   const existingById = new Map(
@@ -352,6 +354,8 @@ export async function saveOrdersToSupabase(
           (previous?.shipping_label_cost != null
             ? Number(previous.shipping_label_cost)
             : null),
+        shippingLabelGid:
+          order.shippingLabelGid ?? previous?.shipping_label_gid ?? null,
         ebayFeeRate:
           order.ebayFeeRate ??
           (previous?.ebay_fee_rate != null
@@ -494,6 +498,7 @@ export async function updateOrderCostsInSupabase(
     ebayFeeRate?: number | null;
     ebayAdsFeeRate?: number | null;
     shippingLabelCost?: number | null;
+    shippingLabelGid?: string | null;
     productCost?: number | null;
     productCostManual?: boolean;
   },
@@ -519,6 +524,10 @@ export async function updateOrderCostsInSupabase(
       updates.shippingLabelCost !== undefined
         ? updates.shippingLabelCost
         : existing.shippingLabelCost,
+    shippingLabelGid:
+      updates.shippingLabelGid !== undefined
+        ? updates.shippingLabelGid
+        : existing.shippingLabelGid,
     productCost:
       updates.productCost !== undefined
         ? updates.productCost
@@ -535,6 +544,7 @@ export async function updateOrderCostsInSupabase(
       ebay_fee_rate: updated.ebayFeeRate,
       ebay_ads_fee_rate: updated.ebayAdsFeeRate,
       shipping_label_cost: updated.shippingLabelCost,
+      shipping_label_gid: updated.shippingLabelGid,
       product_cost: updated.productCost,
       product_cost_manual: updated.productCostManual,
       cost: updated.cost,

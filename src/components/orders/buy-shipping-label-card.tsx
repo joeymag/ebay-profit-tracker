@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, Loader2, Package } from "lucide-react";
+import { ExternalLink, Loader2, Package, Printer } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -28,12 +28,21 @@ type FulfillmentOrderOption = {
   buyerServiceCode: string | null;
 };
 
+type PurchasedLabelInfo = {
+  id: string;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  documentUrl: string | null;
+};
+
 type OptionsResponse =
   | {
       ok: true;
       fulfillmentOrders: FulfillmentOrderOption[];
       shopifyAdminUrl: string | null;
       fulfillmentStatus: string | null;
+      purchasedLabel: PurchasedLabelInfo | null;
+      shippingLabelGid: string | null;
     }
   | { ok: false; error: string; hint?: string };
 
@@ -44,6 +53,7 @@ type PurchaseResponse =
       done: boolean;
       postageCost: number | null;
       labels: Array<{
+        id?: string;
         trackingNumber: string | null;
         trackingUrl: string | null;
         documentUrl: string | null;
@@ -73,11 +83,13 @@ const DEFAULT_PACKAGE: PackageDefaults = {
 type BuyShippingLabelCardProps = {
   shopifyId: number;
   alreadyHasPostage: boolean;
+  shippingLabelGid?: string | null;
 };
 
 export function BuyShippingLabelCard({
   shopifyId,
   alreadyHasPostage,
+  shippingLabelGid = null,
 }: BuyShippingLabelCardProps) {
   const router = useRouter();
   const [loadingOptions, setLoadingOptions] = useState(true);
@@ -94,7 +106,14 @@ export function BuyShippingLabelCard({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
+  const [purchasedLabelId, setPurchasedLabelId] = useState<string | null>(
+    shippingLabelGid,
+  );
   const [buildingPackSheet, setBuildingPackSheet] = useState(false);
+
+  useEffect(() => {
+    setPurchasedLabelId(shippingLabelGid);
+  }, [shippingLabelGid]);
 
   useEffect(() => {
     try {
@@ -129,6 +148,16 @@ export function BuyShippingLabelCard({
       setFulfillmentOrders(payload.fulfillmentOrders);
       setShopifyAdminUrl(payload.shopifyAdminUrl);
       setSelectedFoId(payload.fulfillmentOrders[0]?.id ?? "");
+
+      const purchased = payload.purchasedLabel;
+      if (purchased?.id) {
+        setPurchasedLabelId(purchased.id);
+        if (purchased.documentUrl) {
+          setLabelUrl(purchased.documentUrl);
+        }
+      } else if (payload.shippingLabelGid) {
+        setPurchasedLabelId(payload.shippingLabelGid);
+      }
     } catch {
       setOptionsError("Could not load shipping label options from Shopify.");
     } finally {
@@ -152,14 +181,21 @@ export function BuyShippingLabelCard({
     });
   }
 
-  async function openPackSheet(documentUrl: string) {
+  async function openPackSheet(options?: {
+    documentUrl?: string | null;
+    shippingLabelId?: string | null;
+  }) {
     setBuildingPackSheet(true);
     setError(null);
     try {
       const response = await fetch(`/api/orders/${shopifyId}/pack-sheet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ labelDocumentUrl: documentUrl }),
+        body: JSON.stringify({
+          labelDocumentUrl: options?.documentUrl || undefined,
+          shippingLabelId:
+            options?.shippingLabelId || purchasedLabelId || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -172,7 +208,6 @@ export function BuyShippingLabelCard({
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       window.open(objectUrl, "_blank", "noopener,noreferrer");
-      // Keep blob alive briefly so the new tab can load it.
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (err) {
       setError(
@@ -218,7 +253,11 @@ export function BuyShippingLabelCard({
 
       const firstLabel = payload.labels[0];
       const documentUrl = firstLabel?.documentUrl ?? null;
+      const labelId = firstLabel?.id ?? null;
       setLabelUrl(documentUrl);
+      if (labelId) {
+        setPurchasedLabelId(labelId);
+      }
       setMessage(
         [
           payload.message,
@@ -228,7 +267,7 @@ export function BuyShippingLabelCard({
           firstLabel?.trackingNumber
             ? `Tracking: ${firstLabel.trackingNumber}.`
             : null,
-          documentUrl
+          documentUrl || labelId
             ? "Opening A4 pack sheet (label + pick list)…"
             : null,
         ]
@@ -237,8 +276,11 @@ export function BuyShippingLabelCard({
       );
       router.refresh();
       await loadOptions();
-      if (documentUrl) {
-        await openPackSheet(documentUrl);
+      if (documentUrl || labelId) {
+        await openPackSheet({
+          documentUrl,
+          shippingLabelId: labelId,
+        });
       }
     } catch {
       setError("Could not reach the shipping label purchase endpoint.");
@@ -251,7 +293,14 @@ export function BuyShippingLabelCard({
     Boolean(selectedFoId) &&
     fulfillmentOrders.length > 0 &&
     !purchasing &&
-    !loadingOptions;
+    !loadingOptions &&
+    !buildingPackSheet;
+
+  const canReprint =
+    Boolean(purchasedLabelId || labelUrl) &&
+    !purchasing &&
+    !loadingOptions &&
+    !buildingPackSheet;
 
   const selectedFo =
     fulfillmentOrders.find((fo) => fo.id === selectedFoId) ?? null;
@@ -272,6 +321,9 @@ export function BuyShippingLabelCard({
               {alreadyHasPostage
                 ? " This order already has a postage cost saved."
                 : null}
+              {purchasedLabelId
+                ? " A purchased label is on file for reprint."
+                : null}
             </CardDescription>
           </div>
           {shopifyAdminUrl ? (
@@ -288,6 +340,44 @@ export function BuyShippingLabelCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {canReprint ? (
+          <div className="flex flex-wrap gap-2 rounded-lg border border-border bg-muted/30 px-3 py-3">
+            <Button
+              type="button"
+              onClick={() =>
+                void openPackSheet({
+                  documentUrl: labelUrl,
+                  shippingLabelId: purchasedLabelId,
+                })
+              }
+              disabled={!canReprint}
+            >
+              {buildingPackSheet ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Building A4 sheet…
+                </>
+              ) : (
+                <>
+                  <Printer className="size-4" />
+                  Reprint A4 pack sheet
+                </>
+              )}
+            </Button>
+            {labelUrl ? (
+              <a
+                href={labelUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(buttonVariants({ variant: "outline" }))}
+              >
+                Open label PDF only
+                <ExternalLink className="size-3.5" />
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+
         {loadingOptions ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
@@ -302,8 +392,9 @@ export function BuyShippingLabelCard({
           </div>
         ) : fulfillmentOrders.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No open fulfillment orders left to ship. If the order is already
-            fulfilled, buy/reprint labels in Shopify Admin.
+            {purchasedLabelId
+              ? "No open fulfillment left to buy another label. Use Reprint A4 pack sheet above."
+              : "No open fulfillment orders left to ship. If the order is already fulfilled, buy/reprint labels in Shopify Admin."}
           </p>
         ) : (
           <>
@@ -420,7 +511,7 @@ export function BuyShippingLabelCard({
                 type="button"
                 variant="outline"
                 onClick={() => void loadOptions()}
-                disabled={purchasing}
+                disabled={purchasing || buildingPackSheet}
               >
                 Refresh
               </Button>
@@ -432,35 +523,40 @@ export function BuyShippingLabelCard({
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
             <p>{message}</p>
             <div className="mt-3 flex flex-wrap gap-2">
+              {canReprint ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() =>
+                    void openPackSheet({
+                      documentUrl: labelUrl,
+                      shippingLabelId: purchasedLabelId,
+                    })
+                  }
+                  disabled={buildingPackSheet}
+                >
+                  {buildingPackSheet ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Building A4 sheet…
+                    </>
+                  ) : (
+                    "Print A4 pack sheet"
+                  )}
+                </Button>
+              ) : null}
               {labelUrl ? (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => void openPackSheet(labelUrl)}
-                    disabled={buildingPackSheet}
-                  >
-                    {buildingPackSheet ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" />
-                        Building A4 sheet…
-                      </>
-                    ) : (
-                      "Print A4 pack sheet"
-                    )}
-                  </Button>
-                  <a
-                    href={labelUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={cn(
-                      buttonVariants({ variant: "outline", size: "sm" }),
-                    )}
-                  >
-                    Open label PDF only
-                    <ExternalLink className="size-3.5" />
-                  </a>
-                </>
+                <a
+                  href={labelUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "sm" }),
+                  )}
+                >
+                  Open label PDF only
+                  <ExternalLink className="size-3.5" />
+                </a>
               ) : null}
             </div>
           </div>

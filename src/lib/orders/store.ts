@@ -41,6 +41,9 @@ function normalizeLegacyOrder(order: StoredOrder & { shipping?: number }): Store
   if (order.shippingLabelCost === undefined) {
     order.shippingLabelCost = null;
   }
+  if (order.shippingLabelGid === undefined) {
+    order.shippingLabelGid = null;
+  }
   if (order.productCost === undefined) {
     order.productCost = null;
   }
@@ -198,6 +201,8 @@ async function saveOrdersToJson(
             previous?.ebayFeesSyncedAt ?? order.ebayFeesSyncedAt ?? null,
           shippingLabelCost:
             order.shippingLabelCost ?? previous?.shippingLabelCost ?? null,
+          shippingLabelGid:
+            order.shippingLabelGid ?? previous?.shippingLabelGid ?? null,
         },
         skuDefaults,
       ),
@@ -293,6 +298,7 @@ export async function updateOrderCosts(
     ebayFeeRatePercent?: number | null;
     ebayAdsFeeRatePercent?: number | null;
     shippingLabelCost?: number | null;
+    shippingLabelGid?: string | null;
     productCost?: number | null;
   },
 ): Promise<StoredOrder | null> {
@@ -320,6 +326,7 @@ export async function updateOrderCosts(
       ebayFeeRate,
       ebayAdsFeeRate,
       shippingLabelCost: updates.shippingLabelCost,
+      shippingLabelGid: updates.shippingLabelGid,
       productCost: updates.productCost,
       productCostManual,
     });
@@ -341,6 +348,10 @@ export async function updateOrderCosts(
       updates.shippingLabelCost !== undefined
         ? updates.shippingLabelCost
         : existing.shippingLabelCost,
+    shippingLabelGid:
+      updates.shippingLabelGid !== undefined
+        ? updates.shippingLabelGid
+        : existing.shippingLabelGid,
     productCost:
       updates.productCost !== undefined
         ? updates.productCost

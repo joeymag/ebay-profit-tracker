@@ -93,7 +93,10 @@ export async function POST(request: Request, context: RouteContext) {
 
     let postageCost: number | null = null;
     if (status.status === "PURCHASED") {
-      postageCost = await syncPostageCostAfterLabelPurchase(shopifyId);
+      postageCost = await syncPostageCostAfterLabelPurchase(
+        shopifyId,
+        status.labels[0]?.id ?? null,
+      );
     }
 
     if (status.status === "PURCHASE_FAILED") {

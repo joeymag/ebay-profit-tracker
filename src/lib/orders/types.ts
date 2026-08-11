@@ -62,6 +62,11 @@ export type StoredOrder = {
   shippingCharged: number;
   /** Postage paid via Shopify shipping label purchase. */
   shippingLabelCost: number | null;
+  /**
+   * Shopify ShippingLabel GID from in-app label purchase.
+   * Used to reprint the label PDF via Admin API.
+   */
+  shippingLabelGid: string | null;
   /** eBay final value fee rate (decimal, e.g. 0.128 = 12.8%). */
   ebayFeeRate: number | null;
   /** eBay promoted listings / ads fee rate (decimal). */

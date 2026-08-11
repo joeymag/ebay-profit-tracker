@@ -442,6 +442,7 @@ export function OrderDetailView({
         alreadyHasPostage={
           order.shippingLabelCost != null && order.shippingLabelCost > 0
         }
+        shippingLabelGid={order.shippingLabelGid}
       />
 
       {customerHistory ? (

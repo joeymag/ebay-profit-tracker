@@ -86,6 +86,7 @@ function buildStoredOrderFromRow(
       row.shipping_label_cost != null
         ? Number(row.shipping_label_cost)
         : null,
+    shippingLabelGid: null,
     ebayFeeRate: row.ebay_fee_rate != null ? Number(row.ebay_fee_rate) : null,
     ebayAdsFeeRate:
       row.ebay_ads_fee_rate != null ? Number(row.ebay_ads_fee_rate) : null,

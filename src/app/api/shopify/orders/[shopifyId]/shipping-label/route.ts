@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { getStoredOrderByShopifyId } from "@/lib/orders/store";
 import { getShopifyConfig, getShopifyOrderAdminUrl } from "@/lib/shopify/config";
 import {
   getLabelFulfillmentOrders,
+  getShopifyShippingLabelById,
   SHOPIFY_SHIPPING_LABEL_API_VERSION,
+  type PurchasedShippingLabel,
 } from "@/lib/shopify/shipping-label-purchase";
 
 type RouteContext = {
@@ -29,7 +32,26 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   try {
-    const result = await getLabelFulfillmentOrders(shopifyId);
+    const [result, storedOrder] = await Promise.all([
+      getLabelFulfillmentOrders(shopifyId),
+      getStoredOrderByShopifyId(shopifyId),
+    ]);
+
+    let purchasedLabel: PurchasedShippingLabel | null = null;
+    const storedGid = storedOrder?.shippingLabelGid?.trim();
+    if (storedGid) {
+      try {
+        purchasedLabel = await getShopifyShippingLabelById(storedGid);
+      } catch {
+        purchasedLabel = {
+          id: storedGid,
+          trackingNumber: storedOrder?.trackingNumbers?.[0] ?? null,
+          trackingUrl: storedOrder?.trackingUrl ?? null,
+          documentUrl: null,
+        };
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       shopifyId,
@@ -37,6 +59,8 @@ export async function GET(_request: Request, context: RouteContext) {
       orderName: result.orderName,
       fulfillmentStatus: result.fulfillmentStatus,
       fulfillmentOrders: result.fulfillmentOrders,
+      purchasedLabel,
+      shippingLabelGid: storedGid ?? null,
       shopifyAdminUrl: getShopifyOrderAdminUrl(shopifyId),
       requiredScopes: [
         "write_orders",

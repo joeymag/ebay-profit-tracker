@@ -6,6 +6,7 @@ import {
   isAllowedShopifyLabelDocumentUrl,
 } from "@/lib/orders/pack-sheet-pdf";
 import { getStoredOrderByShopifyId } from "@/lib/orders/store";
+import { getShopifyShippingLabelById } from "@/lib/shopify/shipping-label-purchase";
 
 type RouteContext = {
   params: Promise<{ shopifyId: string }>;
@@ -21,25 +22,11 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { labelDocumentUrl?: string };
+  let body: { labelDocumentUrl?: string; shippingLabelId?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
-  }
-
-  const labelDocumentUrl = body.labelDocumentUrl?.trim();
-  if (!labelDocumentUrl) {
-    return NextResponse.json(
-      { ok: false, error: "labelDocumentUrl is required." },
-      { status: 400 },
-    );
-  }
-  if (!isAllowedShopifyLabelDocumentUrl(labelDocumentUrl)) {
-    return NextResponse.json(
-      { ok: false, error: "labelDocumentUrl must be a Shopify CDN URL." },
-      { status: 400 },
-    );
   }
 
   const order = await getStoredOrderByShopifyId(shopifyId);
@@ -51,6 +38,42 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
+    let labelDocumentUrl = body.labelDocumentUrl?.trim() || "";
+    const shippingLabelId =
+      body.shippingLabelId?.trim() || order.shippingLabelGid?.trim() || "";
+
+    if (!labelDocumentUrl && shippingLabelId) {
+      const label = await getShopifyShippingLabelById(shippingLabelId);
+      labelDocumentUrl = label.documentUrl?.trim() || "";
+      if (!labelDocumentUrl) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Shopify returned the shipping label but no printable PDF URL. Try Open in Shopify to reprint.",
+          },
+          { status: 502 },
+        );
+      }
+    }
+
+    if (!labelDocumentUrl) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "No shipping label on file for this order. Buy a label in this app first to enable reprint.",
+        },
+        { status: 400 },
+      );
+    }
+    if (!isAllowedShopifyLabelDocumentUrl(labelDocumentUrl)) {
+      return NextResponse.json(
+        { ok: false, error: "labelDocumentUrl must be a Shopify CDN URL." },
+        { status: 400 },
+      );
+    }
+
     const labelBytes = await fetchShopifyLabelPdfBytes(labelDocumentUrl);
     const pdfBytes = await buildA4LabelPickSheetPdf(order, labelBytes);
     const filename = `pack-sheet-${order.orderNumber.replace(/[^\w.-]+/g, "_")}.pdf`;

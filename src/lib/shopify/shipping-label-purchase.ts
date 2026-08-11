@@ -330,20 +330,71 @@ export async function getShopifyShippingLabelPurchaseStatus(
   };
 }
 
+/** Re-fetch a previously purchased label's printable PDF URL. */
+export async function getShopifyShippingLabelById(
+  shippingLabelId: string,
+): Promise<PurchasedShippingLabel> {
+  const data = await graphqlShippingLabels<{
+    shippingLabel: {
+      id: string;
+      trackingInfo: { number: string | null; url: string | null } | null;
+      shippingDocuments: Array<{ documentType: string; url: string | null }>;
+    } | null;
+  }>(
+    `#graphql
+    query ShippingLabelById($id: ID!) {
+      shippingLabel(id: $id) {
+        id
+        trackingInfo {
+          number
+          url
+        }
+        shippingDocuments {
+          documentType
+          url
+        }
+      }
+    }`,
+    { id: shippingLabelId },
+  );
+
+  if (!data.shippingLabel) {
+    throw new Error("Shipping label was not found in Shopify.");
+  }
+
+  return {
+    id: data.shippingLabel.id,
+    trackingNumber: data.shippingLabel.trackingInfo?.number ?? null,
+    trackingUrl: data.shippingLabel.trackingInfo?.url ?? null,
+    documentUrl:
+      data.shippingLabel.shippingDocuments.find((doc) => doc.url)?.url ?? null,
+  };
+}
+
 /** After a successful purchase, pull the label cost into our order record. */
 export async function syncPostageCostAfterLabelPurchase(
   shopifyOrderId: number,
+  shippingLabelGid?: string | null,
 ): Promise<number | null> {
   // Order events can lag a few seconds behind PURCHASED status.
+  let cost: number | null = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (attempt > 0) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
-    const cost = await fetchOrderShippingLabelCost(shopifyOrderId);
-    if (cost > 0) {
-      await updateOrderCosts(shopifyOrderId, { shippingLabelCost: cost });
-      return cost;
+    const found = await fetchOrderShippingLabelCost(shopifyOrderId);
+    if (found > 0) {
+      cost = found;
+      break;
     }
   }
-  return null;
+
+  if (cost != null || shippingLabelGid) {
+    await updateOrderCosts(shopifyOrderId, {
+      ...(cost != null ? { shippingLabelCost: cost } : {}),
+      ...(shippingLabelGid ? { shippingLabelGid } : {}),
+    });
+  }
+
+  return cost;
 }
