@@ -116,8 +116,14 @@ export default async function SettingsPage() {
               <code className="text-xs">read_all_orders</code>). For stock
               control also add{" "}
               <code className="text-xs">read_inventory</code> and{" "}
-              <code className="text-xs">write_inventory</code>, then release
-              the app version and reinstall on your store.{" "}
+              <code className="text-xs">write_inventory</code>. To buy shipping
+              labels from order pages add{" "}
+              <code className="text-xs">write_orders</code> and{" "}
+              <code className="text-xs">
+                write_merchant_managed_fulfillment_orders
+              </code>
+              , enable Shopify Shipping, then release the app version and
+              reinstall on your store.{" "}
               <code className="text-xs">customer_read_orders</code> is a
               different API and will not work for order sync.
             </p>

@@ -10,8 +10,10 @@ type GraphqlResponse<T> = {
 export async function shopifyAdminGraphql<T>(
   query: string,
   variables?: Record<string, unknown>,
+  options?: { apiVersion?: string },
 ): Promise<T> {
   const { storeDomain, apiVersion, isConfigured } = getShopifyConfig();
+  const version = options?.apiVersion ?? apiVersion;
 
   if (!isConfigured || !storeDomain) {
     throw new Error("Shopify is not configured.");
@@ -20,7 +22,7 @@ export async function shopifyAdminGraphql<T>(
   const host = storeDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
   const accessToken = await getShopifyAccessToken();
   const response = await fetch(
-    `https://${host}/admin/api/${apiVersion}/graphql.json`,
+    `https://${host}/admin/api/${version}/graphql.json`,
     {
       method: "POST",
       headers: {

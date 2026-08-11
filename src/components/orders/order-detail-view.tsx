@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
 import { AmazonOrderCostsForm } from "@/components/orders/amazon-order-costs-form";
+import { BuyShippingLabelCard } from "@/components/orders/buy-shipping-label-card";
 import { CustomerHistoryCard } from "@/components/orders/customer-history-card";
 import { DeleteOrderButton } from "@/components/orders/delete-order-button";
 import { DesiredProfitCalculator } from "@/components/orders/desired-profit-calculator";
@@ -435,6 +436,13 @@ export function OrderDetailView({
           initialProductCost={order.productCost}
         />
       ) : null}
+
+      <BuyShippingLabelCard
+        shopifyId={order.shopifyId}
+        alreadyHasPostage={
+          order.shippingLabelCost != null && order.shippingLabelCost > 0
+        }
+      />
 
       {customerHistory ? (
         <CustomerHistoryCard

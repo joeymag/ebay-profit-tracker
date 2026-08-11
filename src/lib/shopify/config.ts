@@ -43,6 +43,14 @@ export function getShopifyStoreHost() {
   return storeDomain ? normalizeShopifyDomain(storeDomain) : null;
 }
 
+export function getShopifyOrderAdminUrl(shopifyOrderId: number) {
+  const host = getShopifyStoreHost();
+  if (!host || !Number.isFinite(shopifyOrderId)) {
+    return null;
+  }
+  return `https://${host}/admin/orders/${shopifyOrderId}`;
+}
+
 export function getShopifyProductAdminUrl(productId: number) {
   const host = getShopifyStoreHost();
   if (!host) {
