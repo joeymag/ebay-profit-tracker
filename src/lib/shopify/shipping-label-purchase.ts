@@ -5,8 +5,8 @@ import {
 import { fetchOrderShippingLabelCost } from "@/lib/shopify/shipping-labels";
 import { updateOrderCosts } from "@/lib/orders/store";
 
-/** Label purchase mutation is only on recent Admin API versions. */
-export const SHOPIFY_SHIPPING_LABEL_API_VERSION = "2026-01";
+/** shippingLabelPurchase landed in Admin API 2026-07. */
+export const SHOPIFY_SHIPPING_LABEL_API_VERSION = "2026-07";
 
 export type LabelFulfillmentOrder = {
   id: string;

@@ -133,7 +133,7 @@ export async function POST(request: Request, context: RouteContext) {
         ok: false,
         error: message,
         hint: needsScope
-          ? "Requires Shopify API 2026-01+, scopes write_orders + write_merchant_managed_fulfillment_orders, Shopify Shipping enabled, and buy_shipping_labels permission."
+          ? "Requires Shopify API 2026-07+, scopes write_orders + write_merchant_managed_fulfillment_orders, Shopify Shipping enabled, and buy_shipping_labels permission."
           : undefined,
       },
       { status: 502 },
