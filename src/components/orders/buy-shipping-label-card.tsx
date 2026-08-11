@@ -94,6 +94,7 @@ export function BuyShippingLabelCard({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
+  const [buildingPackSheet, setBuildingPackSheet] = useState(false);
 
   useEffect(() => {
     try {
@@ -151,6 +152,37 @@ export function BuyShippingLabelCard({
     });
   }
 
+  async function openPackSheet(documentUrl: string) {
+    setBuildingPackSheet(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/orders/${shopifyId}/pack-sheet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labelDocumentUrl: documentUrl }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error || "Could not build A4 pack sheet.");
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+      // Keep blob alive briefly so the new tab can load it.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not build A4 pack sheet.",
+      );
+    } finally {
+      setBuildingPackSheet(false);
+    }
+  }
+
   async function buyLabel() {
     setPurchasing(true);
     setError(null);
@@ -185,7 +217,8 @@ export function BuyShippingLabelCard({
       }
 
       const firstLabel = payload.labels[0];
-      setLabelUrl(firstLabel?.documentUrl ?? null);
+      const documentUrl = firstLabel?.documentUrl ?? null;
+      setLabelUrl(documentUrl);
       setMessage(
         [
           payload.message,
@@ -195,12 +228,18 @@ export function BuyShippingLabelCard({
           firstLabel?.trackingNumber
             ? `Tracking: ${firstLabel.trackingNumber}.`
             : null,
+          documentUrl
+            ? "Opening A4 pack sheet (label + pick list)…"
+            : null,
         ]
           .filter(Boolean)
           .join(" "),
       );
       router.refresh();
       await loadOptions();
+      if (documentUrl) {
+        await openPackSheet(documentUrl);
+      }
     } catch {
       setError("Could not reach the shipping label purchase endpoint.");
     } finally {
@@ -227,10 +266,9 @@ export function BuyShippingLabelCard({
               Buy shipping label
             </CardTitle>
             <CardDescription>
-              Shopify&apos;s API cannot list live label prices or services
-              here. Buying below purchases Shopify&apos;s default/cheapest
-              rate. To compare carriers and costs, open the order in Shopify
-              Admin.
+              Buy Shopify&apos;s default/cheapest rate, then print an A4 sheet
+              with the shipping label and pick list together. Package defaults
+              are remembered in this browser.
               {alreadyHasPostage
                 ? " This order already has a postage cost saved."
                 : null}
@@ -393,17 +431,38 @@ export function BuyShippingLabelCard({
         {message ? (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
             <p>{message}</p>
-            {labelUrl ? (
-              <a
-                href={labelUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1 font-medium underline underline-offset-2"
-              >
-                Open label PDF
-                <ExternalLink className="size-3.5" />
-              </a>
-            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {labelUrl ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void openPackSheet(labelUrl)}
+                    disabled={buildingPackSheet}
+                  >
+                    {buildingPackSheet ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        Building A4 sheet…
+                      </>
+                    ) : (
+                      "Print A4 pack sheet"
+                    )}
+                  </Button>
+                  <a
+                    href={labelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      buttonVariants({ variant: "outline", size: "sm" }),
+                    )}
+                  >
+                    Open label PDF only
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                </>
+              ) : null}
+            </div>
           </div>
         ) : null}
         {error ? (
