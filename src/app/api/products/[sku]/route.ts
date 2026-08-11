@@ -73,15 +73,25 @@ export async function PATCH(request: Request, context: RouteContext) {
       defaultPostage: body.defaultPostage,
     });
 
-    const ordersUpdated =
-      body.unitCost !== undefined
-        ? await recalculateAllOrderProductCosts()
-        : 0;
+    // Recalc can be slow/fail on large order tables — never block the cost save.
+    let ordersUpdated = 0;
+    let ordersRecalcWarning: string | null = null;
+    if (body.unitCost !== undefined) {
+      try {
+        ordersUpdated = await recalculateAllOrderProductCosts();
+      } catch (recalcError) {
+        ordersRecalcWarning =
+          recalcError instanceof Error
+            ? recalcError.message
+            : "Order profit recalculation failed.";
+      }
+    }
 
     return NextResponse.json({
       ok: true,
       costs,
       ordersUpdated,
+      ordersRecalcWarning,
     });
   } catch (error) {
     const message =

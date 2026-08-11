@@ -473,6 +473,8 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             rowIndex === index
               ? {
                   ...row,
+                  // Keep local SKU in sync so cost lookup still works after save.
+                  sku: sku || row.sku,
                   unitCost: costChanged
                     ? (payload.costs?.unitCost ?? null)
                     : row.unitCost,
@@ -501,19 +503,97 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     setSaveMessage(null);
 
     let savedCount = 0;
+    const skipped: string[] = [];
+    const ebaySkuIndexes: number[] = [];
 
     try {
       for (const index of dirtyCostIndexes) {
+        const draft = drafts[index];
+        const variation = listing.variations[index];
+        const sku = draft?.sku.trim() || variation?.sku?.trim() || "";
+        if (!sku) {
+          skipped.push(`row ${index + 1} (no SKU)`);
+          continue;
+        }
+
         const result = await saveRowCosts(index);
         if (!result.ok) {
-          setSaveError(result.error);
-          return;
+          skipped.push(`row ${index + 1}: ${result.error}`);
+          continue;
         }
         savedCount += 1;
+
+        // If the SKU was typed in here, push it to eBay so it sticks on refresh.
+        const originalSku = (variation?.sku ?? "").trim();
+        if (draft && draft.sku.trim() !== originalSku) {
+          ebaySkuIndexes.push(index);
+        }
+      }
+
+      let ebayNote = "";
+      if (ebaySkuIndexes.length > 0) {
+        const updates: EbayVariationEdit[] = [];
+        for (const index of ebaySkuIndexes) {
+          const draft = drafts[index]!;
+          const variation = listing.variations[index]!;
+          const priceRaw = draft.price.trim();
+          const price =
+            priceRaw === "" ? variation.price : Number.parseFloat(priceRaw);
+          if (price == null || !Number.isFinite(price) || price < 0) {
+            skipped.push(`row ${index + 1}: need a valid price to push SKU`);
+            continue;
+          }
+          updates.push({
+            originalSku: variation.sku,
+            sku: draft.sku.trim() || null,
+            price,
+            specificsPairs: variation.specificsPairs,
+          });
+        }
+
+        if (updates.length > 0) {
+          try {
+            const response = await fetch(
+              `/api/ebay/listings/${encodeURIComponent(listingId)}/revise`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  isMultiVariation: listing.isMultiVariation,
+                  format: listing.format,
+                  currency: listing.currency ?? "GBP",
+                  variations: updates,
+                }),
+              },
+            );
+            const payload = (await response.json()) as ReviseResponse;
+            if (payload.ok) {
+              ebayNote = ` Also pushed ${payload.updatedCount} SKU${payload.updatedCount === 1 ? "" : "s"} to eBay.`;
+              await load();
+            } else {
+              skipped.push(
+                `eBay SKU push: ${[payload.error, payload.details].filter(Boolean).join(" — ")}`,
+              );
+            }
+          } catch {
+            skipped.push("eBay SKU push failed.");
+          }
+        }
+      }
+
+      if (savedCount === 0) {
+        setSaveError(
+          skipped.length
+            ? `Nothing saved. ${skipped.join(" · ")}`
+            : "Nothing to save.",
+        );
+        return;
       }
 
       setSaveMessage(
-        `Saved cost/postage for ${savedCount} variation${savedCount === 1 ? "" : "s"}.`,
+        `Saved cost/postage for ${savedCount} variation${savedCount === 1 ? "" : "s"}.${ebayNote}${
+          skipped.length ? ` Skipped: ${skipped.join(" · ")}` : ""
+        }`,
       );
     } finally {
       setSavingCosts(false);
@@ -796,12 +876,12 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                 {listing.isMultiVariation ? "Variations" : "Listing stock"}
               </CardTitle>
               <CardDescription>
-                Enter product cost (ex-VAT) and postage for a rough profit
-                before sale. Select rows to bulk-set postage, then click{" "}
+                Enter a SKU plus cost/postage on each row, then{" "}
                 <span className="font-medium text-foreground">
                   Save cost / postage
                 </span>
-                .
+                . That also pushes new SKUs to eBay. Rows without a SKU are
+                skipped.
               </CardDescription>
             </div>
             <div className="w-full max-w-[11rem] space-y-1.5">
