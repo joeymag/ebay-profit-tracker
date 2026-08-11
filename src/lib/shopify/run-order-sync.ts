@@ -8,10 +8,7 @@ import {
   fetchShopifyOrdersUpdatedSince,
 } from "@/lib/shopify/orders";
 import { enrichOrdersWithLineItemImages } from "@/lib/shopify/line-item-images";
-import { fetchFulfillmentsForOrders } from "@/lib/shopify/fulfillments";
-import { enrichStoredOrderWithFulfillments } from "@/lib/shopify/shipping";
-import { fetchShippingLabelCostsForOrders } from "@/lib/shopify/shipping-labels";
-import { withComputedFinancials } from "@/lib/orders/financials";
+import { enrichOrdersWithPostageAndTracking } from "@/lib/shopify/postage-enrichment";
 import { getLastOrderSyncCompletedAt } from "@/lib/shopify/sync-state";
 import type { StoredOrder } from "@/lib/orders/types";
 
@@ -63,55 +60,10 @@ async function enrichOrdersForFullSync(orders: StoredOrder[]): Promise<{
     concurrency: 5,
   });
 
-  const fulfilledIds = ordersWithImages
-    .filter(
-      (o) =>
-        o.fulfillmentStatus === "fulfilled" ||
-        o.fulfillmentStatus === "partial",
-    )
-    .map((o) => o.shopifyId);
-
-  const fulfillmentsMap = await fetchFulfillmentsForOrders(fulfilledIds, {
+  return enrichOrdersWithPostageAndTracking(ordersWithImages, {
+    onlyMissingPostage: false,
     concurrency: 8,
   });
-
-  const labelLookupIds = [
-    ...new Set([...fulfilledIds, ...fulfillmentsMap.keys()]),
-  ];
-
-  const labelCosts = await fetchShippingLabelCostsForOrders(labelLookupIds, {
-    concurrency: 3,
-  });
-
-  const ordersEnriched = ordersWithImages.map((order) => {
-    const fulfillmentData = fulfillmentsMap.get(order.shopifyId);
-    const fulfillments = fulfillmentData?.fulfillments;
-    let next = order;
-    if (fulfillments?.length) {
-      next = enrichStoredOrderWithFulfillments(
-        order,
-        fulfillments,
-        fulfillmentData?.deliveredAt ?? null,
-      );
-    }
-    const labelCost = labelCosts.get(order.shopifyId);
-    if (labelCost != null) {
-      next = withComputedFinancials({
-        ...next,
-        shippingLabelCost: labelCost,
-      });
-    }
-    return next;
-  });
-
-  const withPostage = ordersEnriched.filter(
-    (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
-  ).length;
-  const withTracking = ordersEnriched.filter(
-    (o) => o.trackingNumbers.length > 0,
-  ).length;
-
-  return { orders: ordersEnriched, withPostage, withTracking };
 }
 
 export async function runOrderSync(
@@ -137,6 +89,17 @@ export async function runOrderSync(
 
   if (mode === "full") {
     const enriched = await enrichOrdersForFullSync(orders);
+    ordersEnriched = enriched.orders;
+    withPostage = enriched.withPostage;
+    withTracking = enriched.withTracking;
+  } else {
+    // Quick + auto-sync: pull Shopify Shipping label costs automatically.
+    // Incremental always re-checks fulfilled orders (label may have just been bought).
+    // Full-catalog quick sync only looks up orders still missing postage.
+    const enriched = await enrichOrdersWithPostageAndTracking(orders, {
+      onlyMissingPostage: !incremental,
+      concurrency: 8,
+    });
     ordersEnriched = enriched.orders;
     withPostage = enriched.withPostage;
     withTracking = enriched.withTracking;
@@ -183,9 +146,9 @@ export async function runOrderSync(
     updatedSince,
     hint:
       mode === "quick" && !incremental
-        ? "Quick sync updates order fields (e.g. eBay order IDs). Run full sync locally for postage labels and images."
+        ? "Quick sync also pulls Shopify postage label costs for orders still missing postage."
         : incremental
-          ? "Auto-sync imported orders changed in Shopify since the last run (includes new eBay orders)."
+          ? "Auto-sync imports changed Shopify orders and applies postage when a shipping label was purchased."
           : undefined,
   };
 }

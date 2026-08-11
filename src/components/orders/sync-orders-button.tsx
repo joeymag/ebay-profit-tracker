@@ -52,7 +52,11 @@ export function SyncOrdersButton({
 
       setMessage(
         mode === "quick"
-          ? `Updated ${data.imported} orders (quick sync · eBay IDs & order fields).`
+          ? `Updated ${data.imported} orders (quick sync · eBay IDs, order fields${
+              data.postageLabelsFound
+                ? ` · ${data.postageLabelsFound} with postage`
+                : ""
+            }).`
           : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.`,
       );
       if (data.hint) {
@@ -115,8 +119,9 @@ export function SyncOrdersButton({
       </div>
       <p className="text-sm text-muted-foreground">
         Manual sync still available below. With auto-import enabled on Vercel,
-        new eBay orders (via Shopify) appear every ~15 minutes. Quick sync
-        updates all orders; full sync adds postage labels and images.
+        new eBay orders (via Shopify) appear every ~15 minutes. When you buy
+        postage in Shopify, auto/quick sync applies that label cost to the
+        order. Full sync also refreshes images.
       </p>
       {message ? (
         <Badge variant="secondary" className="font-normal">

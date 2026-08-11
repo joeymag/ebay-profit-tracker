@@ -24,8 +24,9 @@ export function AutoSyncStatusCard({ status }: AutoSyncStatusCardProps) {
         </div>
         <CardDescription>
           New eBay orders appear in Shopify first. When auto-sync is enabled, the
-          app pulls new and updated Shopify orders every 15 minutes — no manual
-          sync needed. eBay fees sync automatically when new orders are found.
+          app pulls new and updated Shopify orders every 15 minutes — including
+          postage when you buy a shipping label in Shopify. eBay fees sync
+          automatically when new orders are found.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm text-muted-foreground">
