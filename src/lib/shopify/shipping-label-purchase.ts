@@ -2,7 +2,9 @@ import {
   parseShopifyGid,
   shopifyAdminGraphql,
 } from "@/lib/shopify/graphql";
-import { fetchOrderShippingLabelCost } from "@/lib/shopify/shipping-labels";
+import {
+  fetchOrderShippingLabelCosts,
+} from "@/lib/shopify/shipping-labels";
 import { updateOrderCosts } from "@/lib/orders/store";
 
 /** shippingLabelPurchase landed in Admin API 2026-07. */
@@ -375,26 +377,29 @@ export async function getShopifyShippingLabelById(
 export async function syncPostageCostAfterLabelPurchase(
   shopifyOrderId: number,
   shippingLabelGid?: string | null,
-): Promise<number | null> {
+): Promise<{ total: number | null; latest: number | null }> {
   // Order events can lag a few seconds behind PURCHASED status.
-  let cost: number | null = null;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  let total: number | null = null;
+  let latest: number | null = null;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     if (attempt > 0) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
-    const found = await fetchOrderShippingLabelCost(shopifyOrderId);
-    if (found > 0) {
-      cost = found;
+    const found = await fetchOrderShippingLabelCosts(shopifyOrderId);
+    if (found.total > 0) {
+      total = found.total;
+      latest = found.latest;
       break;
     }
   }
 
-  if (cost != null || shippingLabelGid) {
+  if (total != null || shippingLabelGid) {
     await updateOrderCosts(shopifyOrderId, {
-      ...(cost != null ? { shippingLabelCost: cost } : {}),
+      ...(total != null ? { shippingLabelCost: total } : {}),
       ...(shippingLabelGid ? { shippingLabelGid } : {}),
     });
   }
 
-  return cost;
+  return { total, latest };
 }

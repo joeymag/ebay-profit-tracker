@@ -92,11 +92,14 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     let postageCost: number | null = null;
+    let latestLabelCost: number | null = null;
     if (status.status === "PURCHASED") {
-      postageCost = await syncPostageCostAfterLabelPurchase(
+      const synced = await syncPostageCostAfterLabelPurchase(
         shopifyId,
         status.labels[0]?.id ?? null,
       );
+      postageCost = synced.total;
+      latestLabelCost = synced.latest;
     }
 
     if (status.status === "PURCHASE_FAILED") {
@@ -118,10 +121,13 @@ export async function POST(request: Request, context: RouteContext) {
       done: status.done,
       labels: status.labels,
       postageCost,
+      latestLabelCost,
       errors: status.errors,
       message:
         status.status === "PURCHASED"
-          ? "Shipping label purchased."
+          ? latestLabelCost != null
+            ? `Shipping label purchased for £${latestLabelCost.toFixed(2)}.`
+            : "Shipping label purchased."
           : "Label purchase started. Refresh in a moment if the PDF is not ready yet.",
     });
   } catch (error) {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { fetchOrderShippingLabelCost } from "@/lib/shopify/shipping-labels";
+import { fetchOrderShippingLabelCosts } from "@/lib/shopify/shipping-labels";
 import { getShopifyConfig } from "@/lib/shopify/config";
 import { shopifyAdminFetch, ShopifyApiError } from "@/lib/shopify/client";
 
@@ -25,12 +25,13 @@ export async function GET(request: Request) {
     const labelEvents = events.filter((e) =>
       e.verb.includes("shipping_label"),
     );
-    const cost = await fetchOrderShippingLabelCost(Number(id));
+    const costs = await fetchOrderShippingLabelCosts(Number(id));
 
     return NextResponse.json({
       ok: true,
       shopifyOrderId: Number(id),
-      shippingLabelCost: cost,
+      shippingLabelCost: costs.total,
+      latestLabelCost: costs.latest,
       labelEvents: labelEvents.map((e) => ({
         verb: e.verb,
         message: e.message,

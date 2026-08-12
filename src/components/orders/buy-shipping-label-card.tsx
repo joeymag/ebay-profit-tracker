@@ -52,6 +52,7 @@ type PurchaseResponse =
       status: string;
       done: boolean;
       postageCost: number | null;
+      latestLabelCost?: number | null;
       labels: Array<{
         id?: string;
         trackingNumber: string | null;
@@ -108,6 +109,9 @@ export function BuyShippingLabelCard({
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
   const [purchasedLabelId, setPurchasedLabelId] = useState<string | null>(
     shippingLabelGid,
+  );
+  const [purchasedLabelCost, setPurchasedLabelCost] = useState<number | null>(
+    null,
   );
   const [buildingPackSheet, setBuildingPackSheet] = useState(false);
 
@@ -223,11 +227,42 @@ export function BuyShippingLabelCard({
     }
   }
 
+  async function pollLabelCost(): Promise<number | null> {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      try {
+        const response = await fetch(
+          `/api/shopify/orders/label-cost?id=${shopifyId}`,
+        );
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          latestLabelCost?: number | null;
+          shippingLabelCost?: number | null;
+        };
+        if (!payload.ok) {
+          continue;
+        }
+        if (payload.latestLabelCost != null && payload.latestLabelCost > 0) {
+          return payload.latestLabelCost;
+        }
+        if (payload.shippingLabelCost != null && payload.shippingLabelCost > 0) {
+          return payload.shippingLabelCost;
+        }
+      } catch {
+        // Keep polling.
+      }
+    }
+    return null;
+  }
+
   async function buyLabel() {
     setPurchasing(true);
     setError(null);
     setMessage(null);
     setLabelUrl(null);
+    setPurchasedLabelCost(null);
 
     try {
       const response = await fetch(
@@ -263,11 +298,22 @@ export function BuyShippingLabelCard({
       if (labelId) {
         setPurchasedLabelId(labelId);
       }
+
+      let labelCost =
+        payload.latestLabelCost ??
+        (payload.postageCost != null && payload.postageCost > 0
+          ? payload.postageCost
+          : null);
+      if (labelCost == null && payload.status === "PURCHASED") {
+        labelCost = await pollLabelCost();
+      }
+      setPurchasedLabelCost(labelCost);
+
       setMessage(
         [
           payload.message,
-          payload.postageCost != null
-            ? `Postage cost saved: £${payload.postageCost.toFixed(2)}.`
+          labelCost == null && payload.status === "PURCHASED"
+            ? "Label cost not in Shopify timeline yet — check again shortly."
             : null,
           firstLabel?.trackingNumber
             ? `Tracking: ${firstLabel.trackingNumber}.`
@@ -322,7 +368,9 @@ export function BuyShippingLabelCard({
             <CardDescription>
               Buy Shopify&apos;s default/cheapest rate, then print an A4 Royal
               Mail S19 sheet (pick list on top, shipping label in the bottom
-              peel zone). Package defaults are remembered in this browser.
+              peel zone). Shopify does not provide a price quote before
+              purchase — the charged label cost is shown right after buying.
+              Package defaults are remembered in this browser.
               {alreadyHasPostage
                 ? " This order already has a postage cost saved."
                 : null}
@@ -552,6 +600,11 @@ export function BuyShippingLabelCard({
 
         {message ? (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+            {purchasedLabelCost != null ? (
+              <p className="mb-2 text-2xl font-semibold tabular-nums tracking-tight text-emerald-900 dark:text-emerald-100">
+                Label cost: £{purchasedLabelCost.toFixed(2)}
+              </p>
+            ) : null}
             <p>{message}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {canReprint ? (
