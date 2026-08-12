@@ -40,6 +40,7 @@ type OptionsResponse =
       ok: true;
       fulfillmentOrders: FulfillmentOrderOption[];
       shopifyAdminUrl: string | null;
+      shopifyCreateLabelUrl?: string | null;
       fulfillmentStatus: string | null;
       purchasedLabel: PurchasedLabelInfo | null;
       shippingLabelGid: string | null;
@@ -101,9 +102,13 @@ export function BuyShippingLabelCard({
     FulfillmentOrderOption[]
   >([]);
   const [shopifyAdminUrl, setShopifyAdminUrl] = useState<string | null>(null);
+  const [shopifyCreateLabelUrl, setShopifyCreateLabelUrl] = useState<
+    string | null
+  >(null);
   const [selectedFoId, setSelectedFoId] = useState("");
   const [pkg, setPkg] = useState<PackageDefaults>(DEFAULT_PACKAGE);
   const [notifyCustomer, setNotifyCustomer] = useState(false);
+  const [confirmBlindBuy, setConfirmBlindBuy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
@@ -151,6 +156,9 @@ export function BuyShippingLabelCard({
 
       setFulfillmentOrders(payload.fulfillmentOrders);
       setShopifyAdminUrl(payload.shopifyAdminUrl);
+      setShopifyCreateLabelUrl(
+        payload.shopifyCreateLabelUrl ?? payload.shopifyAdminUrl,
+      );
       setSelectedFoId(payload.fulfillmentOrders[0]?.id ?? "");
 
       const purchased = payload.purchasedLabel;
@@ -308,6 +316,7 @@ export function BuyShippingLabelCard({
         labelCost = await pollLabelCost();
       }
       setPurchasedLabelCost(labelCost);
+      setConfirmBlindBuy(false);
 
       setMessage(
         [
@@ -343,6 +352,7 @@ export function BuyShippingLabelCard({
   const canPurchase =
     Boolean(selectedFoId) &&
     fulfillmentOrders.length > 0 &&
+    confirmBlindBuy &&
     !purchasing &&
     !loadingOptions &&
     !buildingPackSheet;
@@ -356,6 +366,8 @@ export function BuyShippingLabelCard({
   const selectedFo =
     fulfillmentOrders.find((fo) => fo.id === selectedFoId) ?? null;
 
+  const ratesUrl = shopifyCreateLabelUrl ?? shopifyAdminUrl;
+
   return (
     <Card className="surface-card">
       <CardHeader>
@@ -366,11 +378,10 @@ export function BuyShippingLabelCard({
               Buy shipping label
             </CardTitle>
             <CardDescription>
-              Buy Shopify&apos;s default/cheapest rate, then print an A4 Royal
-              Mail S19 sheet (pick list on top, shipping label in the bottom
-              peel zone). Shopify does not provide a price quote before
-              purchase — the charged label cost is shown right after buying.
-              Package defaults are remembered in this browser.
+              To see carrier and price (Evri, DPD, Royal Mail, etc.) before you
+              pay, open Shopify&apos;s Create shipping label screen. In-app buy
+              can only purchase Shopify&apos;s default/cheapest rate with no
+              preview — some labels can be expensive.
               {alreadyHasPostage
                 ? " This order already has a postage cost saved."
                 : null}
@@ -386,13 +397,35 @@ export function BuyShippingLabelCard({
               rel="noopener noreferrer"
               className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
-              Open in Shopify
+              Open order in Shopify
               <ExternalLink className="size-3.5" />
             </a>
           ) : null}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {ratesUrl && fulfillmentOrders.length > 0 ? (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 space-y-3">
+            <p className="text-sm font-medium">
+              Recommended: see cost &amp; carrier before buying
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Shopify Admin shows live prices (e.g. Evri £2.58, DPD higher). Open
+              the order → <span className="font-medium">Create shipping label</span>{" "}
+              → pick the service.
+            </p>
+            <a
+              href={ratesUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(buttonVariants({ size: "default" }))}
+            >
+              See prices in Shopify
+              <ExternalLink className="size-3.5" />
+            </a>
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -557,9 +590,35 @@ export function BuyShippingLabelCard({
               Notify customer after purchase
             </label>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 space-y-3">
+              <p className="text-sm font-medium text-amber-950 dark:text-amber-100">
+                Buy cheapest in-app (no price/carrier preview)
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Shopify may choose Evri, DPD, Royal Mail, or another service. You
+                will not see the cost until after purchase — it can occasionally
+                be high (e.g. £60). Prefer{" "}
+                <span className="font-medium">See prices in Shopify</span> unless
+                you are sure.
+              </p>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={confirmBlindBuy}
+                  onChange={(event) =>
+                    setConfirmBlindBuy(event.target.checked)
+                  }
+                  className="mt-0.5 size-4 rounded border-input accent-primary"
+                  disabled={purchasing}
+                />
+                <span>
+                  I understand I won&apos;t see carrier or price before buying,
+                  and I still want the cheapest Shopify Shipping rate.
+                </span>
+              </label>
               <Button
                 type="button"
+                variant="secondary"
                 onClick={() => void buyLabel()}
                 disabled={!canPurchase}
               >
@@ -569,23 +628,12 @@ export function BuyShippingLabelCard({
                     Buying label…
                   </>
                 ) : (
-                  "Buy cheapest label"
+                  "Buy cheapest without preview"
                 )}
               </Button>
-              {shopifyAdminUrl ? (
-                <a
-                  href={shopifyAdminUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(
-                    buttonVariants({ variant: "outline" }),
-                    purchasing && "pointer-events-none opacity-50",
-                  )}
-                >
-                  Compare rates in Shopify
-                  <ExternalLink className="size-3.5" />
-                </a>
-              ) : null}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"

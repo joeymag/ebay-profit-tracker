@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getStoredOrderByShopifyId } from "@/lib/orders/store";
-import { getShopifyConfig, getShopifyOrderAdminUrl } from "@/lib/shopify/config";
+import { getShopifyConfig, getShopifyCreateShippingLabelUrl, getShopifyOrderAdminUrl } from "@/lib/shopify/config";
 import {
   getLabelFulfillmentOrders,
   getShopifyShippingLabelById,
@@ -62,6 +62,7 @@ export async function GET(_request: Request, context: RouteContext) {
       purchasedLabel,
       shippingLabelGid: storedGid ?? null,
       shopifyAdminUrl: getShopifyOrderAdminUrl(shopifyId),
+      shopifyCreateLabelUrl: getShopifyCreateShippingLabelUrl(shopifyId),
       requiredScopes: [
         "write_orders",
         "write_merchant_managed_fulfillment_orders",

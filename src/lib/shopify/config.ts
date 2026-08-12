@@ -43,12 +43,34 @@ export function getShopifyStoreHost() {
   return storeDomain ? normalizeShopifyDomain(storeDomain) : null;
 }
 
+/** Store handle for admin.shopify.com/store/{handle}/... URLs. */
+export function getShopifyAdminStoreHandle() {
+  const host = getShopifyStoreHost();
+  if (!host) {
+    return null;
+  }
+  const match = host.match(/^([^.]+)\.myshopify\.com$/i);
+  return match?.[1] ?? null;
+}
+
 export function getShopifyOrderAdminUrl(shopifyOrderId: number) {
   const host = getShopifyStoreHost();
   if (!host || !Number.isFinite(shopifyOrderId)) {
     return null;
   }
+  const handle = getShopifyAdminStoreHandle();
+  if (handle) {
+    return `https://admin.shopify.com/store/${handle}/orders/${shopifyOrderId}`;
+  }
   return `https://${host}/admin/orders/${shopifyOrderId}`;
+}
+
+/**
+ * Opens the order in Shopify Admin where merchants can click
+ * "Create shipping label" and see carrier + price (Evri, DPD, etc.).
+ */
+export function getShopifyCreateShippingLabelUrl(shopifyOrderId: number) {
+  return getShopifyOrderAdminUrl(shopifyOrderId);
 }
 
 export function getShopifyProductAdminUrl(productId: number) {
