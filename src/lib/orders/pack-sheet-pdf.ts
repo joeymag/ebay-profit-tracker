@@ -1,4 +1,17 @@
-import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf-lib";
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+  degrees,
+  pushGraphicsState,
+  popGraphicsState,
+  rectangle,
+  clip,
+  endPath,
+  type PDFPage,
+  type PDFFont,
+  type PDFEmbeddedPage,
+} from "pdf-lib";
 
 import type { PackSheetCompanyInfo } from "@/lib/orders/pack-sheet-company";
 import { getSalesChannel } from "@/lib/orders/channel";
@@ -175,6 +188,135 @@ function drawCheckbox(page: PDFPage, x: number, y: number, size = 10) {
   });
 }
 
+function almostEqual(a: number, b: number, tolerance = 0.04): boolean {
+  if (b === 0) {
+    return Math.abs(a) < 1;
+  }
+  return Math.abs(a - b) / b <= tolerance;
+}
+
+type LabelPageKind = "s19" | "a4" | "thermal-4x6" | "other";
+
+function classifyLabelPage(width: number, height: number): LabelPageKind {
+  const w = Math.min(width, height);
+  const h = Math.max(width, height);
+
+  // Exact S19 adhesive (160 × 105mm), either orientation.
+  if (
+    (almostEqual(width, S19_LABEL_WIDTH) && almostEqual(height, S19_LABEL_HEIGHT)) ||
+    (almostEqual(width, S19_LABEL_HEIGHT) && almostEqual(height, S19_LABEL_WIDTH))
+  ) {
+    return "s19";
+  }
+
+  // Full A4 / Letter pages — Shopify often returns these instead of a bare label.
+  if (
+    (almostEqual(width, A4_WIDTH) && almostEqual(height, A4_HEIGHT)) ||
+    (almostEqual(width, A4_HEIGHT) && almostEqual(height, A4_WIDTH)) ||
+    (almostEqual(width, 612) && almostEqual(height, 792)) ||
+    (almostEqual(width, 792) && almostEqual(height, 612))
+  ) {
+    return "a4";
+  }
+
+  // 4×6" / 100×150mm thermal label.
+  const thermalShort = mm(100);
+  const thermalLong = mm(150);
+  const inch4 = 4 * 72;
+  const inch6 = 6 * 72;
+  if (
+    (almostEqual(w, thermalShort, 0.06) && almostEqual(h, thermalLong, 0.06)) ||
+    (almostEqual(w, inch4, 0.06) && almostEqual(h, inch6, 0.06))
+  ) {
+    return "thermal-4x6";
+  }
+
+  return "other";
+}
+
+/**
+ * Draw the Shopify (or test) label into the exact S19 peel zone — same footprint
+ * as the test sheet. Full-page Shopify PDFs are clipped to the bottom S19 region
+ * at 1:1 instead of being squashed into the peel area.
+ */
+function drawLabelInS19PeelZone(
+  page: PDFPage,
+  embeddedLabel: PDFEmbeddedPage,
+  labelSize: { width: number; height: number },
+) {
+  const kind = classifyLabelPage(labelSize.width, labelSize.height);
+
+  const clipToPeelZone = () => {
+    page.pushOperators(
+      pushGraphicsState(),
+      rectangle(
+        S19_LABEL_LEFT,
+        S19_LABEL_BOTTOM,
+        S19_LABEL_WIDTH,
+        S19_LABEL_HEIGHT,
+      ),
+      clip(),
+      endPath(),
+    );
+  };
+  const endClip = () => {
+    page.pushOperators(popGraphicsState());
+  };
+
+  // Full A4/Letter: map page 1:1 onto our A4 and clip to the S19 peel rectangle.
+  // Matches Royal Mail / Shopify desktop labels that already sit in that zone.
+  if (kind === "a4") {
+    clipToPeelZone();
+    const sourceIsLandscape = labelSize.width > labelSize.height;
+    if (sourceIsLandscape) {
+      page.drawPage(embeddedLabel, {
+        x: 0,
+        y: A4_HEIGHT,
+        width: A4_HEIGHT,
+        height: A4_WIDTH,
+        rotate: degrees(-90),
+      });
+    } else {
+      page.drawPage(embeddedLabel, {
+        x: 0,
+        y: 0,
+        width: A4_WIDTH,
+        height: A4_HEIGHT,
+      });
+    }
+    endClip();
+    return;
+  }
+
+  // Label-sized pages (test S19, 4×6 thermal, unknown): fill the exact same
+  // peel rectangle the test label uses (no letterboxing).
+  const s19Aspect = S19_LABEL_WIDTH / S19_LABEL_HEIGHT;
+  const asIsAspect = labelSize.width / labelSize.height;
+  const rotatedAspect = labelSize.height / labelSize.width;
+  const rotate90 =
+    Math.abs(rotatedAspect - s19Aspect) + 0.02 < Math.abs(asIsAspect - s19Aspect);
+
+  clipToPeelZone();
+  if (rotate90) {
+    // Portrait source → landscape peel zone.
+    page.drawPage(embeddedLabel, {
+      x: S19_LABEL_LEFT,
+      y: S19_LABEL_BOTTOM + S19_LABEL_HEIGHT,
+      width: S19_LABEL_HEIGHT,
+      height: S19_LABEL_WIDTH,
+      rotate: degrees(-90),
+    });
+  } else {
+    page.drawPage(embeddedLabel, {
+      x: S19_LABEL_LEFT,
+      y: S19_LABEL_BOTTOM,
+      width: S19_LABEL_WIDTH,
+      height: S19_LABEL_HEIGHT,
+    });
+  }
+  endClip();
+}
+
 /**
  * Fake label matching the S19 adhesive size (160 × 105mm) for alignment tests.
  */
@@ -345,22 +487,8 @@ export async function buildA4LabelPickSheetPdf(
   const [embeddedLabel] = await out.embedPdf(labelDoc, [labelPages[0]]);
   const labelSize = embeddedLabel.size();
 
-  // Fit Shopify (or test) label into the exact S19 peel rectangle.
-  const scale = Math.min(
-    S19_LABEL_WIDTH / labelSize.width,
-    S19_LABEL_HEIGHT / labelSize.height,
-  );
-  const drawWidth = labelSize.width * scale;
-  const drawHeight = labelSize.height * scale;
-  const labelX = S19_LABEL_LEFT + (S19_LABEL_WIDTH - drawWidth) / 2;
-  const labelY = S19_LABEL_BOTTOM + (S19_LABEL_HEIGHT - drawHeight) / 2;
-
-  page.drawPage(embeddedLabel, {
-    x: labelX,
-    y: labelY,
-    width: drawWidth,
-    height: drawHeight,
-  });
+  // Same S19 peel footprint as the test sheet (never squash a full A4 into 160×105).
+  drawLabelInS19PeelZone(page, embeddedLabel, labelSize);
 
   if (options?.testMode) {
     // Exact S19 adhesive outline for printer calibration.
