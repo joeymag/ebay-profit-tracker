@@ -334,44 +334,89 @@ export async function buildA4LabelPickSheetPdf(
   let y = pickTop;
 
   const company = options?.company;
-  if (
-    company &&
-    (company.name || company.website || company.addressLines.length > 0)
-  ) {
-    if (company.name) {
-      page.drawText(company.name.slice(0, 60), {
-        x: PICK_MARGIN_X,
-        y,
-        size: 16,
-        font: fontBold,
-        color: rgb(0.08, 0.08, 0.08),
-      });
-      y -= 18;
-    }
-    if (company.website) {
-      const site = company.website.replace(/^https?:\/\//i, "");
-      page.drawText(site.slice(0, 70), {
-        x: PICK_MARGIN_X,
-        y,
-        size: 11,
-        font,
-        color: rgb(0.25, 0.25, 0.25),
-      });
-      y -= 14;
-    }
-    for (const line of company.addressLines) {
-      if (y < pickBottom + 80) {
+  const leftColX = PICK_MARGIN_X;
+  const midGap = mm(8);
+  const colWidth = (A4_WIDTH - PICK_MARGIN_X * 2 - midGap) / 2;
+  const rightColX = PICK_MARGIN_X + colWidth + midGap;
+  const maxAddrChars = 42;
+
+  const fromLines: Array<{ text: string; bold?: boolean; size?: number }> = [];
+  if (company?.name) {
+    fromLines.push({ text: company.name, bold: true, size: 13 });
+  }
+  if (company?.website) {
+    fromLines.push({
+      text: company.website.replace(/^https?:\/\//i, ""),
+      size: 10,
+    });
+  }
+  for (const line of company?.addressLines ?? []) {
+    fromLines.push({ text: line, size: 10 });
+  }
+
+  const shipLines = [
+    order.buyerName,
+    ...formatShippingAddressLines(order.shippingAddress),
+    order.shippingAddress?.phone
+      ? `Tel: ${order.shippingAddress.phone}`
+      : null,
+  ].filter((line): line is string => Boolean(line?.trim()));
+
+  const toLines: Array<{ text: string; bold?: boolean; size?: number }> = [];
+  shipLines.forEach((line, index) => {
+    toLines.push({
+      text: line,
+      bold: index === 0,
+      size: index === 0 ? 13 : 11,
+    });
+  });
+
+  if (fromLines.length > 0 || toLines.length > 0) {
+    const headerY = y;
+    page.drawText("From", {
+      x: leftColX,
+      y: headerY,
+      size: 10,
+      font: fontBold,
+      color: rgb(0.4, 0.4, 0.4),
+    });
+    page.drawText("Ship to", {
+      x: rightColX,
+      y: headerY,
+      size: 10,
+      font: fontBold,
+      color: rgb(0.4, 0.4, 0.4),
+    });
+    y = headerY - 14;
+
+    const rowCount = Math.max(fromLines.length, toLines.length);
+    for (let i = 0; i < rowCount; i += 1) {
+      if (y < pickBottom + 70) {
         break;
       }
-      page.drawText(line.slice(0, 90), {
-        x: PICK_MARGIN_X,
-        y,
-        size: 10,
-        font,
-        color: rgb(0.3, 0.3, 0.3),
-      });
-      y -= 13;
+      const left = fromLines[i];
+      const right = toLines[i];
+      if (left) {
+        page.drawText(left.text.slice(0, maxAddrChars), {
+          x: leftColX,
+          y,
+          size: left.size ?? 10,
+          font: left.bold ? fontBold : font,
+          color: rgb(0.12, 0.12, 0.12),
+        });
+      }
+      if (right) {
+        page.drawText(right.text.slice(0, maxAddrChars), {
+          x: rightColX,
+          y,
+          size: right.size ?? 11,
+          font: right.bold ? fontBold : font,
+          color: rgb(0.12, 0.12, 0.12),
+        });
+      }
+      y -= 14;
     }
+
     y -= 4;
     page.drawLine({
       start: { x: PICK_MARGIN_X, y: y + 4 },
@@ -436,37 +481,7 @@ export async function buildA4LabelPickSheetPdf(
     y -= 16;
   }
 
-  page.drawText("Ship to", {
-    x: PICK_MARGIN_X,
-    y,
-    size: 11,
-    font: fontBold,
-    color: rgb(0.35, 0.35, 0.35),
-  });
-  y -= 14;
-
-  const shipLines = [
-    order.buyerName,
-    ...formatShippingAddressLines(order.shippingAddress),
-    order.shippingAddress?.phone
-      ? `Tel: ${order.shippingAddress.phone}`
-      : null,
-  ].filter((line): line is string => Boolean(line?.trim()));
-
-  for (const line of shipLines) {
-    if (y < pickBottom + 48) {
-      break;
-    }
-    page.drawText(line.slice(0, 80), {
-      x: PICK_MARGIN_X,
-      y,
-      size: 13,
-      font,
-    });
-    y -= 16;
-  }
-
-  y -= 8;
+  y -= 4;
 
   const colCheck = PICK_MARGIN_X;
   const colQty = PICK_MARGIN_X + 22;
