@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getPackSheetCompanyInfo } from "@/lib/orders/pack-sheet-company";
 import {
   buildA4LabelPickSheetPdf,
   buildTestA4PackSheetPdf,
@@ -43,8 +44,10 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
+    const company = await getPackSheetCompanyInfo();
+
     if (body.test) {
-      const pdfBytes = await buildTestA4PackSheetPdf(order);
+      const pdfBytes = await buildTestA4PackSheetPdf(order, company);
       const filename = `test-pack-sheet-${order.orderNumber.replace(/[^\w.-]+/g, "_")}.pdf`;
       return new NextResponse(Buffer.from(pdfBytes), {
         status: 200,
@@ -93,7 +96,9 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const labelBytes = await fetchShopifyLabelPdfBytes(labelDocumentUrl);
-    const pdfBytes = await buildA4LabelPickSheetPdf(order, labelBytes);
+    const pdfBytes = await buildA4LabelPickSheetPdf(order, labelBytes, {
+      company,
+    });
     const filename = `pack-sheet-${order.orderNumber.replace(/[^\w.-]+/g, "_")}.pdf`;
 
     return new NextResponse(Buffer.from(pdfBytes), {

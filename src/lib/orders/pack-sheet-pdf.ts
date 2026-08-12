@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf-lib";
 
+import type { PackSheetCompanyInfo } from "@/lib/orders/pack-sheet-company";
 import { getSalesChannel } from "@/lib/orders/channel";
 import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
 import { formatShippingAddressLines } from "@/lib/orders/shipping-address";
@@ -270,7 +271,7 @@ export async function buildTestShippingLabelPdfBytes(): Promise<Uint8Array> {
 export async function buildA4LabelPickSheetPdf(
   order: StoredOrder,
   labelPdfBytes: Uint8Array,
-  options?: { testMode?: boolean },
+  options?: { testMode?: boolean; company?: PackSheetCompanyInfo | null },
 ): Promise<Uint8Array> {
   const out = await PDFDocument.create();
   const page = out.addPage([A4_WIDTH, A4_HEIGHT]);
@@ -331,6 +332,55 @@ export async function buildA4LabelPickSheetPdf(
   const pickBottom = S19_PERFORATION_FROM_BOTTOM + PICK_MARGIN_BOTTOM;
   const pickTop = A4_HEIGHT - PICK_MARGIN_TOP;
   let y = pickTop;
+
+  const company = options?.company;
+  if (
+    company &&
+    (company.name || company.website || company.addressLines.length > 0)
+  ) {
+    if (company.name) {
+      page.drawText(company.name.slice(0, 60), {
+        x: PICK_MARGIN_X,
+        y,
+        size: 16,
+        font: fontBold,
+        color: rgb(0.08, 0.08, 0.08),
+      });
+      y -= 18;
+    }
+    if (company.website) {
+      const site = company.website.replace(/^https?:\/\//i, "");
+      page.drawText(site.slice(0, 70), {
+        x: PICK_MARGIN_X,
+        y,
+        size: 11,
+        font,
+        color: rgb(0.25, 0.25, 0.25),
+      });
+      y -= 14;
+    }
+    for (const line of company.addressLines) {
+      if (y < pickBottom + 80) {
+        break;
+      }
+      page.drawText(line.slice(0, 90), {
+        x: PICK_MARGIN_X,
+        y,
+        size: 10,
+        font,
+        color: rgb(0.3, 0.3, 0.3),
+      });
+      y -= 13;
+    }
+    y -= 4;
+    page.drawLine({
+      start: { x: PICK_MARGIN_X, y: y + 4 },
+      end: { x: A4_WIDTH - PICK_MARGIN_X, y: y + 4 },
+      thickness: 0.6,
+      color: rgb(0.65, 0.65, 0.65),
+    });
+    y -= 10;
+  }
 
   if (options?.testMode) {
     const testBanner =
@@ -519,7 +569,11 @@ export async function buildA4LabelPickSheetPdf(
 /** Test A4 pack sheet: S19-sized fake label + this order's pick list. */
 export async function buildTestA4PackSheetPdf(
   order: StoredOrder,
+  company?: PackSheetCompanyInfo | null,
 ): Promise<Uint8Array> {
   const labelBytes = await buildTestShippingLabelPdfBytes();
-  return buildA4LabelPickSheetPdf(order, labelBytes, { testMode: true });
+  return buildA4LabelPickSheetPdf(order, labelBytes, {
+    testMode: true,
+    company,
+  });
 }
