@@ -410,9 +410,11 @@ export function BuyShippingLabelCard({
               Recommended: see cost &amp; carrier before buying
             </p>
             <p className="text-sm text-muted-foreground">
-              Shopify Admin shows live prices (e.g. Evri £2.58, DPD higher). Open
-              the order → <span className="font-medium">Create shipping label</span>{" "}
-              → pick the service.
+              In Shopify Admin, open{" "}
+              <span className="font-medium">Create shipping label</span>, enter
+              the package weight (rates only appear after weight is set), then
+              pick Evri / DPD / Royal Mail with the £ price shown. Our app cannot
+              load that rate list — Shopify keeps it in Admin only.
             </p>
             <a
               href={ratesUrl}
