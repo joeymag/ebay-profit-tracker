@@ -207,11 +207,17 @@ export function BuyShippingLabelCard({
         body: JSON.stringify(
           options?.test
             ? { test: true }
-            : {
-                labelDocumentUrl: options?.documentUrl || undefined,
-                shippingLabelId:
-                  options?.shippingLabelId || purchasedLabelId || undefined,
-              },
+            : (() => {
+                const shippingLabelId =
+                  options?.shippingLabelId || purchasedLabelId || undefined;
+                // When we have a Shopify label GID, omit the client document URL
+                // so the server re-fetches a fresh printable PDF link.
+                return shippingLabelId
+                  ? { shippingLabelId }
+                  : {
+                      labelDocumentUrl: options?.documentUrl || undefined,
+                    };
+              })(),
         ),
       });
 

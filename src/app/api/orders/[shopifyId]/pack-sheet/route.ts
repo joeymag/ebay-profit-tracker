@@ -6,6 +6,7 @@ import {
   buildTestA4PackSheetPdf,
   fetchShopifyLabelPdfBytes,
   isAllowedShopifyLabelDocumentUrl,
+  isTrustedShopifyLabelDocumentUrl,
 } from "@/lib/orders/pack-sheet-pdf";
 import { getStoredOrderByShopifyId } from "@/lib/orders/store";
 import { getShopifyShippingLabelById } from "@/lib/shopify/shipping-label-purchase";
@@ -59,13 +60,20 @@ export async function POST(request: Request, context: RouteContext) {
       });
     }
 
-    let labelDocumentUrl = body.labelDocumentUrl?.trim() || "";
+    const clientLabelDocumentUrl = body.labelDocumentUrl?.trim() || "";
     const shippingLabelId =
       body.shippingLabelId?.trim() || order.shippingLabelGid?.trim() || "";
 
-    if (!labelDocumentUrl && shippingLabelId) {
+    // Prefer resolving via label GID so we always get a fresh Shopify document
+    // URL. Client-supplied URLs can be stale, tracking links, or hosted on
+    // signed cloud-storage hosts our strict CDN allowlist rejects.
+    let labelDocumentUrl = "";
+    let trustShopifySource = false;
+
+    if (shippingLabelId) {
       const label = await getShopifyShippingLabelById(shippingLabelId);
       labelDocumentUrl = label.documentUrl?.trim() || "";
+      trustShopifySource = true;
       if (!labelDocumentUrl) {
         return NextResponse.json(
           {
@@ -76,6 +84,8 @@ export async function POST(request: Request, context: RouteContext) {
           { status: 502 },
         );
       }
+    } else if (clientLabelDocumentUrl) {
+      labelDocumentUrl = clientLabelDocumentUrl;
     }
 
     if (!labelDocumentUrl) {
@@ -88,14 +98,25 @@ export async function POST(request: Request, context: RouteContext) {
         { status: 400 },
       );
     }
-    if (!isAllowedShopifyLabelDocumentUrl(labelDocumentUrl)) {
+
+    const urlOk = trustShopifySource
+      ? isTrustedShopifyLabelDocumentUrl(labelDocumentUrl)
+      : isAllowedShopifyLabelDocumentUrl(labelDocumentUrl);
+    if (!urlOk) {
       return NextResponse.json(
-        { ok: false, error: "labelDocumentUrl must be a Shopify CDN URL." },
+        {
+          ok: false,
+          error: trustShopifySource
+            ? "Shopify returned a label URL that could not be fetched safely."
+            : "labelDocumentUrl must be a Shopify CDN URL (or pass shippingLabelId).",
+        },
         { status: 400 },
       );
     }
 
-    const labelBytes = await fetchShopifyLabelPdfBytes(labelDocumentUrl);
+    const labelBytes = await fetchShopifyLabelPdfBytes(labelDocumentUrl, {
+      trustShopifySource,
+    });
     const pdfBytes = await buildA4LabelPickSheetPdf(order, labelBytes, {
       company,
     });

@@ -326,10 +326,23 @@ export async function getShopifyShippingLabelPurchaseStatus(
       id: label.id,
       trackingNumber: label.trackingInfo?.number ?? null,
       trackingUrl: label.trackingInfo?.url ?? null,
-      documentUrl:
-        label.shippingDocuments.find((doc) => doc.url)?.url ?? null,
+      documentUrl: pickShippingLabelDocumentUrl(label.shippingDocuments),
     })),
   };
+}
+
+function pickShippingLabelDocumentUrl(
+  documents: Array<{ documentType: string; url: string | null }>,
+): string | null {
+  const withUrl = documents.filter((doc) => doc.url?.trim());
+  if (!withUrl.length) {
+    return null;
+  }
+  const preferred =
+    withUrl.find((doc) => /label/i.test(doc.documentType)) ??
+    withUrl.find((doc) => /\.pdf(\?|$)/i.test(doc.url || "")) ??
+    withUrl[0];
+  return preferred?.url?.trim() || null;
 }
 
 /** Re-fetch a previously purchased label's printable PDF URL. */
@@ -368,8 +381,9 @@ export async function getShopifyShippingLabelById(
     id: data.shippingLabel.id,
     trackingNumber: data.shippingLabel.trackingInfo?.number ?? null,
     trackingUrl: data.shippingLabel.trackingInfo?.url ?? null,
-    documentUrl:
-      data.shippingLabel.shippingDocuments.find((doc) => doc.url)?.url ?? null,
+    documentUrl: pickShippingLabelDocumentUrl(
+      data.shippingLabel.shippingDocuments,
+    ),
   };
 }
 

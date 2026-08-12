@@ -32,7 +32,36 @@ const ALLOWED_LABEL_HOST_SUFFIXES = [
   "shopifycdn.com",
   "shopifycloud.com",
   "myshopify.com",
+  // Signed label PDFs are often hosted on Shopify-managed cloud storage.
+  "amazonaws.com",
+  "cloudfront.net",
+  "googleapis.com",
+  "googleusercontent.com",
 ];
+
+function isBlockedLabelFetchHost(host: string): boolean {
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  ) {
+    return true;
+  }
+  // Block obvious private / link-local targets (SSRF guard for client URLs).
+  if (
+    /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(
+      host,
+    ) ||
+    host === "::1" ||
+    host.startsWith("fc") ||
+    host.startsWith("fd") ||
+    host.startsWith("fe80:")
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export function isAllowedShopifyLabelDocumentUrl(rawUrl: string): boolean {
   try {
@@ -41,6 +70,9 @@ export function isAllowedShopifyLabelDocumentUrl(rawUrl: string): boolean {
       return false;
     }
     const host = url.hostname.toLowerCase();
+    if (isBlockedLabelFetchHost(host)) {
+      return false;
+    }
     return ALLOWED_LABEL_HOST_SUFFIXES.some(
       (suffix) => host === suffix || host.endsWith(`.${suffix}`),
     );
@@ -49,10 +81,34 @@ export function isAllowedShopifyLabelDocumentUrl(rawUrl: string): boolean {
   }
 }
 
+/**
+ * URLs returned by Shopify Admin GraphQL for shippingDocuments.
+ * Still require https + block private hosts; host allowlist is looser than
+ * client-supplied URLs because Shopify may sign PDFs on cloud storage.
+ */
+export function isTrustedShopifyLabelDocumentUrl(rawUrl: string): boolean {
+  if (isAllowedShopifyLabelDocumentUrl(rawUrl)) {
+    return true;
+  }
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:") {
+      return false;
+    }
+    return !isBlockedLabelFetchHost(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchShopifyLabelPdfBytes(
   labelDocumentUrl: string,
+  options?: { trustShopifySource?: boolean },
 ): Promise<Uint8Array> {
-  if (!isAllowedShopifyLabelDocumentUrl(labelDocumentUrl)) {
+  const allowed = options?.trustShopifySource
+    ? isTrustedShopifyLabelDocumentUrl(labelDocumentUrl)
+    : isAllowedShopifyLabelDocumentUrl(labelDocumentUrl);
+  if (!allowed) {
     throw new Error("Label document URL is not a recognized Shopify host.");
   }
 
