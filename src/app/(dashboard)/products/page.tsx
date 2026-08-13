@@ -1,5 +1,6 @@
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { LineItemImage } from "@/components/orders/line-item-image";
+import { ProductSearchFilterBar } from "@/components/filters/product-search-filter-bar";
 import { ProductCostInput } from "@/components/products/product-cost-input";
 import { SyncProductsButton } from "@/components/products/sync-products-button";
 import { Badge } from "@/components/ui/badge";
@@ -18,12 +19,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { filterProductsBySearch } from "@/lib/products/search";
 import { getProducts, syncProductsFromOrders } from "@/lib/products/store";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProductsPage() {
+type ProductsPageProps = {
+  searchParams: Promise<{ q?: string }>;
+};
+
+export default async function ProductsPage({ searchParams }: ProductsPageProps) {
+  const params = await searchParams;
+  const searchQuery = params.q?.trim() ?? "";
   const configured = isSupabaseConfigured();
   let products = configured ? await getProducts() : [];
 
@@ -31,6 +39,8 @@ export default async function ProductsPage() {
     await syncProductsFromOrders();
     products = await getProducts();
   }
+
+  const filteredProducts = filterProductsBySearch(products, searchQuery);
   const withCost = products.filter((p) => p.unitCost != null).length;
   const missingCost = products.length - withCost;
 
@@ -53,9 +63,16 @@ export default async function ProductsPage() {
         ) : (
           <>
             <div className="surface-card flex flex-wrap items-center justify-between gap-4 p-5">
-              <SyncProductsButton />
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-4">
+                <SyncProductsButton />
+                <ProductSearchFilterBar className="min-w-[16rem] flex-1" />
+              </div>
               <p className="text-base text-muted-foreground">
-                {products.length} products · {withCost} with cost set
+                {searchQuery
+                  ? `${filteredProducts.length} of ${products.length} matching`
+                  : `${products.length} products`}
+                {" · "}
+                {withCost} with cost set
                 {missingCost > 0 ? ` · ${missingCost} need cost` : ""}
               </p>
             </div>
@@ -67,6 +84,7 @@ export default async function ProductsPage() {
                   Enter the cost you pay per unit (ex-VAT). Temu, eBay, and Amazon
                   orders add VAT in profit calculations. Import Temu SKUs after
                   syncing orders.
+                  {searchQuery ? ` Showing matches for “${searchQuery}”.` : ""}
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-0 pb-0 pt-0">
@@ -95,8 +113,17 @@ export default async function ProductsPage() {
                             your catalog from synced orders.
                           </TableCell>
                         </TableRow>
+                      ) : filteredProducts.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={6}
+                            className="h-24 whitespace-normal text-center text-muted-foreground"
+                          >
+                            No products match &quot;{searchQuery}&quot;.
+                          </TableCell>
+                        </TableRow>
                       ) : (
-                        products.map((product, i) => (
+                        filteredProducts.map((product, i) => (
                           <TableRow
                             key={product.sku}
                             className={
