@@ -1,5 +1,3 @@
-import { catalogSkuForTemu } from "@/lib/orders/temu-sku";
-
 export function normalizeSku(sku: string | null | undefined): string | null {
   const trimmed = sku?.trim();
   return trimmed ? trimmed.toUpperCase() : null;
@@ -41,20 +39,18 @@ export function resolveLineItemSkuForDisplay(
   return extractBracketVariantSku(title);
 }
 
-/** Catalog / storage SKU — uses TEMU: prefix when only Temu SKU is known. */
+/**
+ * Catalog SKU is the Shopify / eBay SKU only.
+ * Temu SKU is stored on that product — it is not a second catalog product.
+ */
 export function resolveLineItemCatalogSku(
   sku: string | null | undefined,
   title?: string | null | undefined,
-  temuSku?: string | null | undefined,
+  _temuSku?: string | null | undefined,
 ): string | null {
   const trimmed = sku?.trim();
   if (trimmed) {
     return trimmed;
-  }
-
-  const temu = temuSku?.trim();
-  if (temu) {
-    return catalogSkuForTemu(temu);
   }
 
   return extractBracketVariantSku(title);

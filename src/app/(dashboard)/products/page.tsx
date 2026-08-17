@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { filterProductsBySearch } from "@/lib/products/search";
-import { getProducts, syncProductsFromOrders } from "@/lib/products/store";
+import { getProducts, syncProductsFromShopify } from "@/lib/products/store";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   let products = configured ? await getProducts() : [];
 
   if (configured && products.length === 0) {
-    await syncProductsFromOrders();
+    await syncProductsFromShopify();
     products = await getProducts();
   }
 
@@ -48,7 +48,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     <>
       <DashboardHeader
         title="Products"
-        description="Set unit costs here — orders link automatically by SKU"
+        description="Set unit costs for Shopify products — orders link automatically by SKU"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         {!configured ? (
@@ -81,9 +81,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
               <CardHeader className="border-b border-border/50 bg-muted/20">
                 <CardTitle>Product catalog</CardTitle>
                 <CardDescription>
-                  Enter the cost you pay per unit (ex-VAT). Temu, eBay, and Amazon
-                  orders add VAT in profit calculations. Import Temu SKUs after
-                  syncing orders.
+                  Synced from your Shopify product catalog. Enter the cost you pay
+                  per unit (ex-VAT). Temu, eBay, and Amazon orders add VAT in profit
+                  calculations.
                   {searchQuery ? ` Showing matches for “${searchQuery}”.` : ""}
                 </CardDescription>
               </CardHeader>
@@ -109,8 +109,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                             colSpan={6}
                             className="h-24 whitespace-normal text-center text-muted-foreground"
                           >
-                            Click &quot;Import SKUs from orders&quot; to build
-                            your catalog from synced orders.
+                            Click &quot;Sync from Shopify&quot; to load your
+                            product catalog.
                           </TableCell>
                         </TableRow>
                       ) : filteredProducts.length === 0 ? (

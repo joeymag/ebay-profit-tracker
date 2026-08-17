@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { recalculateAllOrderProductCosts } from "@/lib/orders/apply-product-costs";
-import { getProducts, syncProductsFromOrders } from "@/lib/products/store";
+import { getProducts, syncProductsFromShopify } from "@/lib/products/store";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export async function GET() {
@@ -37,21 +37,33 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as { action?: string };
 
-  if (body.action !== "sync-from-orders") {
+  if (body.action !== "sync-from-shopify") {
     return NextResponse.json(
-      { ok: false, error: 'Use action "sync-from-orders".' },
+      { ok: false, error: 'Use action "sync-from-shopify".' },
       { status: 400 },
     );
   }
 
   try {
-    const result = await syncProductsFromOrders();
+    const result = await syncProductsFromShopify();
     const ordersUpdated = await recalculateAllOrderProductCosts();
+    const parts = [
+      result.imported
+        ? `${result.imported} new`
+        : null,
+      result.updated
+        ? `${result.updated} updated`
+        : null,
+      result.removed
+        ? `${result.removed} removed`
+        : null,
+    ].filter(Boolean);
+
     return NextResponse.json({
       ok: true,
       ...result,
       ordersUpdated,
-      message: `Added ${result.imported} new product${result.imported === 1 ? "" : "s"}. ${result.total} total in catalog.`,
+      message: `${parts.join(", ") || "Catalog up to date"}. ${result.total} Shopify products in catalog.`,
     });
   } catch (error) {
     const message =

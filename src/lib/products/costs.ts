@@ -18,9 +18,14 @@ export function buildProductCatalog(
       catalog.set(key, product.unitCost);
     }
     if (product.temuSku && product.unitCost != null) {
-      const temuKey = normalizeSku(`TEMU:${product.temuSku}`);
+      const temuKey = normalizeSku(product.temuSku);
       if (temuKey) {
         catalog.set(temuKey, product.unitCost);
+      }
+      // Old Temu-only catalog rows used a TEMU: prefix.
+      const legacyKey = normalizeSku(catalogSkuForTemu(product.temuSku));
+      if (legacyKey) {
+        catalog.set(legacyKey, product.unitCost);
       }
     }
   }
@@ -33,18 +38,23 @@ export function getLineItemUnitCost(
   title?: string | null,
   temuSku?: string | null,
 ): number | null {
+  const shopifyKey = resolveLineItemSkuKey(sku, title);
+  if (shopifyKey && catalog.has(shopifyKey)) {
+    return catalog.get(shopifyKey) ?? null;
+  }
+
   if (temuSku?.trim()) {
-    const temuKey = normalizeSku(catalogSkuForTemu(temuSku));
+    const temuKey = normalizeSku(temuSku);
     if (temuKey && catalog.has(temuKey)) {
       return catalog.get(temuKey) ?? null;
     }
+    const legacyKey = normalizeSku(catalogSkuForTemu(temuSku));
+    if (legacyKey && catalog.has(legacyKey)) {
+      return catalog.get(legacyKey) ?? null;
+    }
   }
 
-  const key = resolveLineItemSkuKey(sku, title);
-  if (!key) {
-    return null;
-  }
-  return catalog.get(key) ?? null;
+  return null;
 }
 
 export function computeOrderProductCost(

@@ -22,7 +22,7 @@ export function SyncProductsButton() {
       const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "sync-from-orders" }),
+        body: JSON.stringify({ action: "sync-from-shopify" }),
       });
       const data = await res.json();
 
@@ -34,7 +34,7 @@ export function SyncProductsButton() {
       setMessage(data.message);
       router.refresh();
     } catch {
-      setError("Could not sync products.");
+      setError("Could not sync products from Shopify.");
     } finally {
       setLoading(false);
     }
@@ -52,10 +52,10 @@ export function SyncProductsButton() {
         {loading ? (
           <>
             <Loader2 className="animate-spin" />
-            Importing SKUs…
+            Syncing from Shopify…
           </>
         ) : (
-          "Import SKUs from orders"
+          "Sync from Shopify"
         )}
       </Button>
       {message ? (

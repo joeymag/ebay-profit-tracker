@@ -1,7 +1,6 @@
 import { isOrderCancelled } from "@/lib/orders/order-status";
 import { deleteStoredOrder, getStorageBackend, saveOrders } from "@/lib/orders/store";
 import { recalculateAllOrderProductCosts } from "@/lib/orders/apply-product-costs";
-import { syncProductsFromOrders } from "@/lib/products/store";
 import { ShopifyApiError } from "@/lib/shopify/client";
 import {
   fetchAllShopifyOrders,
@@ -141,7 +140,6 @@ export async function runOrderSync(
     trackingFound: withTracking,
   });
 
-  const productsSync = mode === "full" ? await syncProductsFromOrders() : null;
   const shouldRecalculate =
     !options.skipRecalculateCosts && !incremental && mode === "full";
   const ordersRecalculated = shouldRecalculate
@@ -158,8 +156,8 @@ export async function runOrderSync(
     trackingFound: withTracking,
     syncedAt: database.syncedAt,
     storage: getStorageBackend(),
-    productsImported: productsSync?.imported ?? 0,
-    productsTotal: productsSync?.total ?? 0,
+    productsImported: 0,
+    productsTotal: 0,
     ordersWithCostsUpdated: ordersRecalculated,
     removedCancelled,
     updatedSince,

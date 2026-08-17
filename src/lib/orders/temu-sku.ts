@@ -22,7 +22,13 @@ export function parseTemuSkuFromProperties(
   return null;
 }
 
-/** Internal catalog SKU key for Temu-only products. */
+/** Legacy catalog SKU for old Temu-only product rows. Do not create new ones. */
 export function catalogSkuForTemu(temuSku: string): string {
   return `TEMU:${temuSku.trim()}`;
+}
+
+export function isTemuPrefixedCatalogSku(
+  sku: string | null | undefined,
+): boolean {
+  return Boolean(sku?.trim().toUpperCase().startsWith("TEMU:"));
 }

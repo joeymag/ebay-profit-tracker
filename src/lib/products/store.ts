@@ -4,13 +4,10 @@ import path from "path";
 import {
   getProductCatalogFromSupabase,
   getProductsFromSupabase,
-  syncProductsFromOrdersInSupabase,
+  syncProductsFromShopifyInSupabase,
   updateProductCostInSupabase,
 } from "@/lib/products/supabase-store";
-import {
-  resolveLineItemCatalogSku,
-  resolveLineItemSkuForDisplay,
-} from "@/lib/orders/line-item-sku";
+import { fetchAllShopifyCatalogVariants } from "@/lib/shopify/products-catalog";
 import type { Product } from "@/lib/products/types";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
@@ -84,55 +81,54 @@ export async function updateProductCost(
   return products[index];
 }
 
-export async function syncProductsFromOrders(): Promise<{
+export async function syncProductsFromShopify(): Promise<{
   imported: number;
+  updated: number;
+  removed: number;
   total: number;
 }> {
   if (isSupabaseConfigured()) {
-    return syncProductsFromOrdersInSupabase();
+    return syncProductsFromShopifyInSupabase();
   }
 
-  const { getStoredOrders } = await import("@/lib/orders/store");
-  const { orders } = await getStoredOrders();
+  const shopifyVariants = await fetchAllShopifyCatalogVariants();
+  const shopifySkus = new Set(shopifyVariants.map((variant) => variant.sku));
   const products = await readProductsFromJson();
-  const existing = new Set(products.map((p) => p.sku));
-  const lineCounts = new Map<string, number>();
+  const existingBySku = new Map(products.map((product) => [product.sku, product]));
+  const now = new Date().toISOString();
 
-  for (const order of orders) {
-    for (const item of order.lineItems) {
-      const sku = resolveLineItemCatalogSku(
-        item.sku,
-        item.title,
-        item.temuSku,
-      );
-      if (!sku) {
-        continue;
-      }
-      lineCounts.set(sku, (lineCounts.get(sku) ?? 0) + 1);
-      if (existing.has(sku)) {
-        continue;
-      }
-      existing.add(sku);
-      products.push({
-        sku,
-        title: item.title,
-        unitCost: null,
-        defaultPostage: null,
-        imageUrl: item.imageUrl,
-        shopifyProductId: item.productId,
-        temuSku: item.temuSku,
-        updatedAt: new Date().toISOString(),
-        orderLineCount: 0,
-      });
+  let imported = 0;
+  let updated = 0;
+  const nextProducts: Product[] = [];
+
+  for (const variant of shopifyVariants) {
+    const previous = existingBySku.get(variant.sku);
+    if (!previous) {
+      imported += 1;
+    } else {
+      updated += 1;
     }
+
+    nextProducts.push({
+      sku: variant.sku,
+      title: variant.title,
+      unitCost: previous?.unitCost ?? null,
+      defaultPostage: previous?.defaultPostage ?? null,
+      imageUrl: variant.imageUrl,
+      shopifyProductId: variant.shopifyProductId,
+      temuSku: previous?.temuSku ?? null,
+      updatedAt: now,
+      orderLineCount: previous?.orderLineCount ?? 0,
+    });
   }
 
-  const withCounts = products.map((p) => ({
-    ...p,
-    orderLineCount: lineCounts.get(p.sku) ?? 0,
-  }));
+  const removed = products.filter((product) => !shopifySkus.has(product.sku)).length;
+  await writeProductsToJson(nextProducts);
 
-  const imported = withCounts.length - (await readProductsFromJson()).length;
-  await writeProductsToJson(withCounts);
-  return { imported, total: withCounts.length };
+  return {
+    imported,
+    updated,
+    removed,
+    total: nextProducts.length,
+  };
 }
