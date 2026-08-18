@@ -43,24 +43,81 @@ function temuOwnerMap(
   return map;
 }
 
-async function fetchAllProductRows<K extends keyof ProductRow>(
-  columns: string,
-): Promise<Pick<ProductRow, K>[]> {
+async function fetchAllProducts(): Promise<ProductRow[]> {
   const supabase = createSupabaseAdmin();
-  const rows: Pick<ProductRow, K>[] = [];
+  const rows: ProductRow[] = [];
   let offset = 0;
 
   while (true) {
     const { data, error } = await supabase
       .from("products")
-      .select(columns)
+      .select("*")
       .range(offset, offset + PRODUCTS_PAGE_SIZE - 1);
 
     if (error) {
       throw new Error(error.message);
     }
 
-    const batch = (data ?? []) as Pick<ProductRow, K>[];
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PRODUCTS_PAGE_SIZE) {
+      break;
+    }
+    offset += PRODUCTS_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+type ProductCatalogRow = Pick<ProductRow, "sku" | "unit_cost" | "temu_sku">;
+
+async function fetchProductCatalogRows(): Promise<ProductCatalogRow[]> {
+  const supabase = createSupabaseAdmin();
+  const rows: ProductCatalogRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("sku, unit_cost, temu_sku")
+      .range(offset, offset + PRODUCTS_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PRODUCTS_PAGE_SIZE) {
+      break;
+    }
+    offset += PRODUCTS_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+type ProductSyncRow = Pick<
+  ProductRow,
+  "sku" | "unit_cost" | "default_postage" | "temu_sku"
+>;
+
+async function fetchProductSyncRows(): Promise<ProductSyncRow[]> {
+  const supabase = createSupabaseAdmin();
+  const rows: ProductSyncRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("sku, unit_cost, default_postage, temu_sku")
+      .range(offset, offset + PRODUCTS_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const batch = data ?? [];
     rows.push(...batch);
     if (batch.length < PRODUCTS_PAGE_SIZE) {
       break;
@@ -101,20 +158,16 @@ async function getOrderLineCountsBySku(
 }
 
 export async function getProductsFromSupabase(): Promise<Product[]> {
-  const rows = await fetchAllProductRows<keyof ProductRow>("*");
+  const rows = await fetchAllProducts();
   const lineCounts = await getOrderLineCountsBySku(temuOwnerMap(rows));
 
-  return rows.map((row) =>
-    rowToProduct(row as ProductRow, lineCounts.get(row.sku) ?? 0),
-  );
+  return rows.map((row) => rowToProduct(row, lineCounts.get(row.sku) ?? 0));
 }
 
 export async function getProductCatalogFromSupabase(): Promise<
   { sku: string; unitCost: number | null }[]
 > {
-  const rows = await fetchAllProductRows<"sku" | "unit_cost" | "temu_sku">(
-    "sku, unit_cost, temu_sku",
-  );
+  const rows = await fetchProductCatalogRows();
 
   return rows.map((row) => ({
     sku: row.sku,
@@ -159,9 +212,7 @@ export async function syncProductsFromShopifyInSupabase(): Promise<{
   const shopifyVariants = await fetchAllShopifyCatalogVariants();
   const shopifySkus = new Set(shopifyVariants.map((variant) => variant.sku));
 
-  const existing = await fetchAllProductRows<
-    "sku" | "unit_cost" | "default_postage" | "temu_sku"
-  >("sku, unit_cost, default_postage, temu_sku");
+  const existing = await fetchProductSyncRows();
   const existingBySku = new Map(existing.map((row) => [row.sku, row]));
 
   const now = new Date().toISOString();
