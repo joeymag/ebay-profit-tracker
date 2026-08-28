@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, ExternalLink, Loader2, Save, Upload } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Loader2, Save, Sparkles, Upload } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,7 @@ import type {
   EbayListingVariation,
   EbayVariationEdit,
 } from "@/lib/ebay/listing-details";
+import { variationRowNeedsSku } from "@/lib/ebay/listing-sku-status";
 import {
   calculateEbayItemProfit,
   formatEbayFinalValueFeeSchedule,
@@ -49,6 +50,20 @@ type ReviseResponse =
       warnings: string[];
     }
   | { ok: false; error: string; details?: string };
+
+type GenerateSkuResponse =
+  | {
+      ok: true;
+      successCount: number;
+      failureCount: number;
+      results: Array<{
+        listingId: string;
+        ok: boolean;
+        skus?: Array<{ specifics: string; sku: string }>;
+        error?: string;
+      }>;
+    }
+  | { ok: false; error: string };
 
 type DraftRow = {
   sku: string;
@@ -175,6 +190,8 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingCosts, setSavingCosts] = useState(false);
+  const [generatingSkus, setGeneratingSkus] = useState(false);
+  const [skuPrefix, setSkuPrefix] = useState("EBAY");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [sellingFeePercent, setSellingFeePercent] = useState(
@@ -325,6 +342,33 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       });
     });
   }, [drafts, listing?.promoRatePercent, sellingFeePercent]);
+
+  const missingSkuIndexes = useMemo(() => {
+    if (!listing) {
+      return [] as number[];
+    }
+
+    return listing.variations
+      .map((variation, index) => {
+        const draft = drafts[index];
+        if (
+          variationRowNeedsSku(
+            draft?.sku ?? "",
+            variation.sku,
+            listing.listingId,
+          )
+        ) {
+          return index;
+        }
+        return null;
+      })
+      .filter((index): index is number => index != null);
+  }, [drafts, listing]);
+
+  const selectedMissingSkuIndexes = useMemo(
+    () => missingSkuIndexes.filter((index) => selectedIndexes.has(index)),
+    [missingSkuIndexes, selectedIndexes],
+  );
 
   function updateSellingFeePercent(value: string) {
     setSellingFeePercent(value);
@@ -709,6 +753,77 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     }
   }
 
+  async function generateSkusForIndexes(indexes: number[]) {
+    if (!listing || indexes.length === 0) {
+      return;
+    }
+
+    const variationSpecifics = indexes
+      .map((index) => listing.variations[index]?.specifics.trim())
+      .filter((specifics): specifics is string => Boolean(specifics));
+
+    if (!variationSpecifics.length) {
+      setSaveError("Could not match selected variations.");
+      return;
+    }
+
+    setGeneratingSkus(true);
+    setSaveError(null);
+    setSaveMessage(null);
+
+    try {
+      const response = await fetch("/api/ebay/listings/generate-sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listingId,
+          prefix: skuPrefix.trim() || "EBAY",
+          variationSpecifics,
+        }),
+      });
+      const payload = (await response.json()) as GenerateSkuResponse;
+
+      if (!payload.ok) {
+        setSaveError(payload.error);
+        return;
+      }
+
+      const result = payload.results[0];
+      if (!result?.ok) {
+        setSaveError(result?.error ?? "Could not generate SKUs.");
+        return;
+      }
+
+      const skuCount = result.skus?.length ?? 0;
+      setSaveMessage(
+        `Generated ${skuCount} SKU${skuCount === 1 ? "" : "s"} and pushed to eBay.`,
+      );
+      await load();
+    } catch {
+      setSaveError("Could not reach the SKU generation endpoint.");
+    } finally {
+      setGeneratingSkus(false);
+    }
+  }
+
+  async function generateSkusForSelected() {
+    if (!selectedMissingSkuIndexes.length) {
+      setSaveError("Select variations that are missing SKUs.");
+      return;
+    }
+
+    await generateSkusForIndexes(selectedMissingSkuIndexes);
+  }
+
+  async function generateAllMissingSkus() {
+    if (!missingSkuIndexes.length) {
+      setSaveError("All variations already have SKUs.");
+      return;
+    }
+
+    await generateSkusForIndexes(missingSkuIndexes);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -778,8 +893,35 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           type="button"
           variant="secondary"
           size="sm"
+          onClick={() => void generateAllMissingSkus()}
+          disabled={
+            saving ||
+            savingCosts ||
+            generatingSkus ||
+            missingSkuIndexes.length === 0
+          }
+        >
+          {generatingSkus ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Generating SKUs…
+            </>
+          ) : (
+            <>
+              <Sparkles className="size-4" />
+              Generate SKU
+              {missingSkuIndexes.length > 0
+                ? ` (${missingSkuIndexes.length})`
+                : ""}
+            </>
+          )}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => void saveCosts()}
-          disabled={saving || savingCosts || dirtyCostIndexes.length === 0}
+          disabled={saving || savingCosts || generatingSkus || dirtyCostIndexes.length === 0}
         >
           {savingCosts ? (
             <>
@@ -803,6 +945,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           disabled={
             saving ||
             savingCosts ||
+            generatingSkus ||
             (dirtyIndexes.length === 0 && !titleDirty)
           }
         >
@@ -909,6 +1052,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                     {dirtyIndexes.length} eBay unsaved
                   </Badge>
                 ) : null}
+                {missingSkuIndexes.length > 0 ? (
+                  <Badge variant="secondary">
+                    {missingSkuIndexes.length} missing SKU
+                  </Badge>
+                ) : null}
               </CardDescription>
               {listing.promoWarning ? (
                 <p className="text-sm text-amber-700 dark:text-amber-300">
@@ -974,7 +1122,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
               </div>
             </div>
           </div>
-          <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-background/60 p-3 sm:flex-row sm:items-end">
+          <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-background/60 p-3 lg:flex-row lg:items-end">
             <div className="w-full max-w-[11rem] space-y-1.5">
               <label
                 htmlFor="bulk-postage"
@@ -993,7 +1141,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   inputMode="decimal"
                   placeholder="0.00"
                   className="pl-7 text-right tabular-nums"
-                  disabled={saving || savingCosts}
+                  disabled={saving || savingCosts || generatingSkus}
                 />
               </div>
             </div>
@@ -1002,15 +1150,60 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
               variant="secondary"
               onClick={applyBulkPostage}
               disabled={
-                saving || savingCosts || selectedIndexes.size === 0
+                saving || savingCosts || generatingSkus || selectedIndexes.size === 0
               }
             >
               Apply to {selectedIndexes.size || 0} selected
             </Button>
-            <p className="text-sm text-muted-foreground sm:pb-2">
+            <div className="w-full max-w-[11rem] space-y-1.5">
+              <label
+                htmlFor="variation-sku-prefix"
+                className="text-sm font-medium leading-none"
+              >
+                SKU prefix
+              </label>
+              <Input
+                id="variation-sku-prefix"
+                value={skuPrefix}
+                onChange={(event) =>
+                  setSkuPrefix(event.target.value.toUpperCase())
+                }
+                placeholder="EBAY"
+                className="font-mono uppercase"
+                maxLength={20}
+                disabled={saving || savingCosts || generatingSkus}
+              />
+            </div>
+            <Button
+              type="button"
+              onClick={() => void generateSkusForSelected()}
+              disabled={
+                saving ||
+                savingCosts ||
+                generatingSkus ||
+                selectedMissingSkuIndexes.length === 0
+              }
+            >
+              {generatingSkus ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="size-4" />
+                  Generate SKU for {selectedMissingSkuIndexes.length || 0}{" "}
+                  selected
+                </>
+              )}
+            </Button>
+            <p className="text-sm text-muted-foreground lg:pb-2">
               {allRowsSelected
                 ? "All variations selected"
                 : `${selectedIndexes.size} of ${drafts.length} selected`}
+              {missingSkuIndexes.length > 0
+                ? ` · ${missingSkuIndexes.length} missing SKU`
+                : ""}
             </p>
           </div>
         </CardHeader>
@@ -1033,7 +1226,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                         toggleSelectAll(event.target.checked)
                       }
                       className="size-4 rounded border-input accent-primary"
-                      disabled={saving || savingCosts}
+                      disabled={saving || savingCosts || generatingSkus}
                     />
                   </TableHead>
                   <TableHead>Variation</TableHead>
@@ -1058,6 +1251,12 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   const selected = selectedIndexes.has(index);
                   const currency = row.currency ?? listing.currency ?? "GBP";
                   const estimate = feeEstimates[index] ?? null;
+
+                  const needsSku = variationRowNeedsSku(
+                    draft.sku,
+                    row.sku,
+                    listing.listingId,
+                  );
 
                   return (
                     <TableRow
@@ -1099,9 +1298,17 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                             updateDraft(index, { sku: event.target.value })
                           }
                           placeholder="SKU"
-                          className="font-mono text-sm"
-                          disabled={saving || savingCosts}
+                          className={cn(
+                            "font-mono text-sm",
+                            needsSku && "border-amber-500/50",
+                          )}
+                          disabled={saving || savingCosts || generatingSkus}
                         />
+                        {needsSku ? (
+                          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                            Missing SKU
+                          </p>
+                        ) : null}
                       </TableCell>
                       <TableCell className="align-top">
                         <MoneyDraftInput

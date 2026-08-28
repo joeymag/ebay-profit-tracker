@@ -23,6 +23,7 @@ export type GenerateListingSkuResult = {
 export async function generateListingSkus(input: {
   listingId: string;
   prefix?: string;
+  variationSpecifics?: string[];
 }): Promise<GenerateListingSkuResult> {
   const listingId = input.listingId.trim();
   if (!listingId) {
@@ -33,10 +34,20 @@ export async function generateListingSkus(input: {
 
   try {
     const listing = await fetchEbayListingDetails(listingId);
+    const specificsFilter = input.variationSpecifics?.length
+      ? new Set(input.variationSpecifics.map((value) => value.trim()).filter(Boolean))
+      : null;
     const updates: EbayVariationEdit[] = [];
     const generated: GeneratedListingSku[] = [];
 
     for (const variation of listing.variations) {
+      if (
+        specificsFilter &&
+        !specificsFilter.has(variation.specifics.trim())
+      ) {
+        continue;
+      }
+
       if (!listingSkuIsMissing(variation.sku, listingId)) {
         continue;
       }
@@ -74,7 +85,9 @@ export async function generateListingSkus(input: {
       return {
         listingId,
         ok: false,
-        error: "This listing already has SKUs on all variations.",
+        error: specificsFilter
+          ? "Selected variations already have SKUs."
+          : "This listing already has SKUs on all variations.",
       };
     }
 

@@ -21,3 +21,12 @@ export function activeListingNeedsSku(listing: {
 
   return listingSkuIsMissing(listing.sku, listingId);
 }
+
+export function variationRowNeedsSku(
+  draftSku: string,
+  variationSku: string | null | undefined,
+  listingId: string,
+): boolean {
+  const effective = draftSku.trim() || variationSku?.trim() || "";
+  return listingSkuIsMissing(effective || null, listingId);
+}
