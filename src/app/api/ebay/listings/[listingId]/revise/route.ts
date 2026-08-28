@@ -18,6 +18,7 @@ type ReviseBody = {
   isMultiVariation?: boolean;
   format?: string | null;
   currency?: string;
+  title?: string | null;
   variations?: EbayVariationEdit[];
 };
 
@@ -61,9 +62,19 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  if (!Array.isArray(body.variations) || body.variations.length === 0) {
+  const variations = Array.isArray(body.variations) ? body.variations : [];
+  const title = body.title?.trim() || null;
+
+  if (!variations.length && !title) {
     return NextResponse.json(
-      { ok: false, error: "Provide at least one variation update." },
+      { ok: false, error: "Provide a title and/or at least one variation update." },
+      { status: 400 },
+    );
+  }
+
+  if (title && title.length > 80) {
+    return NextResponse.json(
+      { ok: false, error: "Title must be 80 characters or fewer." },
       { status: 400 },
     );
   }
@@ -74,7 +85,8 @@ export async function POST(request: Request, context: RouteContext) {
       isMultiVariation: Boolean(body.isMultiVariation),
       format: body.format ?? null,
       currency: body.currency?.trim() || "GBP",
-      variations: body.variations,
+      title,
+      variations,
     });
 
     return NextResponse.json({ ok: true, ...result });

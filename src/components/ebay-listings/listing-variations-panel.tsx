@@ -168,6 +168,7 @@ type ListingVariationsPanelProps = {
 export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProps) {
   const [listing, setListing] = useState<EbayListingDetails | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
+  const [titleDraft, setTitleDraft] = useState("");
   const [error, setError] = useState<Extract<DetailsResponse, { ok: false }> | null>(
     null,
   );
@@ -209,6 +210,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
 
       if (!payload.ok) {
         setListing(null);
+        setTitleDraft("");
         setDrafts([]);
         setSelectedIndexes(new Set());
         setError(payload);
@@ -216,12 +218,14 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       }
 
       setListing(payload.listing);
+      setTitleDraft(payload.listing.title ?? "");
       setDrafts(draftsFromVariations(payload.listing.variations));
       setSelectedIndexes(
         new Set(payload.listing.variations.map((_, index) => index)),
       );
     } catch {
       setListing(null);
+      setTitleDraft("");
       setDrafts([]);
       setSelectedIndexes(new Set());
       setError({
@@ -241,6 +245,14 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     () => (listing ? draftsFromVariations(listing.variations) : []),
     [listing],
   );
+
+  const titleDirty = useMemo(() => {
+    if (!listing) {
+      return false;
+    }
+
+    return titleDraft.trim() !== (listing.title ?? "").trim();
+  }, [listing, titleDraft]);
 
   const dirtyIndexes = useMemo(() => {
     const indexes: number[] = [];
@@ -447,7 +459,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
         body: JSON.stringify({
           unitCost: costChanged ? unitCost : undefined,
           defaultPostage: postageChanged ? defaultPostage : undefined,
-          title: listing.title ?? variation.specifics,
+          title:
+            titleDraft.trim() ||
+            listing.title?.trim() ||
+            variation.specifics ||
+            sku,
         }),
       });
       const payload = (await response.json()) as {
@@ -601,7 +617,17 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   }
 
   async function pushToEbay() {
-    if (!listing || dirtyIndexes.length === 0) {
+    if (!listing || (dirtyIndexes.length === 0 && !titleDirty)) {
+      return;
+    }
+
+    const trimmedTitle = titleDraft.trim();
+    if (titleDirty && !trimmedTitle) {
+      setSaveError("Title cannot be empty.");
+      return;
+    }
+    if (titleDirty && trimmedTitle.length > 80) {
+      setSaveError("Title must be 80 characters or fewer.");
       return;
     }
 
@@ -646,6 +672,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             isMultiVariation: listing.isMultiVariation,
             format: listing.format,
             currency: listing.currency ?? "GBP",
+            title: titleDirty ? trimmedTitle : undefined,
             variations: updates,
           }),
         },
@@ -662,8 +689,17 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       const warningText = payload.warnings.length
         ? ` Warnings: ${payload.warnings.slice(0, 2).join(" · ")}`
         : "";
+      const parts: string[] = [];
+      if (titleDirty) {
+        parts.push("title");
+      }
+      if (payload.updatedCount > (titleDirty ? 1 : 0)) {
+        parts.push(
+          `${payload.updatedCount - (titleDirty ? 1 : 0)} variation update${payload.updatedCount - (titleDirty ? 1 : 0) === 1 ? "" : "s"}`,
+        );
+      }
       setSaveMessage(
-        `Pushed ${payload.updatedCount} update${payload.updatedCount === 1 ? "" : "s"} to eBay (${payload.ack ?? "Success"}).${warningText}`,
+        `Pushed ${parts.join(" and ") || "update"} to eBay (${payload.ack ?? "Success"}).${warningText}`,
       );
       await load();
     } catch {
@@ -764,7 +800,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           type="button"
           size="sm"
           onClick={() => void pushToEbay()}
-          disabled={saving || savingCosts || dirtyIndexes.length === 0}
+          disabled={
+            saving ||
+            savingCosts ||
+            (dirtyIndexes.length === 0 && !titleDirty)
+          }
         >
           {saving ? (
             <>
@@ -774,8 +814,10 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           ) : (
             <>
               <Upload className="size-4" />
-              Push {dirtyIndexes.length || ""} change
-              {dirtyIndexes.length === 1 ? "" : "s"} to eBay
+              Push{" "}
+              {dirtyIndexes.length + (titleDirty ? 1 : 0) || ""} change
+              {dirtyIndexes.length + (titleDirty ? 1 : 0) === 1 ? "" : "s"} to
+              eBay
             </>
           )}
         </Button>
@@ -801,10 +843,31 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
               alt={listing.title ?? listing.listingId}
               className="size-20"
             />
-            <div className="min-w-0 space-y-2">
-              <CardTitle className="text-xl leading-snug">
-                {listing.title ?? `Listing ${listing.listingId}`}
-              </CardTitle>
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="listing-title-draft"
+                  className="text-sm font-medium text-muted-foreground"
+                >
+                  Listing title
+                </label>
+                <Input
+                  id="listing-title-draft"
+                  value={titleDraft}
+                  onChange={(event) => {
+                    setTitleDraft(event.target.value);
+                    setSaveMessage(null);
+                    setSaveError(null);
+                  }}
+                  maxLength={80}
+                  className="text-base font-medium"
+                  disabled={saving || savingCosts}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {titleDraft.length}/80 characters
+                  {titleDirty ? " · unsaved title change" : ""}
+                </p>
+              </div>
               <CardDescription className="flex flex-wrap items-center gap-2">
                 <span className="font-mono">{listing.listingId}</span>
                 {listing.isMultiVariation ? (
@@ -832,6 +895,9 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   <Badge variant="outline">
                     {listing.status.replaceAll("_", " ").toLowerCase()}
                   </Badge>
+                ) : null}
+                {titleDirty ? (
+                  <Badge variant="destructive">Title unsaved</Badge>
                 ) : null}
                 {dirtyCostIndexes.length > 0 ? (
                   <Badge variant="secondary">

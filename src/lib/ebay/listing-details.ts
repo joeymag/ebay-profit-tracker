@@ -65,6 +65,7 @@ export type ReviseEbayListingInput = {
   isMultiVariation: boolean;
   format: string | null;
   currency: string;
+  title?: string | null;
   variations: EbayVariationEdit[];
 };
 
@@ -310,16 +311,20 @@ export async function reviseEbayListingSkuAndPrice(
     throw new Error("Listing ID is required.");
   }
 
-  if (!input.variations.length) {
-    throw new Error("No variation updates were provided.");
+  const title =
+    input.title != null && input.title.trim() ? input.title.trim() : null;
+
+  if (!input.variations.length && !title) {
+    throw new Error("Provide a title and/or at least one variation update.");
   }
 
   const currency = (input.currency || "GBP").trim().toUpperCase();
   const callName = reviseCallName(input.format);
+  const titleXml = title ? `<Title>${escapeXml(title)}</Title>` : "";
 
   let itemBody: string;
 
-  if (input.isMultiVariation) {
+  if (input.isMultiVariation && input.variations.length) {
     const variationXml = input.variations
       .map((variation) => {
         if (!variation.specificsPairs.length) {
@@ -349,11 +354,12 @@ export async function reviseEbayListingSkuAndPrice(
     itemBody = `
   <Item>
     <ItemID>${escapeXml(listingId)}</ItemID>
+    ${titleXml}
     <Variations>
       ${variationXml}
     </Variations>
   </Item>`;
-  } else {
+  } else if (input.variations.length) {
     const variation = input.variations[0]!;
     const skuXml =
       variation.sku != null
@@ -367,8 +373,15 @@ export async function reviseEbayListingSkuAndPrice(
     itemBody = `
   <Item>
     <ItemID>${escapeXml(listingId)}</ItemID>
+    ${titleXml}
     ${skuXml}
     ${priceXml}
+  </Item>`;
+  } else {
+    itemBody = `
+  <Item>
+    <ItemID>${escapeXml(listingId)}</ItemID>
+    ${titleXml}
   </Item>`;
   }
 
@@ -396,7 +409,7 @@ export async function reviseEbayListingSkuAndPrice(
 
   return {
     listingId,
-    updatedCount: input.variations.length,
+    updatedCount: input.variations.length + (title ? 1 : 0),
     ack,
     warnings,
   };

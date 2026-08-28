@@ -32,12 +32,24 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (
     body.unitCost === undefined &&
-    body.defaultPostage === undefined
+    body.defaultPostage === undefined &&
+    body.title === undefined
   ) {
     return NextResponse.json(
-      { ok: false, error: "Provide unitCost and/or defaultPostage." },
+      { ok: false, error: "Provide unitCost, defaultPostage, and/or title." },
       { status: 400 },
     );
+  }
+
+  if (body.title !== null && body.title !== undefined) {
+    const trimmedTitle = body.title.trim();
+    if (!trimmedTitle) {
+      return NextResponse.json(
+        { ok: false, error: "title must be a non-empty string or null." },
+        { status: 400 },
+      );
+    }
+    body.title = trimmedTitle;
   }
 
   if (body.unitCost !== null && body.unitCost !== undefined) {
