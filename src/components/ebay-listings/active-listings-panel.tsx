@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, Loader2, Search } from "lucide-react";
+import { Check, ExternalLink, Loader2, Search, Sparkles } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ActiveEbayListing } from "@/lib/ebay/active-listings";
+import { activeListingNeedsSku } from "@/lib/ebay/listing-sku-status";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +48,24 @@ type ActiveListingsResponse =
       code?: string;
       details?: string;
     };
+
+type GenerateSkuResponse =
+  | {
+      ok: true;
+      successCount: number;
+      failureCount: number;
+      results: Array<{
+        listingId: string;
+        ok: boolean;
+        skus?: Array<{ specifics: string; sku: string }>;
+        error?: string;
+      }>;
+    }
+  | { ok: false; error: string };
+
+function listingKey(listing: ActiveEbayListing): string {
+  return listing.listingId ?? listing.sku;
+}
 
 function formatPrice(
   price: number | null | undefined,
@@ -76,6 +95,12 @@ export function ActiveEbayListingsPanel() {
   );
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [skuPrefix, setSkuPrefix] = useState("EBAY");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [generatingKeys, setGeneratingKeys] = useState<Set<string>>(() => new Set());
+  const [bulkGenerating, setBulkGenerating] = useState(false);
+  const [skuMessage, setSkuMessage] = useState<string | null>(null);
+  const [skuError, setSkuError] = useState<string | null>(null);
 
   const loadListings = useCallback(async () => {
     setLoading(true);
@@ -133,6 +158,160 @@ export function ActiveEbayListingsPanel() {
       return haystack.includes(needle);
     });
   }, [data, query]);
+
+  const missingSkuCount = useMemo(
+    () => (data?.listings ?? []).filter(activeListingNeedsSku).length,
+    [data],
+  );
+
+  const selectedListings = useMemo(() => {
+    if (!data?.listings.length || selectedKeys.size === 0) {
+      return [];
+    }
+
+    return data.listings.filter((listing) => selectedKeys.has(listingKey(listing)));
+  }, [data, selectedKeys]);
+
+  const selectedNeedingSku = useMemo(
+    () => selectedListings.filter(activeListingNeedsSku),
+    [selectedListings],
+  );
+
+  const allFilteredSelected =
+    filtered.length > 0 &&
+    filtered.every((listing) => selectedKeys.has(listingKey(listing)));
+  const someFilteredSelected =
+    filtered.some((listing) => selectedKeys.has(listingKey(listing))) &&
+    !allFilteredSelected;
+
+  function toggleListingSelected(listing: ActiveEbayListing, checked: boolean) {
+    const key = listingKey(listing);
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAllFiltered(checked: boolean) {
+    if (!checked) {
+      setSelectedKeys((current) => {
+        const next = new Set(current);
+        for (const listing of filtered) {
+          next.delete(listingKey(listing));
+        }
+        return next;
+      });
+      return;
+    }
+
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      for (const listing of filtered) {
+        next.add(listingKey(listing));
+      }
+      return next;
+    });
+  }
+
+  async function generateSkusForListings(listings: ActiveEbayListing[]) {
+    const targets = listings.filter(activeListingNeedsSku);
+    if (!targets.length) {
+      setSkuError("Selected listings already have SKUs.");
+      return;
+    }
+
+    const listingIds = targets
+      .map((listing) => listing.listingId?.trim())
+      .filter((listingId): listingId is string => Boolean(listingId));
+
+    if (!listingIds.length) {
+      setSkuError("Selected listings are missing listing IDs.");
+      return;
+    }
+
+    const keys = targets.map(listingKey);
+    setSkuError(null);
+    setSkuMessage(null);
+    setGeneratingKeys((current) => new Set([...current, ...keys]));
+
+    try {
+      const response = await fetch("/api/ebay/listings/generate-sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listingIds,
+          prefix: skuPrefix.trim() || "EBAY",
+        }),
+      });
+      const payload = (await response.json()) as GenerateSkuResponse;
+
+      if (!payload.ok) {
+        setSkuError(payload.error);
+        return;
+      }
+
+      const failures = payload.results.filter((result) => !result.ok);
+      if (payload.successCount > 0) {
+        await loadListings();
+        setSelectedKeys(new Set());
+      }
+
+      if (payload.successCount === 0) {
+        setSkuError(
+          failures
+            .map((result) => `${result.listingId}: ${result.error ?? "Failed"}`)
+            .join(" · "),
+        );
+        return;
+      }
+
+      const skuCount = payload.results.reduce(
+        (sum, result) => sum + (result.skus?.length ?? 0),
+        0,
+      );
+      let message = `Generated ${skuCount} SKU${skuCount === 1 ? "" : "s"} for ${payload.successCount} listing${payload.successCount === 1 ? "" : "s"}.`;
+      if (failures.length > 0) {
+        message += ` ${failures.length} failed: ${failures
+          .slice(0, 3)
+          .map((result) => result.listingId)
+          .join(", ")}${failures.length > 3 ? "…" : ""}.`;
+      }
+      setSkuMessage(message);
+    } catch {
+      setSkuError("Could not reach the SKU generation endpoint.");
+    } finally {
+      setGeneratingKeys((current) => {
+        const next = new Set(current);
+        for (const key of keys) {
+          next.delete(key);
+        }
+        return next;
+      });
+    }
+  }
+
+  async function generateSkuForListing(listing: ActiveEbayListing) {
+    await generateSkusForListings([listing]);
+  }
+
+  async function generateSkuForSelected() {
+    if (!selectedNeedingSku.length) {
+      setSkuError("Select listings that are missing SKUs.");
+      return;
+    }
+
+    setBulkGenerating(true);
+    try {
+      await generateSkusForListings(selectedNeedingSku);
+    } finally {
+      setBulkGenerating(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -204,18 +383,28 @@ export function ActiveEbayListingsPanel() {
         </Card>
         <Card className="surface-card">
           <CardHeader className="pb-2">
-            <CardDescription>With SKU</CardDescription>
+            <CardDescription>Missing SKU</CardDescription>
             <CardTitle className="text-2xl tabular-nums">
-              {data.listings
-                .filter((listing) => listing.sku && listing.sku !== listing.listingId)
-                .length.toLocaleString("en-GB")}
+              {missingSkuCount.toLocaleString("en-GB")}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Seller SKU set on the listing
+            Listings using the eBay item ID as SKU
           </CardContent>
         </Card>
       </div>
+
+      {skuMessage ? (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <p>{skuMessage}</p>
+        </div>
+      ) : null}
+      {skuError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {skuError}
+        </div>
+      ) : null}
 
       {data.promoWarning ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
@@ -249,6 +438,45 @@ export function ActiveEbayListingsPanel() {
                   className="pl-9"
                 />
               </div>
+              <div className="space-y-1">
+                <label htmlFor="ebay-sku-prefix" className="sr-only">
+                  SKU prefix
+                </label>
+                <Input
+                  id="ebay-sku-prefix"
+                  value={skuPrefix}
+                  onChange={(event) => setSkuPrefix(event.target.value.toUpperCase())}
+                  placeholder="EBAY"
+                  className="w-24 font-mono uppercase"
+                  maxLength={20}
+                  disabled={bulkGenerating || generatingKeys.size > 0}
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void generateSkuForSelected()}
+                disabled={
+                  bulkGenerating ||
+                  generatingKeys.size > 0 ||
+                  selectedNeedingSku.length === 0
+                }
+              >
+                {bulkGenerating ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="size-4" />
+                    Generate SKU
+                    {selectedNeedingSku.length > 0
+                      ? ` (${selectedNeedingSku.length})`
+                      : ""}
+                  </>
+                )}
+              </Button>
               <Button type="button" variant="outline" size="sm" onClick={() => void loadListings()}>
                 Refresh
               </Button>
@@ -275,14 +503,31 @@ export function ActiveEbayListingsPanel() {
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-16 pl-6" />
-                    <TableHead className="w-[30%]">Listing</TableHead>
+                    <TableHead className="w-10 pl-6">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border border-input"
+                        checked={allFilteredSelected}
+                        ref={(element) => {
+                          if (element) {
+                            element.indeterminate = someFilteredSelected;
+                          }
+                        }}
+                        onChange={(event) =>
+                          toggleSelectAllFiltered(event.target.checked)
+                        }
+                        aria-label="Select all listings"
+                      />
+                    </TableHead>
+                    <TableHead className="w-16" />
+                    <TableHead className="w-[26%]">Listing</TableHead>
                     <TableHead className="w-[14%]">SKU</TableHead>
                     <TableHead className="w-[12%]">Listing ID</TableHead>
                     <TableHead className="w-[10%] text-right">Price</TableHead>
                     <TableHead className="w-[10%] text-right">Promo</TableHead>
                     <TableHead className="w-[8%] text-right">Qty</TableHead>
-                    <TableHead className="w-[10%] pr-6">Status</TableHead>
+                    <TableHead className="w-[10%]">Status</TableHead>
+                    <TableHead className="w-[10%] pr-6 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -290,13 +535,27 @@ export function ActiveEbayListingsPanel() {
                     const detailHref = listing.listingId
                       ? `/ebay-listings/${encodeURIComponent(listing.listingId)}`
                       : null;
+                    const key = listingKey(listing);
+                    const needsSku = activeListingNeedsSku(listing);
+                    const isGenerating = generatingKeys.has(key);
 
                     return (
                     <TableRow
-                      key={`${listing.sku}-${listing.offerId ?? listing.listingId}`}
-                      className={detailHref ? "cursor-pointer hover:bg-muted/40" : undefined}
+                      key={key}
+                      className={detailHref ? "hover:bg-muted/40" : undefined}
                     >
                       <TableCell className="pl-6 align-top">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border border-input"
+                          checked={selectedKeys.has(key)}
+                          onChange={(event) =>
+                            toggleListingSelected(listing, event.target.checked)
+                          }
+                          aria-label={`Select ${listing.title ?? listing.sku}`}
+                        />
+                      </TableCell>
+                      <TableCell className="align-top">
                         {detailHref ? (
                           <Link href={detailHref}>
                             <LineItemImage
@@ -333,11 +592,19 @@ export function ActiveEbayListingsPanel() {
                       <TableCell className="min-w-0 align-top whitespace-normal font-mono text-sm">
                         <Badge
                           variant="outline"
-                          className="max-w-full truncate bg-background font-mono text-sm font-medium"
+                          className={cn(
+                            "max-w-full truncate bg-background font-mono text-sm font-medium",
+                            needsSku && "border-amber-500/40 text-amber-800 dark:text-amber-300",
+                          )}
                           title={listing.sku}
                         >
                           {listing.sku}
                         </Badge>
+                        {needsSku ? (
+                          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                            Missing SKU
+                          </p>
+                        ) : null}
                       </TableCell>
                       <TableCell className="align-top whitespace-normal">
                         {listing.listingId ? (
@@ -400,10 +667,35 @@ export function ActiveEbayListingsPanel() {
                           ? listing.quantity.toLocaleString("en-GB")
                           : "—"}
                       </TableCell>
-                      <TableCell className="pr-6 align-top">
+                      <TableCell className="align-top">
                         <Badge variant="secondary">
                           {listing.status.replaceAll("_", " ").toLowerCase()}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="pr-6 text-right align-top">
+                        {needsSku && listing.listingId ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isGenerating || bulkGenerating}
+                            onClick={() => void generateSkuForListing(listing)}
+                          >
+                            {isGenerating ? (
+                              <>
+                                <Loader2 className="size-4 animate-spin" />
+                                Generating…
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="size-4" />
+                                Generate SKU
+                              </>
+                            )}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                     );
@@ -417,8 +709,9 @@ export function ActiveEbayListingsPanel() {
 
       <p className="text-sm text-muted-foreground">
         Loads Seller Hub listings via the Trading API and Promoted Listings ad
-        rates via the Marketing API (same eBay login as fee sync). Click a
-        listing to edit SKU/price or view variations.
+        rates via the Marketing API (same eBay login as fee sync). Select
+        listings and use Generate SKU to assign unique seller SKUs on eBay, or
+        click a listing to edit SKU/price and view variations.
       </p>
     </div>
   );
