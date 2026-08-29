@@ -11,6 +11,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export type TitlePeriodMetrics = {
   searchImpressions: number | null;
+  allImpressions: number | null;
   views: number | null;
   transactions: number | null;
   clickThroughRate: number | null;
@@ -32,13 +33,16 @@ export type TitlePeriodRecord = {
   metrics: TitlePeriodMetrics;
 };
 
+/** Count deltas are per-day so unequal period lengths stay comparable. */
 export type TitlePeriodComparison = {
   previousPeriodId: string;
   currentPeriodId: string;
-  salesDelta: number | null;
+  searchImpressionsDelta: number | null;
+  allImpressionsDelta: number | null;
   viewsDelta: number | null;
-  impressionsDelta: number | null;
+  salesDelta: number | null;
   ctrDelta: number | null;
+  conversionDelta: number | null;
 };
 
 export type ListingTitleExperiment = {
@@ -83,6 +87,14 @@ function delta(current: number | null, previous: number | null): number | null {
   return current - previous;
 }
 
+function perDay(value: number | null, days: number): number | null {
+  if (value == null || days <= 0) {
+    return null;
+  }
+
+  return value / days;
+}
+
 async function metricsForPeriod(period: PeriodRow): Promise<TitlePeriodMetrics> {
   const { startYmd, endYmd } = periodBoundsToYmd(
     period.started_at,
@@ -96,6 +108,7 @@ async function metricsForPeriod(period: PeriodRow): Promise<TitlePeriodMetrics> 
 
   return {
     searchImpressions: traffic?.searchImpressions ?? null,
+    allImpressions: traffic?.allImpressions ?? traffic?.totalImpressions ?? null,
     views: traffic?.views ?? null,
     transactions: traffic?.transactions ?? null,
     clickThroughRate: traffic?.clickThroughRate ?? null,
@@ -208,18 +221,32 @@ export async function getListingTitleExperiment(
     comparisons.push({
       previousPeriodId: previous.id,
       currentPeriodId: current.id,
-      salesDelta: delta(
-        current.metrics.transactions,
-        previous.metrics.transactions,
+      searchImpressionsDelta: delta(
+        perDay(current.metrics.searchImpressions, current.metrics.daysTracked),
+        perDay(
+          previous.metrics.searchImpressions,
+          previous.metrics.daysTracked,
+        ),
       ),
-      viewsDelta: delta(current.metrics.views, previous.metrics.views),
-      impressionsDelta: delta(
-        current.metrics.searchImpressions,
-        previous.metrics.searchImpressions,
+      allImpressionsDelta: delta(
+        perDay(current.metrics.allImpressions, current.metrics.daysTracked),
+        perDay(previous.metrics.allImpressions, previous.metrics.daysTracked),
+      ),
+      viewsDelta: delta(
+        perDay(current.metrics.views, current.metrics.daysTracked),
+        perDay(previous.metrics.views, previous.metrics.daysTracked),
+      ),
+      salesDelta: delta(
+        perDay(current.metrics.transactions, current.metrics.daysTracked),
+        perDay(previous.metrics.transactions, previous.metrics.daysTracked),
       ),
       ctrDelta: delta(
         current.metrics.clickThroughRate,
         previous.metrics.clickThroughRate,
+      ),
+      conversionDelta: delta(
+        current.metrics.salesConversionRate,
+        previous.metrics.salesConversionRate,
       ),
     });
   }
@@ -300,7 +327,10 @@ export async function saveListingTitleChange(input: {
   let ebayUpdateError: string | null = null;
   const sku = input.sku?.trim() || active?.sku?.trim() || null;
 
-  if (input.applyToEbay !== false) {
+  if (input.applyToEbay === false) {
+    // Caller already updated eBay (e.g. listing revise) — just start tracking.
+    appliedToEbay = true;
+  } else {
     const { marketplaceId } = getEbayConfig();
     const browseDetails = await fetchBrowseItemByLegacyId(
       listingId,

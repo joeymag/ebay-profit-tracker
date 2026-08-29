@@ -24,6 +24,8 @@ export async function POST(request: Request, context: RouteContext) {
     sku?: string | null;
     imageUrl?: string | null;
     applyToEbay?: boolean;
+    isItemGroup?: boolean;
+    memberSkus?: string[];
   };
 
   try {
@@ -50,6 +52,8 @@ export async function POST(request: Request, context: RouteContext) {
       sku: body.sku,
       imageUrl: body.imageUrl,
       applyToEbay: body.applyToEbay,
+      isItemGroup: body.isItemGroup,
+      memberSkus: body.memberSkus,
     });
 
     return NextResponse.json({

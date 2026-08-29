@@ -742,8 +742,46 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
           `${payload.updatedCount - (titleDirty ? 1 : 0)} variation update${payload.updatedCount - (titleDirty ? 1 : 0) === 1 ? "" : "s"}`,
         );
       }
+
+      let trackingNote = "";
+      if (titleDirty) {
+        try {
+          const trackResponse = await fetch(
+            `/api/ebay/listings/${encodeURIComponent(listingId)}/title`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title: trimmedTitle,
+                notes: "Changed from listing editor",
+                sku: listing.sku,
+                imageUrl: listing.imageUrl,
+                applyToEbay: false,
+              }),
+            },
+          );
+          const trackPayload = (await trackResponse.json()) as {
+            ok: boolean;
+            error?: string;
+          };
+          if (trackPayload.ok) {
+            trackingNote =
+              " Title tracking started — compare performance in eBay analytics.";
+          } else if (
+            trackPayload.error?.includes("already the active tracked title")
+          ) {
+            trackingNote = "";
+          } else {
+            trackingNote = ` Title pushed, but tracking failed: ${trackPayload.error ?? "unknown error"}.`;
+          }
+        } catch {
+          trackingNote =
+            " Title pushed, but could not start analytics tracking.";
+        }
+      }
+
       setSaveMessage(
-        `Pushed ${parts.join(" and ") || "update"} to eBay (${payload.ack ?? "Success"}).${warningText}`,
+        `Pushed ${parts.join(" and ") || "update"} to eBay (${payload.ack ?? "Success"}).${warningText}${trackingNote}`,
       );
       await load();
     } catch {

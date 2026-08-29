@@ -43,13 +43,27 @@ function formatCount(value: number | null | undefined): string {
   return value.toLocaleString("en-GB");
 }
 
-function formatDelta(value: number | null | undefined, suffix = ""): string {
+function formatDelta(value: number | null | undefined, suffix = "", digits = 1): string {
   if (value == null) {
     return "—";
   }
 
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toLocaleString("en-GB")}${suffix}`;
+  const rounded =
+    Math.abs(value) >= 100
+      ? Math.round(value)
+      : Number(value.toFixed(digits));
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded.toLocaleString("en-GB")}${suffix}`;
+}
+
+function deltaToneClass(value: number | null | undefined): string {
+  if (value == null || value === 0) {
+    return "text-foreground";
+  }
+
+  return value > 0
+    ? "text-emerald-700 dark:text-emerald-300"
+    : "text-red-700 dark:text-red-300";
 }
 
 function formatDateRange(startedAt: string, endedAt: string | null): string {
@@ -277,44 +291,103 @@ export function ListingTitleExperimentPanel({
       </Card>
 
       {latestComparison ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card className="surface-card">
-            <CardHeader className="pb-2">
-              <CardDescription>Sales change</CardDescription>
-              <CardTitle className="text-2xl tabular-nums">
-                {formatDelta(latestComparison.salesDelta)}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              Since the latest title change
-            </CardContent>
-          </Card>
-          <Card className="surface-card">
-            <CardHeader className="pb-2">
-              <CardDescription>Views change</CardDescription>
-              <CardTitle className="text-2xl tabular-nums">
-                {formatDelta(latestComparison.viewsDelta)}
-              </CardTitle>
-            </CardHeader>
-          </Card>
-          <Card className="surface-card">
-            <CardHeader className="pb-2">
-              <CardDescription>Search impressions change</CardDescription>
-              <CardTitle className="text-2xl tabular-nums">
-                {formatDelta(latestComparison.impressionsDelta)}
-              </CardTitle>
-            </CardHeader>
-          </Card>
-          <Card className="surface-card">
-            <CardHeader className="pb-2">
-              <CardDescription>CTR change</CardDescription>
-              <CardTitle className="text-2xl tabular-nums">
-                {latestComparison.ctrDelta != null
-                  ? formatDelta(Number((latestComparison.ctrDelta * 100).toFixed(1)), " pp")
-                  : "—"}
-              </CardTitle>
-            </CardHeader>
-          </Card>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Change vs previous title (counts are per day so unequal periods stay
+            comparable)
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Card className="surface-card">
+              <CardHeader className="pb-2">
+                <CardDescription>Search impr. / day</CardDescription>
+                <CardTitle
+                  className={cn(
+                    "text-2xl tabular-nums",
+                    deltaToneClass(latestComparison.searchImpressionsDelta),
+                  )}
+                >
+                  {formatDelta(latestComparison.searchImpressionsDelta)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card className="surface-card">
+              <CardHeader className="pb-2">
+                <CardDescription>All impr. / day</CardDescription>
+                <CardTitle
+                  className={cn(
+                    "text-2xl tabular-nums",
+                    deltaToneClass(latestComparison.allImpressionsDelta),
+                  )}
+                >
+                  {formatDelta(latestComparison.allImpressionsDelta)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card className="surface-card">
+              <CardHeader className="pb-2">
+                <CardDescription>Views / day</CardDescription>
+                <CardTitle
+                  className={cn(
+                    "text-2xl tabular-nums",
+                    deltaToneClass(latestComparison.viewsDelta),
+                  )}
+                >
+                  {formatDelta(latestComparison.viewsDelta)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card className="surface-card">
+              <CardHeader className="pb-2">
+                <CardDescription>CTR</CardDescription>
+                <CardTitle
+                  className={cn(
+                    "text-2xl tabular-nums",
+                    deltaToneClass(latestComparison.ctrDelta),
+                  )}
+                >
+                  {latestComparison.ctrDelta != null
+                    ? formatDelta(
+                        Number((latestComparison.ctrDelta * 100).toFixed(1)),
+                        " pp",
+                      )
+                    : "—"}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card className="surface-card">
+              <CardHeader className="pb-2">
+                <CardDescription>Sales / day</CardDescription>
+                <CardTitle
+                  className={cn(
+                    "text-2xl tabular-nums",
+                    deltaToneClass(latestComparison.salesDelta),
+                  )}
+                >
+                  {formatDelta(latestComparison.salesDelta, "", 2)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card className="surface-card">
+              <CardHeader className="pb-2">
+                <CardDescription>Conv.</CardDescription>
+                <CardTitle
+                  className={cn(
+                    "text-2xl tabular-nums",
+                    deltaToneClass(latestComparison.conversionDelta),
+                  )}
+                >
+                  {latestComparison.conversionDelta != null
+                    ? formatDelta(
+                        Number(
+                          (latestComparison.conversionDelta * 100).toFixed(1),
+                        ),
+                        " pp",
+                      )
+                    : "—"}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+          </div>
         </div>
       ) : null}
 
@@ -322,9 +395,10 @@ export function ListingTitleExperimentPanel({
         <CardHeader>
           <CardTitle>Edit listing title</CardTitle>
           <CardDescription>
-            Each save closes the previous title period and starts tracking sales
-            from today. Multi-variation listings update the eBay inventory item
-            group title and all variation SKUs when connected with sell.inventory.
+            Each save closes the previous title period and starts tracking from
+            today. Title changes from the listing editor also start a period.
+            Multi-variation listings update the eBay inventory item group title
+            and all variation SKUs when connected with sell.inventory.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -401,10 +475,12 @@ export function ListingTitleExperimentPanel({
                 <TableHead>Title used</TableHead>
                 <TableHead>Period</TableHead>
                 <TableHead className="text-right">Days</TableHead>
-                <TableHead className="text-right">Sales</TableHead>
-                <TableHead className="text-right">Views</TableHead>
                 <TableHead className="text-right">Search impr.</TableHead>
+                <TableHead className="text-right">All impr.</TableHead>
+                <TableHead className="text-right">Views</TableHead>
                 <TableHead className="text-right">CTR</TableHead>
+                <TableHead className="text-right">Sales</TableHead>
+                <TableHead className="text-right">Conv.</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -440,16 +516,22 @@ export function ListingTitleExperimentPanel({
                     {period.metrics.daysTracked}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatCount(period.metrics.transactions)}
+                    {formatCount(period.metrics.searchImpressions)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatCount(period.metrics.allImpressions)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatCount(period.metrics.views)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatCount(period.metrics.searchImpressions)}
+                    {formatPercent(period.metrics.clickThroughRate)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatPercent(period.metrics.clickThroughRate)}
+                    {formatCount(period.metrics.transactions)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatPercent(period.metrics.salesConversionRate)}
                   </TableCell>
                 </TableRow>
               ))}
