@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, Loader2, Search, Sparkles } from "lucide-react";
+import { Check, ExternalLink, Loader2, Percent, Search, Sparkles } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -24,9 +24,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ActiveEbayListing } from "@/lib/ebay/active-listings";
+import { applyPricePercentChange } from "@/lib/ebay/price-percent";
 import { activeListingNeedsSku } from "@/lib/ebay/listing-sku-status";
 import { formatMoney } from "@/lib/format";
+import { calculateEbayItemProfit } from "@/lib/orders/ebay-profit-calculator";
 import { cn } from "@/lib/utils";
+
+const SELLING_FEE_STORAGE_KEY = "ebay-listing-selling-fee-percent";
+const DEFAULT_SELLING_FEE_PERCENT = "12.8";
 
 type ActiveListingsResponse =
   | {
@@ -63,6 +68,22 @@ type GenerateSkuResponse =
     }
   | { ok: false; error: string };
 
+type BulkPriceResponse =
+  | {
+      ok: true;
+      successCount: number;
+      failureCount: number;
+      variationCount: number;
+      percentChange: number;
+      results: Array<{
+        listingId: string;
+        ok: boolean;
+        variationCount?: number;
+        error?: string;
+      }>;
+    }
+  | { ok: false; error: string };
+
 function listingKey(listing: ActiveEbayListing): string {
   return listing.listingId ?? listing.sku;
 }
@@ -86,6 +107,43 @@ function formatPromoRate(rate: number | null | undefined): string {
   return `${rate.toFixed(rate % 1 === 0 ? 0 : 1)}%`;
 }
 
+function parsePercentInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function estimateListingProfit(
+  listing: ActiveEbayListing,
+  sellPrice: number,
+  sellingFeePercent: number,
+) {
+  if (listing.unitCost == null) {
+    return null;
+  }
+
+  return calculateEbayItemProfit({
+    sellPrice,
+    productCostExVat: listing.unitCost,
+    ebayFeeRatePercent: sellingFeePercent,
+    ebayAdsFeeRatePercent: listing.promoRatePercent ?? 0,
+    postage: listing.defaultPostage ?? 0,
+  });
+}
+
+function formatProfitDelta(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatMoney(value)}`;
+}
+
 export function ActiveEbayListingsPanel() {
   const [data, setData] = useState<Extract<ActiveListingsResponse, { ok: true }> | null>(
     null,
@@ -101,6 +159,24 @@ export function ActiveEbayListingsPanel() {
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [skuMessage, setSkuMessage] = useState<string | null>(null);
   const [skuError, setSkuError] = useState<string | null>(null);
+  const [pricePercent, setPricePercent] = useState("10");
+  const [priceUpdating, setPriceUpdating] = useState(false);
+  const [priceMessage, setPriceMessage] = useState<string | null>(null);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [sellingFeePercent, setSellingFeePercent] = useState(
+    DEFAULT_SELLING_FEE_PERCENT,
+  );
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SELLING_FEE_STORAGE_KEY);
+      if (stored != null && stored.trim() !== "") {
+        setSellingFeePercent(stored);
+      }
+    } catch {
+      // Ignore private-mode / blocked storage.
+    }
+  }, []);
 
   const loadListings = useCallback(async () => {
     setLoading(true);
@@ -177,12 +253,78 @@ export function ActiveEbayListingsPanel() {
     [selectedListings],
   );
 
+  const selectedWithListingId = useMemo(
+    () =>
+      selectedListings.filter((listing) => Boolean(listing.listingId?.trim())),
+    [selectedListings],
+  );
+
+  const bulkBusy = bulkGenerating || generatingKeys.size > 0 || priceUpdating;
+
+  const sellingFeePercentValue =
+    parsePercentInput(sellingFeePercent) ??
+    Number.parseFloat(DEFAULT_SELLING_FEE_PERCENT);
+
+  const pricePercentValue = Number.parseFloat(pricePercent.trim()) || 0;
+
+  const selectedProfitPreview = useMemo(() => {
+    let currentTotal = 0;
+    let projectedTotal = 0;
+    let count = 0;
+    let missingCost = 0;
+
+    for (const listing of selectedWithListingId) {
+      if (listing.unitCost == null || listing.price == null) {
+        if (listing.unitCost == null) {
+          missingCost += 1;
+        }
+        continue;
+      }
+
+      const current = estimateListingProfit(
+        listing,
+        listing.price,
+        sellingFeePercentValue,
+      );
+      const projected = estimateListingProfit(
+        listing,
+        applyPricePercentChange(listing.price, pricePercentValue),
+        sellingFeePercentValue,
+      );
+
+      if (!current || !projected) {
+        continue;
+      }
+
+      currentTotal += current.profit;
+      projectedTotal += projected.profit;
+      count += 1;
+    }
+
+    return {
+      currentTotal,
+      projectedTotal,
+      delta: projectedTotal - currentTotal,
+      count,
+      missingCost,
+    };
+  }, [selectedWithListingId, pricePercentValue, sellingFeePercentValue]);
+
   const allFilteredSelected =
     filtered.length > 0 &&
     filtered.every((listing) => selectedKeys.has(listingKey(listing)));
   const someFilteredSelected =
     filtered.some((listing) => selectedKeys.has(listingKey(listing))) &&
     !allFilteredSelected;
+
+  function updateSellingFeePercent(value: string) {
+    setSellingFeePercent(value);
+    try {
+      window.localStorage.setItem(SELLING_FEE_STORAGE_KEY, value);
+    } catch {
+      // Ignore private-mode / blocked storage.
+    }
+  }
 
   function toggleListingSelected(listing: ActiveEbayListing, checked: boolean) {
     const key = listingKey(listing);
@@ -313,6 +455,70 @@ export function ActiveEbayListingsPanel() {
     }
   }
 
+  async function applyPriceChangeForSelected() {
+    if (!selectedWithListingId.length) {
+      setPriceError("Select listings with a listing ID.");
+      return;
+    }
+
+    const trimmed = pricePercent.trim();
+    const percentChange = Number.parseFloat(trimmed);
+    if (!Number.isFinite(percentChange) || percentChange <= -100 || percentChange > 1000) {
+      setPriceError("Enter a valid percent between -99.9 and 1000.");
+      return;
+    }
+
+    const listingIds = selectedWithListingId
+      .map((listing) => listing.listingId!.trim());
+
+    setPriceUpdating(true);
+    setPriceError(null);
+    setPriceMessage(null);
+
+    try {
+      const response = await fetch("/api/ebay/listings/bulk-price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          listingIds,
+          percentChange,
+        }),
+      });
+      const payload = (await response.json()) as BulkPriceResponse;
+
+      if (!payload.ok) {
+        setPriceError(payload.error);
+        return;
+      }
+
+      const failures = payload.results.filter((result) => !result.ok);
+      if (payload.successCount > 0) {
+        await loadListings();
+        setSelectedKeys(new Set());
+      }
+
+      if (payload.successCount === 0) {
+        setPriceError(
+          failures
+            .map((result) => `${result.listingId}: ${result.error ?? "Failed"}`)
+            .join(" · "),
+        );
+        return;
+      }
+
+      const sign = percentChange > 0 ? "+" : "";
+      let message = `Updated ${payload.variationCount} price${payload.variationCount === 1 ? "" : "s"} across ${payload.successCount} listing${payload.successCount === 1 ? "" : "s"} (${sign}${percentChange}%).`;
+      if (failures.length > 0) {
+        message += ` ${failures.length} failed.`;
+      }
+      setPriceMessage(message);
+    } catch {
+      setPriceError("Could not reach the bulk price endpoint.");
+    } finally {
+      setPriceUpdating(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -406,6 +612,18 @@ export function ActiveEbayListingsPanel() {
         </div>
       ) : null}
 
+      {priceMessage ? (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <p>{priceMessage}</p>
+        </div>
+      ) : null}
+      {priceError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {priceError}
+        </div>
+      ) : null}
+
       {data.promoWarning ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
           {data.promoWarning}{" "}
@@ -449,16 +667,77 @@ export function ActiveEbayListingsPanel() {
                   placeholder="EBAY"
                   className="w-24 font-mono uppercase"
                   maxLength={20}
-                  disabled={bulkGenerating || generatingKeys.size > 0}
+                  disabled={bulkBusy}
                 />
               </div>
+              <div className="space-y-1">
+                <label htmlFor="active-selling-fee" className="sr-only">
+                  Selling fee percent
+                </label>
+                <div className="relative">
+                  <Input
+                    id="active-selling-fee"
+                    value={sellingFeePercent}
+                    onChange={(event) =>
+                      updateSellingFeePercent(event.target.value)
+                    }
+                    placeholder="12.8"
+                    inputMode="decimal"
+                    className="w-24 pr-7 text-right tabular-nums"
+                    disabled={bulkBusy}
+                  />
+                  <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm text-muted-foreground">
+                    %
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="ebay-price-percent" className="sr-only">
+                  Price change percent
+                </label>
+                <div className="relative">
+                  <Input
+                    id="ebay-price-percent"
+                    value={pricePercent}
+                    onChange={(event) => setPricePercent(event.target.value)}
+                    placeholder="10"
+                    inputMode="decimal"
+                    className="w-24 pr-7 text-right tabular-nums"
+                    disabled={bulkBusy}
+                  />
+                  <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm text-muted-foreground">
+                    %
+                  </span>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => void applyPriceChangeForSelected()}
+                disabled={bulkBusy || selectedWithListingId.length === 0}
+              >
+                {priceUpdating ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Updating prices…
+                  </>
+                ) : (
+                  <>
+                    <Percent className="size-4" />
+                    Apply price
+                    {selectedWithListingId.length > 0
+                      ? ` (${selectedWithListingId.length})`
+                      : ""}
+                  </>
+                )}
+              </Button>
               <Button
                 type="button"
                 size="sm"
                 onClick={() => void generateSkuForSelected()}
                 disabled={
-                  bulkGenerating ||
-                  generatingKeys.size > 0 ||
+                  bulkBusy ||
                   selectedNeedingSku.length === 0
                 }
               >
@@ -477,11 +756,76 @@ export function ActiveEbayListingsPanel() {
                   </>
                 )}
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadListings()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void loadListings()}
+                disabled={bulkBusy}
+              >
                 Refresh
               </Button>
             </div>
           </div>
+          {selectedWithListingId.length > 0 ? (
+            <div className="space-y-2 rounded-lg border border-border/60 bg-background/60 p-3 text-sm">
+              <p className="text-muted-foreground">
+                {selectedWithListingId.length} selected · apply{" "}
+                {pricePercent.trim() || "0"}% to all variation prices on each
+                listing (e.g. £10 → £
+                {(
+                  10 *
+                  (1 + (Number.parseFloat(pricePercent) || 0) / 100)
+                ).toFixed(2)}
+                )
+              </p>
+              {selectedProfitPreview.count > 0 ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 tabular-nums">
+                  <span>
+                    Est. profit now:{" "}
+                    <span className="font-medium text-foreground">
+                      {formatMoney(selectedProfitPreview.currentTotal)}
+                    </span>
+                  </span>
+                  <span>
+                    After {pricePercent.trim() || "0"}%:{" "}
+                    <span className="font-medium text-foreground">
+                      {formatMoney(selectedProfitPreview.projectedTotal)}
+                    </span>
+                  </span>
+                  <span
+                    className={cn(
+                      "font-medium",
+                      selectedProfitPreview.delta > 0
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : selectedProfitPreview.delta < 0
+                          ? "text-red-700 dark:text-red-300"
+                          : "text-foreground",
+                    )}
+                  >
+                    {formatProfitDelta(selectedProfitPreview.delta)} per unit
+                  </span>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">
+                  Set unit costs on the Products page to see profit estimates.
+                </p>
+              )}
+              {selectedProfitPreview.missingCost > 0 ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  {selectedProfitPreview.missingCost} selected listing
+                  {selectedProfitPreview.missingCost === 1 ? "" : "s"} missing
+                  unit cost — profit preview uses{" "}
+                  {selectedProfitPreview.count} listing
+                  {selectedProfitPreview.count === 1 ? "" : "s"} with cost set.
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                Profit uses selling fee {sellingFeePercentValue}%, promo rate
+                per listing, and default postage from Products.
+              </p>
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {filtered.length === 0 ? (
@@ -520,13 +864,14 @@ export function ActiveEbayListingsPanel() {
                       />
                     </TableHead>
                     <TableHead className="w-16" />
-                    <TableHead className="w-[26%]">Listing</TableHead>
-                    <TableHead className="w-[14%]">SKU</TableHead>
-                    <TableHead className="w-[12%]">Listing ID</TableHead>
-                    <TableHead className="w-[10%] text-right">Price</TableHead>
-                    <TableHead className="w-[10%] text-right">Promo</TableHead>
-                    <TableHead className="w-[8%] text-right">Qty</TableHead>
-                    <TableHead className="w-[10%]">Status</TableHead>
+                    <TableHead className="w-[22%]">Listing</TableHead>
+                    <TableHead className="w-[12%]">SKU</TableHead>
+                    <TableHead className="w-[10%]">Listing ID</TableHead>
+                    <TableHead className="w-[8%] text-right">Price</TableHead>
+                    <TableHead className="w-[8%] text-right">Est. profit</TableHead>
+                    <TableHead className="w-[8%] text-right">Promo</TableHead>
+                    <TableHead className="w-[6%] text-right">Qty</TableHead>
+                    <TableHead className="w-[8%]">Status</TableHead>
                     <TableHead className="w-[10%] pr-6 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -538,6 +883,25 @@ export function ActiveEbayListingsPanel() {
                     const key = listingKey(listing);
                     const needsSku = activeListingNeedsSku(listing);
                     const isGenerating = generatingKeys.has(key);
+                    const profitEstimate =
+                      listing.price != null
+                        ? estimateListingProfit(
+                            listing,
+                            listing.price,
+                            sellingFeePercentValue,
+                          )
+                        : null;
+                    const projectedProfit =
+                      listing.price != null && pricePercentValue !== 0
+                        ? estimateListingProfit(
+                            listing,
+                            applyPricePercentChange(
+                              listing.price,
+                              pricePercentValue,
+                            ),
+                            sellingFeePercentValue,
+                          )
+                        : null;
 
                     return (
                     <TableRow
@@ -640,6 +1004,38 @@ export function ActiveEbayListingsPanel() {
                         {formatPrice(listing.price, listing.currency)}
                       </TableCell>
                       <TableCell className="text-right align-top">
+                        {profitEstimate ? (
+                          <div className="space-y-0.5 tabular-nums">
+                            <p className="font-medium">
+                              {formatMoney(profitEstimate.profit)}
+                            </p>
+                            {selectedKeys.has(key) &&
+                            projectedProfit &&
+                            pricePercentValue !== 0 ? (
+                              <p
+                                className={cn(
+                                  "text-xs",
+                                  projectedProfit.profit - profitEstimate.profit >
+                                    0
+                                    ? "text-emerald-700 dark:text-emerald-300"
+                                    : projectedProfit.profit -
+                                          profitEstimate.profit <
+                                        0
+                                      ? "text-red-700 dark:text-red-300"
+                                      : "text-muted-foreground",
+                                )}
+                              >
+                                → {formatMoney(projectedProfit.profit)}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {listing.unitCost == null ? "No cost" : "—"}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right align-top">
                         {listing.promoRatePercent != null ? (
                           <div className="space-y-1">
                             <Badge
@@ -678,7 +1074,7 @@ export function ActiveEbayListingsPanel() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            disabled={isGenerating || bulkGenerating}
+                            disabled={isGenerating || bulkBusy}
                             onClick={() => void generateSkuForListing(listing)}
                           >
                             {isGenerating ? (
@@ -710,8 +1106,9 @@ export function ActiveEbayListingsPanel() {
       <p className="text-sm text-muted-foreground">
         Loads Seller Hub listings via the Trading API and Promoted Listings ad
         rates via the Marketing API (same eBay login as fee sync). Select
-        listings and use Generate SKU to assign unique seller SKUs on eBay, or
-        click a listing to edit SKU/price and view variations.
+        listings and use Apply price to change all variation prices by a
+        percentage, Generate SKU to assign seller SKUs, or click a listing to
+        edit individually.
       </p>
     </div>
   );

@@ -25,6 +25,10 @@ export type ActiveEbayListing = {
   promoRatePercent: number | null;
   promoAdStatus: string | null;
   promoCampaignName: string | null;
+  /** Unit cost ex-VAT from product catalog (when SKU is linked). */
+  unitCost: number | null;
+  /** Default postage from product catalog. */
+  defaultPostage: number | null;
 };
 
 export type ActiveEbayListingsResult = {
@@ -95,6 +99,8 @@ function parseItem(itemXml: string, marketplaceId: string): ActiveEbayListing | 
     promoRatePercent: null,
     promoAdStatus: null,
     promoCampaignName: null,
+    unitCost: null,
+    defaultPostage: null,
   };
 }
 
@@ -167,9 +173,25 @@ export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResul
     };
   });
 
+  let withCosts = enriched;
+  try {
+    const { getSkuCostSnapshots } = await import("@/lib/products/listing-costs");
+    const costBySku = await getSkuCostSnapshots(enriched.map((listing) => listing.sku));
+    withCosts = enriched.map((listing) => {
+      const costs = costBySku.get(listing.sku);
+      return {
+        ...listing,
+        unitCost: costs?.unitCost ?? null,
+        defaultPostage: costs?.defaultPostage ?? null,
+      };
+    });
+  } catch {
+    // Cost enrichment is best-effort.
+  }
+
   return {
     marketplaceId,
-    listings: enriched,
+    listings: withCosts,
     inventoryItemsScanned: enriched.length,
     publishedCount: enriched.length,
     unpublishedCount: 0,
