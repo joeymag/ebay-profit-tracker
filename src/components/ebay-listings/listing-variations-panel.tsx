@@ -444,9 +444,22 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     setSaveError(null);
   }
 
-  async function saveRowCosts(
+  function buildCostSaveItem(
     index: number,
-  ): Promise<{ ok: true; sku: string } | { ok: false; error: string }> {
+  ):
+    | {
+        ok: true;
+        sku: string;
+        item: {
+          sku: string;
+          unitCost?: number | null;
+          defaultPostage?: number | null;
+          title: string;
+        };
+        costChanged: boolean;
+        postageChanged: boolean;
+      }
+    | { ok: false; error: string } {
     if (!listing) {
       return { ok: false, error: "Listing is not loaded." };
     }
@@ -471,7 +484,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     const postageChanged = draft.postage.trim() !== originalPostage.trim();
 
     if (!costChanged && !postageChanged) {
-      return { ok: true, sku };
+      return { ok: false, error: `Nothing to save on row ${index + 1}.` };
     }
 
     const unitCostRaw = draft.unitCost.trim();
@@ -496,61 +509,22 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       return { ok: false, error: `Invalid postage on row ${index + 1}.` };
     }
 
-    try {
-      const response = await fetch(`/api/products/${encodeURIComponent(sku)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          unitCost: costChanged ? unitCost : undefined,
-          defaultPostage: postageChanged ? defaultPostage : undefined,
-          title:
-            titleDraft.trim() ||
-            listing.title?.trim() ||
-            variation.specifics ||
-            sku,
-        }),
-      });
-      const payload = (await response.json()) as {
-        ok: boolean;
-        error?: string;
-        costs?: { unitCost: number | null; defaultPostage: number | null };
-      };
-
-      if (!payload.ok) {
-        return {
-          ok: false,
-          error: payload.error ?? `Could not save costs for ${sku}.`,
-        };
-      }
-
-      setListing((current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          variations: current.variations.map((row, rowIndex) =>
-            rowIndex === index
-              ? {
-                  ...row,
-                  // Keep local SKU in sync so cost lookup still works after save.
-                  sku: sku || row.sku,
-                  unitCost: costChanged
-                    ? (payload.costs?.unitCost ?? null)
-                    : row.unitCost,
-                  postageCost: postageChanged
-                    ? (payload.costs?.defaultPostage ?? null)
-                    : row.postageCost,
-                }
-              : row,
-          ),
-        };
-      });
-
-      return { ok: true, sku };
-    } catch {
-      return { ok: false, error: `Could not save costs for ${sku}.` };
-    }
+    return {
+      ok: true,
+      sku,
+      costChanged,
+      postageChanged,
+      item: {
+        sku,
+        unitCost: costChanged ? unitCost : undefined,
+        defaultPostage: postageChanged ? defaultPostage : undefined,
+        title:
+          titleDraft.trim() ||
+          listing.title?.trim() ||
+          variation.specifics ||
+          sku,
+      },
+    };
   }
 
   async function saveCosts() {
@@ -562,31 +536,124 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     setSaveError(null);
     setSaveMessage(null);
 
-    let savedCount = 0;
     const skipped: string[] = [];
     const ebaySkuIndexes: number[] = [];
+    const bulkItems: Array<{
+      index: number;
+      sku: string;
+      costChanged: boolean;
+      postageChanged: boolean;
+      item: {
+        sku: string;
+        unitCost?: number | null;
+        defaultPostage?: number | null;
+        title: string;
+      };
+    }> = [];
+
+    for (const index of dirtyCostIndexes) {
+      const draft = drafts[index];
+      const variation = listing.variations[index];
+      const built = buildCostSaveItem(index);
+      if (!built.ok) {
+        skipped.push(`row ${index + 1}: ${built.error}`);
+        continue;
+      }
+
+      bulkItems.push({
+        index,
+        sku: built.sku,
+        costChanged: built.costChanged,
+        postageChanged: built.postageChanged,
+        item: built.item,
+      });
+
+      const originalSku = (variation?.sku ?? "").trim();
+      if (draft && draft.sku.trim() !== originalSku) {
+        ebaySkuIndexes.push(index);
+      }
+    }
+
+    if (!bulkItems.length) {
+      setSavingCosts(false);
+      setSaveError(
+        skipped.length
+          ? `Nothing saved. ${skipped.join(" · ")}`
+          : "Nothing to save.",
+      );
+      return;
+    }
+
+    let savedCount = 0;
 
     try {
-      for (const index of dirtyCostIndexes) {
-        const draft = drafts[index];
-        const variation = listing.variations[index];
-        const sku = draft?.sku.trim() || variation?.sku?.trim() || "";
-        if (!sku) {
-          skipped.push(`row ${index + 1} (no SKU)`);
-          continue;
+      const response = await fetch("/api/products/bulk-costs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: bulkItems.map((entry) => entry.item),
+        }),
+      });
+      const payload = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        successCount?: number;
+        results?: Array<{
+          sku: string;
+          ok: boolean;
+          error?: string;
+          costs?: { unitCost: number | null; defaultPostage: number | null };
+        }>;
+        ordersRecalcWarning?: string | null;
+      };
+
+      if (!payload.ok) {
+        setSaveError(payload.error ?? "Could not save costs.");
+        return;
+      }
+
+      const resultsBySku = new Map(
+        (payload.results ?? []).map((result) => [result.sku, result] as const),
+      );
+
+      savedCount = bulkItems.filter((entry) => resultsBySku.get(entry.sku)?.ok).length;
+
+      setListing((current) => {
+        if (!current) {
+          return current;
         }
 
-        const result = await saveRowCosts(index);
-        if (!result.ok) {
-          skipped.push(`row ${index + 1}: ${result.error}`);
-          continue;
-        }
-        savedCount += 1;
+        return {
+          ...current,
+          variations: current.variations.map((row, rowIndex) => {
+            const entry = bulkItems.find((item) => item.index === rowIndex);
+            if (!entry) {
+              return row;
+            }
 
-        // If the SKU was typed in here, push it to eBay so it sticks on refresh.
-        const originalSku = (variation?.sku ?? "").trim();
-        if (draft && draft.sku.trim() !== originalSku) {
-          ebaySkuIndexes.push(index);
+            const result = resultsBySku.get(entry.sku);
+            if (!result?.ok) {
+              return row;
+            }
+
+            return {
+              ...row,
+              sku: entry.sku || row.sku,
+              unitCost: entry.costChanged
+                ? (result.costs?.unitCost ?? null)
+                : row.unitCost,
+              postageCost: entry.postageChanged
+                ? (result.costs?.defaultPostage ?? null)
+                : row.postageCost,
+            };
+          }),
+        };
+      });
+
+      for (const entry of bulkItems) {
+        const result = resultsBySku.get(entry.sku);
+        if (!result?.ok) {
+          skipped.push(`row ${entry.index + 1}: ${result?.error ?? "Failed"}`);
         }
       }
 
@@ -650,10 +717,14 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
         return;
       }
 
+      const recalcNote = payload.ordersRecalcWarning
+        ? ` Order recalc note: ${payload.ordersRecalcWarning}`
+        : "";
+
       setSaveMessage(
         `Saved cost/postage for ${savedCount} variation${savedCount === 1 ? "" : "s"}.${ebayNote}${
           skipped.length ? ` Skipped: ${skipped.join(" · ")}` : ""
-        }`,
+        }${recalcNote}`,
       );
     } finally {
       setSavingCosts(false);
