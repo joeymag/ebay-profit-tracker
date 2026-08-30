@@ -1180,6 +1180,11 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   {listing.promoAdStatus ? ` · ${listing.promoAdStatus}` : ""}
                 </p>
               ) : null}
+              {listing.variationsWarning ? (
+                <p className="text-sm text-amber-700 dark:text-amber-300">
+                  {listing.variationsWarning}
+                </p>
+              ) : null}
               <p className="text-sm text-muted-foreground">
                 Total available stock across rows:{" "}
                 <span className="tabular-nums text-foreground">

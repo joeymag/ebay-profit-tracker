@@ -1,4 +1,6 @@
+import { fetchBrowseGroupMembersByListingId } from "@/lib/ebay/browse-client";
 import { getEbayConfig } from "@/lib/ebay/config";
+import { resolveInventoryGroupFromMemberSku } from "@/lib/ebay/inventory-group";
 import { fetchEbayPromoRatesByListingId } from "@/lib/ebay/promo-rates";
 import {
   ebayTradingCall,
@@ -49,6 +51,8 @@ export type EbayListingDetails = {
   promoAdStatus: string | null;
   promoCampaignName: string | null;
   promoWarning: string | null;
+  /** Set when extra variation rows were merged from Browse/Inventory APIs. */
+  variationsWarning: string | null;
   fetchedAt: string;
 };
 
@@ -143,6 +147,220 @@ function parseVariation(variationXml: string): EbayListingVariation {
   };
 }
 
+const VARIATIONS_PER_PAGE = 100;
+const MAX_VARIATION_PAGES = 20;
+
+async function fetchGetItemXml(
+  listingId: string,
+  variationPage?: number,
+): Promise<string> {
+  const paginationXml =
+    variationPage != null
+      ? `
+  <VariationPageNumber>${variationPage}</VariationPageNumber>
+  <VariationsPerPage>${VARIATIONS_PER_PAGE}</VariationsPerPage>`
+      : "";
+
+  return ebayTradingCall(
+    "GetItem",
+    `
+  <ErrorLanguage>en_GB</ErrorLanguage>
+  <WarningLevel>High</WarningLevel>
+  <ItemID>${escapeXml(listingId)}</ItemID>
+  <IncludeItemSpecifics>true</IncludeItemSpecifics>
+  <IncludeVariations>true</IncludeVariations>
+  <DetailLevel>ReturnAll</DetailLevel>${paginationXml}`,
+  );
+}
+
+function parseVariationsFromItemXml(itemXml: string): EbayListingVariation[] {
+  const variationsXml = extractXmlTag(itemXml, "Variations");
+  const variationBlocks = variationsXml
+    ? extractXmlBlocks(variationsXml, "Variation")
+    : [];
+  return variationBlocks.map(parseVariation);
+}
+
+function parseVariationPagination(
+  variationsXml: string | null,
+  itemXml: string,
+): { pageNumber: number | null; totalPages: number | null } {
+  return {
+    pageNumber: parseIntSafe(
+      extractXmlTag(variationsXml ?? "", "PageNumber") ??
+        extractXmlTag(itemXml, "PageNumber"),
+    ),
+    totalPages: parseIntSafe(
+      extractXmlTag(variationsXml ?? "", "TotalNumberOfPages") ??
+        extractXmlTag(itemXml, "TotalNumberOfPages"),
+    ),
+  };
+}
+
+function variationIdentity(variation: EbayListingVariation): string {
+  const sku = variation.sku?.trim();
+  if (sku) {
+    return `sku:${sku.toLowerCase()}`;
+  }
+
+  if (variation.specificsPairs.length) {
+    return `spec:${variation.specificsPairs
+      .map((pair) => `${pair.name}=${pair.value}`)
+      .join("|")
+      .toLowerCase()}`;
+  }
+
+  return `label:${variation.specifics.toLowerCase()}`;
+}
+
+function mergeVariationLists(
+  target: EbayListingVariation[],
+  incoming: EbayListingVariation[],
+): EbayListingVariation[] {
+  const seen = new Set(target.map(variationIdentity));
+  for (const variation of incoming) {
+    const key = variationIdentity(variation);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    target.push(variation);
+  }
+  return target;
+}
+
+async function fetchAllGetItemVariations(
+  listingId: string,
+  itemXml: string,
+): Promise<EbayListingVariation[]> {
+  const variationsXml = extractXmlTag(itemXml, "Variations");
+  let variations = parseVariationsFromItemXml(itemXml);
+  const { totalPages } = parseVariationPagination(variationsXml, itemXml);
+
+  const shouldPaginate =
+    (totalPages != null && totalPages > 1) ||
+    (totalPages == null && variations.length >= VARIATIONS_PER_PAGE);
+
+  if (!shouldPaginate) {
+    return variations;
+  }
+
+  const lastPage = totalPages ?? MAX_VARIATION_PAGES;
+  for (let page = 2; page <= lastPage; page += 1) {
+    const xml = await fetchGetItemXml(listingId, page);
+    const pageItemXml = extractXmlTag(xml, "Item");
+    if (!pageItemXml) {
+      break;
+    }
+
+    const pageVariations = parseVariationsFromItemXml(pageItemXml);
+    if (!pageVariations.length) {
+      break;
+    }
+
+    variations = mergeVariationLists(variations, pageVariations);
+
+    if (totalPages == null && pageVariations.length < VARIATIONS_PER_PAGE) {
+      break;
+    }
+  }
+
+  return variations;
+}
+
+function browseMembersToVariations(
+  members: Array<{
+    sku: string | null;
+    price: number | null;
+    currency: string | null;
+    quantityAvailable: number | null;
+    specificsPairs: Array<{ name: string; value: string }>;
+  }>,
+): EbayListingVariation[] {
+  return members.map((member) => {
+    const specificsPairs = member.specificsPairs;
+    return {
+      sku: member.sku,
+      specifics:
+        specificsPairs.map((pair) => `${pair.name}: ${pair.value}`).join(" · ") ||
+        member.sku ||
+        "Variation",
+      specificsPairs,
+      price: member.price,
+      currency: member.currency,
+      quantity: member.quantityAvailable,
+      quantitySold: null,
+      quantityAvailable: member.quantityAvailable,
+      unitCost: null,
+      postageCost: null,
+    };
+  });
+}
+
+async function supplementVariationsFromBrowseAndInventory(input: {
+  listingId: string;
+  variations: EbayListingVariation[];
+  itemSku: string | null;
+}): Promise<{ variations: EbayListingVariation[]; warning: string | null }> {
+  let variations = [...input.variations];
+  const warnings: string[] = [];
+  const beforeCount = variations.length;
+
+  try {
+    const browseMembers = await fetchBrowseGroupMembersByListingId(
+      input.listingId,
+    );
+    if (browseMembers && browseMembers.length > variations.length) {
+      variations = mergeVariationLists(
+        variations,
+        browseMembersToVariations(browseMembers),
+      );
+    }
+  } catch {
+    // Browse enrichment is best-effort.
+  }
+
+  const seedSku =
+    input.itemSku?.trim() ||
+    variations.find((variation) => variation.sku?.trim())?.sku?.trim() ||
+    null;
+
+  if (seedSku) {
+    try {
+      const group = await resolveInventoryGroupFromMemberSku(seedSku);
+      if (group && group.memberSkus.length > variations.length) {
+        const inventoryVariations = group.memberSkus.map((sku) => ({
+          sku,
+          specifics: sku,
+          specificsPairs: [] as EbayVariationSpecific[],
+          price: null,
+          currency: null,
+          quantity: null,
+          quantitySold: null,
+          quantityAvailable: null,
+          unitCost: null,
+          postageCost: null,
+        }));
+        variations = mergeVariationLists(variations, inventoryVariations);
+      }
+    } catch {
+      // Inventory enrichment is best-effort.
+    }
+  }
+
+  const added = variations.length - beforeCount;
+  if (added > 0) {
+    warnings.push(
+      `Added ${added} variation row${added === 1 ? "" : "s"} from eBay Browse/Inventory data.`,
+    );
+  }
+
+  return {
+    variations,
+    warning: warnings.length ? warnings.join(" ") : null,
+  };
+}
+
 /**
  * Full listing details + variations via Trading API GetItem.
  */
@@ -155,26 +373,20 @@ export async function fetchEbayListingDetails(
   }
 
   const { marketplaceId } = getEbayConfig();
-  const xml = await ebayTradingCall(
-    "GetItem",
-    `
-  <ErrorLanguage>en_GB</ErrorLanguage>
-  <WarningLevel>High</WarningLevel>
-  <ItemID>${escapeXml(trimmedId)}</ItemID>
-  <IncludeItemSpecifics>true</IncludeItemSpecifics>
-  <DetailLevel>ReturnAll</DetailLevel>`,
-  );
+  let xml: string;
+  try {
+    xml = await fetchGetItemXml(trimmedId, 1);
+  } catch {
+    // Some single-SKU listings reject variation pagination params.
+    xml = await fetchGetItemXml(trimmedId);
+  }
 
   const itemXml = extractXmlTag(xml, "Item");
   if (!itemXml) {
     throw new Error(`Listing ${trimmedId} was not returned by eBay.`);
   }
 
-  const variationsXml = extractXmlTag(itemXml, "Variations");
-  const variationBlocks = variationsXml
-    ? extractXmlBlocks(variationsXml, "Variation")
-    : [];
-  const variations = variationBlocks.map(parseVariation);
+  let variations = await fetchAllGetItemVariations(trimmedId, itemXml);
 
   const quantity = parseIntSafe(extractXmlTag(itemXml, "Quantity"));
   const quantitySold = parseIntSafe(extractXmlTag(itemXml, "QuantitySold"));
@@ -192,10 +404,17 @@ export async function fetchEbayListingDetails(
     extractXmlAttr(itemXml, "BuyItNowPrice", "currencyID") ??
     extractXmlAttr(itemXml, "StartPrice", "currencyID");
 
-  const isMultiVariation = variations.length > 0;
   const itemSku = extractXmlTag(itemXml, "SKU")?.trim() || null;
 
-  const displayVariations = isMultiVariation
+  const supplemented = await supplementVariationsFromBrowseAndInventory({
+    listingId: trimmedId,
+    variations,
+    itemSku,
+  });
+  variations = supplemented.variations;
+  const isMultiVariationListing = variations.length > 0;
+
+  const displayVariations = isMultiVariationListing
     ? variations
     : [
         {
@@ -256,12 +475,13 @@ export async function fetchEbayListingDetails(
       extractXmlTag(itemXml, "GalleryURL") ??
       extractXmlTag(itemXml, "PictureURL"),
     itemWebUrl: ebayListingUrl(trimmedId, marketplaceId),
-    isMultiVariation,
+    isMultiVariation: isMultiVariationListing,
     variations: variationsWithCosts,
     promoRatePercent: promoRate?.bidPercentage ?? null,
     promoAdStatus: promoRate?.adStatus ?? null,
     promoCampaignName: promoRate?.campaignName ?? null,
     promoWarning: promo.warning,
+    variationsWarning: supplemented.warning,
     fetchedAt: new Date().toISOString(),
   };
 }

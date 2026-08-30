@@ -78,6 +78,99 @@ function parseBrowseItem(
   };
 }
 
+export type BrowseGroupMember = {
+  sku: string | null;
+  price: number | null;
+  currency: string | null;
+  quantityAvailable: number | null;
+  specificsPairs: Array<{ name: string; value: string }>;
+};
+
+type BrowseLocalizedAspect = {
+  name?: string;
+  value?: string;
+};
+
+function parseBrowseGroupMember(data: BrowseItemResponse): BrowseGroupMember {
+  const availability = data.estimatedAvailabilities?.[0];
+  const priceValue = data.price?.value
+    ? Number.parseFloat(data.price.value)
+    : null;
+  const specificsPairs = (data as BrowseItemResponse & {
+    localizedAspects?: BrowseLocalizedAspect[];
+  }).localizedAspects
+    ?.map((aspect) => ({
+      name: aspect.name?.trim() ?? "",
+      value: aspect.value?.trim() ?? "",
+    }))
+    .filter((pair) => pair.name && pair.value) ?? [];
+
+  return {
+    sku: data.sku?.trim() || null,
+    price: priceValue != null && Number.isFinite(priceValue) ? priceValue : null,
+    currency: data.price?.currency?.trim() || null,
+    quantityAvailable:
+      availability?.estimatedAvailableQuantity != null
+        ? availability.estimatedAvailableQuantity
+        : null,
+    specificsPairs,
+  };
+}
+
+/**
+ * All variation rows for a multi-variation listing (Browse API item group).
+ */
+export async function fetchBrowseGroupMembersByListingId(
+  listingId: string,
+): Promise<BrowseGroupMember[] | null> {
+  const { marketplaceId } = getEbayConfig();
+  const trimmedId = listingId.trim();
+  if (!trimmedId) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    legacy_item_id: trimmedId,
+  });
+  const response = await browseFetch(
+    `/item/get_item_by_legacy_id?${params.toString()}`,
+    marketplaceId,
+  );
+  const text = await response.text();
+
+  if (response.ok) {
+    const data = JSON.parse(text) as BrowseItemResponse;
+    return [parseBrowseGroupMember(data)];
+  }
+
+  if (response.status !== 400) {
+    return null;
+  }
+
+  const itemGroupId = itemGroupIdFromBrowseError(text, trimmedId);
+  if (!itemGroupId) {
+    return null;
+  }
+
+  const groupParams = new URLSearchParams({ item_group_id: itemGroupId });
+  const groupResponse = await browseFetch(
+    `/item/get_items_by_item_group?${groupParams.toString()}`,
+    marketplaceId,
+  );
+  const groupText = await groupResponse.text();
+  if (!groupResponse.ok) {
+    return null;
+  }
+
+  const groupData = JSON.parse(groupText) as ItemGroupResponse;
+  const items = groupData.items ?? [];
+  if (!items.length) {
+    return null;
+  }
+
+  return items.map(parseBrowseGroupMember);
+}
+
 function itemGroupIdFromBrowseError(
   body: string,
   listingId: string,
