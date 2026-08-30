@@ -104,13 +104,135 @@ function parseSpecificsPairs(variationXml: string): EbayVariationSpecific[] {
 
   for (const list of lists) {
     const name = extractXmlTag(list, "Name")?.trim();
-    const value = extractXmlTag(list, "Value")?.trim();
-    if (name && value) {
+    if (!name) {
+      continue;
+    }
+
+    const values = extractXmlBlocks(list, "Value")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!values.length) {
+      const single = extractXmlTag(list, "Value")?.trim();
+      if (single) {
+        values.push(single);
+      }
+    }
+
+    for (const value of values) {
       pairs.push({ name, value });
     }
   }
 
   return pairs;
+}
+
+function parseVariationSpecificsSetDimensions(
+  itemXml: string,
+): EbayVariationSpecific[][] {
+  const variationsXml = extractXmlTag(itemXml, "Variations");
+  if (!variationsXml) {
+    return [];
+  }
+
+  const setXml = extractXmlTag(variationsXml, "VariationSpecificsSet");
+  if (!setXml) {
+    return [];
+  }
+
+  const dimensions: EbayVariationSpecific[][] = [];
+  for (const list of extractXmlBlocks(setXml, "NameValueList")) {
+    const name = extractXmlTag(list, "Name")?.trim();
+    if (!name) {
+      continue;
+    }
+
+    const values = extractXmlBlocks(list, "Value")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!values.length) {
+      const single = extractXmlTag(list, "Value")?.trim();
+      if (single) {
+        values.push(single);
+      }
+    }
+
+    if (!values.length) {
+      continue;
+    }
+
+    dimensions.push(values.map((value) => ({ name, value })));
+  }
+
+  return dimensions;
+}
+
+function cartesianSpecificsCombinations(
+  dimensions: EbayVariationSpecific[][],
+): EbayVariationSpecific[][] {
+  if (!dimensions.length) {
+    return [];
+  }
+
+  return dimensions.reduce<EbayVariationSpecific[][]>(
+    (acc, dimension) =>
+      acc.flatMap((combo) => dimension.map((option) => [...combo, option])),
+    [[]],
+  );
+}
+
+function specificsPairsMatch(
+  left: EbayVariationSpecific[],
+  right: EbayVariationSpecific[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((pair) =>
+    right.some(
+      (candidate) =>
+        candidate.name === pair.name && candidate.value === pair.value,
+    ),
+  );
+}
+
+function expandVariationsFromSpecificsSet(
+  itemXml: string,
+  variations: EbayListingVariation[],
+): EbayListingVariation[] {
+  const combinations = cartesianSpecificsCombinations(
+    parseVariationSpecificsSetDimensions(itemXml),
+  );
+  if (combinations.length <= variations.length) {
+    return variations;
+  }
+
+  const result = [...variations];
+  for (const pairs of combinations) {
+    const exists = result.some((variation) =>
+      variation.specificsPairs.length
+        ? specificsPairsMatch(variation.specificsPairs, pairs)
+        : variation.specifics === formatSpecifics(pairs),
+    );
+    if (exists) {
+      continue;
+    }
+
+    result.push({
+      sku: null,
+      specifics: formatSpecifics(pairs),
+      specificsPairs: pairs,
+      price: null,
+      currency: null,
+      quantity: null,
+      quantitySold: null,
+      quantityAvailable: null,
+      unitCost: null,
+      postageCost: null,
+    });
+  }
+
+  return result;
 }
 
 function formatSpecifics(pairs: EbayVariationSpecific[]): string {
@@ -237,16 +359,17 @@ async function fetchAllGetItemVariations(
   let variations = parseVariationsFromItemXml(itemXml);
   const { totalPages } = parseVariationPagination(variationsXml, itemXml);
 
-  const shouldPaginate =
+  const needsPagination =
     (totalPages != null && totalPages > 1) ||
-    (totalPages == null && variations.length >= VARIATIONS_PER_PAGE);
+    variations.length >= VARIATIONS_PER_PAGE;
 
-  if (!shouldPaginate) {
+  if (!needsPagination) {
     return variations;
   }
 
+  let paginatedVariations: EbayListingVariation[] = [];
   const lastPage = totalPages ?? MAX_VARIATION_PAGES;
-  for (let page = 2; page <= lastPage; page += 1) {
+  for (let page = 1; page <= lastPage; page += 1) {
     const xml = await fetchGetItemXml(listingId, page);
     const pageItemXml = extractXmlTag(xml, "Item");
     if (!pageItemXml) {
@@ -258,14 +381,24 @@ async function fetchAllGetItemVariations(
       break;
     }
 
-    variations = mergeVariationLists(variations, pageVariations);
+    paginatedVariations = mergeVariationLists(
+      paginatedVariations,
+      pageVariations,
+    );
 
     if (totalPages == null && pageVariations.length < VARIATIONS_PER_PAGE) {
       break;
     }
+    if (totalPages != null && page >= totalPages) {
+      break;
+    }
   }
 
-  return variations;
+  if (paginatedVariations.length > variations.length) {
+    return paginatedVariations;
+  }
+
+  return mergeVariationLists(variations, paginatedVariations);
 }
 
 function browseMembersToVariations(
@@ -310,7 +443,7 @@ async function supplementVariationsFromBrowseAndInventory(input: {
     const browseMembers = await fetchBrowseGroupMembersByListingId(
       input.listingId,
     );
-    if (browseMembers && browseMembers.length > variations.length) {
+    if (browseMembers?.length) {
       variations = mergeVariationLists(
         variations,
         browseMembersToVariations(browseMembers),
@@ -320,29 +453,36 @@ async function supplementVariationsFromBrowseAndInventory(input: {
     // Browse enrichment is best-effort.
   }
 
-  const seedSku =
-    input.itemSku?.trim() ||
-    variations.find((variation) => variation.sku?.trim())?.sku?.trim() ||
-    null;
+  const seedSkus = [
+    ...new Set(
+      [
+        input.itemSku?.trim(),
+        ...variations.map((variation) => variation.sku?.trim()),
+      ].filter((sku): sku is string => Boolean(sku)),
+    ),
+  ];
 
-  if (seedSku) {
+  for (const seedSku of seedSkus) {
     try {
       const group = await resolveInventoryGroupFromMemberSku(seedSku);
-      if (group && group.memberSkus.length > variations.length) {
-        const inventoryVariations = group.memberSkus.map((sku) => ({
-          sku,
-          specifics: sku,
-          specificsPairs: [] as EbayVariationSpecific[],
-          price: null,
-          currency: null,
-          quantity: null,
-          quantitySold: null,
-          quantityAvailable: null,
-          unitCost: null,
-          postageCost: null,
-        }));
-        variations = mergeVariationLists(variations, inventoryVariations);
+      if (!group?.memberSkus.length) {
+        continue;
       }
+
+      const inventoryVariations = group.memberSkus.map((sku) => ({
+        sku,
+        specifics: sku,
+        specificsPairs: [] as EbayVariationSpecific[],
+        price: null,
+        currency: null,
+        quantity: null,
+        quantitySold: null,
+        quantityAvailable: null,
+        unitCost: null,
+        postageCost: null,
+      }));
+      variations = mergeVariationLists(variations, inventoryVariations);
+      break;
     } catch {
       // Inventory enrichment is best-effort.
     }
@@ -373,13 +513,7 @@ export async function fetchEbayListingDetails(
   }
 
   const { marketplaceId } = getEbayConfig();
-  let xml: string;
-  try {
-    xml = await fetchGetItemXml(trimmedId, 1);
-  } catch {
-    // Some single-SKU listings reject variation pagination params.
-    xml = await fetchGetItemXml(trimmedId);
-  }
+  const xml = await fetchGetItemXml(trimmedId);
 
   const itemXml = extractXmlTag(xml, "Item");
   if (!itemXml) {
@@ -387,6 +521,7 @@ export async function fetchEbayListingDetails(
   }
 
   let variations = await fetchAllGetItemVariations(trimmedId, itemXml);
+  variations = expandVariationsFromSpecificsSet(itemXml, variations);
 
   const quantity = parseIntSafe(extractXmlTag(itemXml, "Quantity"));
   const quantitySold = parseIntSafe(extractXmlTag(itemXml, "QuantitySold"));
