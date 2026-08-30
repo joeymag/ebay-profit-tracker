@@ -99,14 +99,6 @@ function formatPrice(
   return formatMoney(price, currency ?? "GBP");
 }
 
-function formatPromoRate(rate: number | null | undefined): string {
-  if (rate == null) {
-    return "—";
-  }
-
-  return `${rate.toFixed(rate % 1 === 0 ? 0 : 1)}%`;
-}
-
 function parsePercentInput(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -125,6 +117,7 @@ function estimateListingProfit(
   listing: ActiveEbayListing,
   sellPrice: number,
   sellingFeePercent: number,
+  promoRatePercent: number,
 ) {
   if (listing.unitCost == null) {
     return null;
@@ -134,9 +127,48 @@ function estimateListingProfit(
     sellPrice,
     productCostExVat: listing.unitCost,
     ebayFeeRatePercent: sellingFeePercent,
-    ebayAdsFeeRatePercent: listing.promoRatePercent ?? 0,
+    ebayAdsFeeRatePercent: promoRatePercent,
     postage: listing.defaultPostage ?? 0,
   });
+}
+
+function parsePromoRateInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function getEffectivePromoRate(
+  listing: ActiveEbayListing,
+  promoOverrides: Record<string, number>,
+  promoDrafts?: Record<string, string>,
+  key?: string,
+): number {
+  if (key && promoDrafts && key in promoDrafts) {
+    const parsed = parsePromoRateInput(promoDrafts[key] ?? "");
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+
+  const listingId = listing.listingId?.trim();
+  if (listingId && promoOverrides[listingId] != null) {
+    return promoOverrides[listingId];
+  }
+
+  return listing.promoRatePercent ?? 0;
+}
+
+function listingHasEbayPromo(listing: ActiveEbayListing): boolean {
+  return Boolean(listing.promoCampaignId?.trim() && listing.promoAdId?.trim());
 }
 
 function formatProfitDelta(value: number): string {
@@ -166,6 +198,15 @@ export function ActiveEbayListingsPanel() {
   const [sellingFeePercent, setSellingFeePercent] = useState(
     DEFAULT_SELLING_FEE_PERCENT,
   );
+  const [promoDrafts, setPromoDrafts] = useState<Record<string, string>>({});
+  const [promoOverrides, setPromoOverrides] = useState<Record<string, number>>(
+    {},
+  );
+  const [savingPromoKeys, setSavingPromoKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [promoMessage, setPromoMessage] = useState<string | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -259,7 +300,8 @@ export function ActiveEbayListingsPanel() {
     [selectedListings],
   );
 
-  const bulkBusy = bulkGenerating || generatingKeys.size > 0 || priceUpdating;
+  const bulkBusy =
+    bulkGenerating || generatingKeys.size > 0 || priceUpdating || savingPromoKeys.size > 0;
 
   const sellingFeePercentValue =
     parsePercentInput(sellingFeePercent) ??
@@ -281,15 +323,24 @@ export function ActiveEbayListingsPanel() {
         continue;
       }
 
+      const promoRate = getEffectivePromoRate(
+        listing,
+        promoOverrides,
+        promoDrafts,
+        listingKey(listing),
+      );
+
       const current = estimateListingProfit(
         listing,
         listing.price,
         sellingFeePercentValue,
+        promoRate,
       );
       const projected = estimateListingProfit(
         listing,
         applyPricePercentChange(listing.price, pricePercentValue),
         sellingFeePercentValue,
+        promoRate,
       );
 
       if (!current || !projected) {
@@ -308,7 +359,13 @@ export function ActiveEbayListingsPanel() {
       count,
       missingCost,
     };
-  }, [selectedWithListingId, pricePercentValue, sellingFeePercentValue]);
+  }, [
+    selectedWithListingId,
+    pricePercentValue,
+    sellingFeePercentValue,
+    promoOverrides,
+    promoDrafts,
+  ]);
 
   const allFilteredSelected =
     filtered.length > 0 &&
@@ -323,6 +380,129 @@ export function ActiveEbayListingsPanel() {
       window.localStorage.setItem(SELLING_FEE_STORAGE_KEY, value);
     } catch {
       // Ignore private-mode / blocked storage.
+    }
+  }
+
+  function updatePromoDraft(key: string, value: string) {
+    setPromoDrafts((current) => ({ ...current, [key]: value }));
+  }
+
+  async function savePromoRateForListing(listing: ActiveEbayListing) {
+    const key = listingKey(listing);
+    const listingId = listing.listingId?.trim();
+    const draft =
+      promoDrafts[key] ??
+      String(getEffectivePromoRate(listing, promoOverrides) || "");
+
+    const parsed = parsePromoRateInput(draft);
+    if (parsed == null) {
+      setPromoError("Enter a promo rate between 0 and 100.");
+      return;
+    }
+
+    const currentRate = getEffectivePromoRate(listing, promoOverrides);
+    if (parsed === currentRate) {
+      setPromoDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+
+    if (!listingId) {
+      setPromoError("Listing ID is required to save promo rate.");
+      return;
+    }
+
+    if (!listingHasEbayPromo(listing)) {
+      setPromoOverrides((current) => ({ ...current, [listingId]: parsed }));
+      setPromoDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setPromoError(null);
+      setPromoMessage(
+        parsed === 0
+          ? "Promo set to 0% for profit estimates on this listing."
+          : `Promo set to ${parsed}% for profit estimates (not on eBay).`,
+      );
+      return;
+    }
+
+    if (parsed < 1) {
+      setPromoError("eBay promo rate must be at least 1%.");
+      return;
+    }
+
+    setSavingPromoKeys((current) => new Set(current).add(key));
+    setPromoError(null);
+    setPromoMessage(null);
+
+    try {
+      const response = await fetch(`/api/ebay/listings/${listingId}/promo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bidPercentage: parsed,
+          campaignId: listing.promoCampaignId,
+          adId: listing.promoAdId,
+        }),
+      });
+      const payload = (await response.json()) as
+        | {
+            ok: true;
+            bidPercentage: number;
+            campaignName?: string | null;
+            adStatus?: string | null;
+          }
+        | { ok: false; error: string };
+
+      if (!payload.ok) {
+        setPromoError(payload.error);
+        return;
+      }
+
+      setData((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          listings: current.listings.map((row) =>
+            row.listingId?.trim() === listingId
+              ? {
+                  ...row,
+                  promoRatePercent: payload.bidPercentage,
+                  promoCampaignName:
+                    payload.campaignName ?? row.promoCampaignName,
+                  promoAdStatus: payload.adStatus ?? row.promoAdStatus,
+                }
+              : row,
+          ),
+        };
+      });
+      setPromoOverrides((current) => {
+        const next = { ...current };
+        delete next[listingId];
+        return next;
+      });
+      setPromoDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setPromoMessage(`Promo rate updated to ${payload.bidPercentage}% on eBay.`);
+    } catch {
+      setPromoError("Could not reach the promo rate endpoint.");
+    } finally {
+      setSavingPromoKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     }
   }
 
@@ -624,6 +804,18 @@ export function ActiveEbayListingsPanel() {
         </div>
       ) : null}
 
+      {promoMessage ? (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <p>{promoMessage}</p>
+        </div>
+      ) : null}
+      {promoError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {promoError}
+        </div>
+      ) : null}
+
       {data.promoWarning ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
           {data.promoWarning}{" "}
@@ -821,8 +1013,8 @@ export function ActiveEbayListingsPanel() {
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                Profit uses selling fee {sellingFeePercentValue}%, promo rate
-                per listing, and default postage from Products.
+                Profit uses selling fee {sellingFeePercentValue}%, editable promo
+                rate per listing, and default postage from Products.
               </p>
             </div>
           ) : null}
@@ -869,7 +1061,7 @@ export function ActiveEbayListingsPanel() {
                     <TableHead className="w-[10%]">Listing ID</TableHead>
                     <TableHead className="w-[8%] text-right">Price</TableHead>
                     <TableHead className="w-[8%] text-right">Est. profit</TableHead>
-                    <TableHead className="w-[8%] text-right">Promo</TableHead>
+                    <TableHead className="w-[8%] text-right">Promo %</TableHead>
                     <TableHead className="w-[6%] text-right">Qty</TableHead>
                     <TableHead className="w-[8%]">Status</TableHead>
                     <TableHead className="w-[10%] pr-6 text-right">Actions</TableHead>
@@ -883,12 +1075,25 @@ export function ActiveEbayListingsPanel() {
                     const key = listingKey(listing);
                     const needsSku = activeListingNeedsSku(listing);
                     const isGenerating = generatingKeys.has(key);
+                    const isSavingPromo = savingPromoKeys.has(key);
+                    const effectivePromoRate = getEffectivePromoRate(
+                      listing,
+                      promoOverrides,
+                      promoDrafts,
+                      key,
+                    );
+                    const promoDraftValue =
+                      promoDrafts[key] ??
+                      (effectivePromoRate > 0 || listingHasEbayPromo(listing)
+                        ? String(effectivePromoRate)
+                        : "");
                     const profitEstimate =
                       listing.price != null
                         ? estimateListingProfit(
                             listing,
                             listing.price,
                             sellingFeePercentValue,
+                            effectivePromoRate,
                           )
                         : null;
                     const projectedProfit =
@@ -900,6 +1105,7 @@ export function ActiveEbayListingsPanel() {
                               pricePercentValue,
                             ),
                             sellingFeePercentValue,
+                            effectivePromoRate,
                           )
                         : null;
 
@@ -1036,11 +1242,24 @@ export function ActiveEbayListingsPanel() {
                         )}
                       </TableCell>
                       <TableCell className="text-right align-top">
-                        {listing.promoRatePercent != null ? (
-                          <div className="space-y-1">
-                            <Badge
-                              variant="secondary"
-                              className="tabular-nums"
+                        <div className="space-y-1">
+                          <div className="relative ml-auto w-[4.5rem]">
+                            <Input
+                              value={promoDraftValue}
+                              onChange={(event) =>
+                                updatePromoDraft(key, event.target.value)
+                              }
+                              onBlur={() => void savePromoRateForListing(listing)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void savePromoRateForListing(listing);
+                                }
+                              }}
+                              placeholder="0"
+                              inputMode="decimal"
+                              className="h-8 pr-6 text-right tabular-nums"
+                              disabled={isSavingPromo || bulkBusy}
                               title={
                                 listing.promoCampaignName
                                   ? `${listing.promoCampaignName}${
@@ -1048,15 +1267,25 @@ export function ActiveEbayListingsPanel() {
                                         ? ` · ${listing.promoAdStatus}`
                                         : ""
                                     }`
-                                  : listing.promoAdStatus ?? undefined
+                                  : listingHasEbayPromo(listing)
+                                    ? "Promoted listing"
+                                    : "Profit estimate only (not on eBay promo)"
                               }
-                            >
-                              {formatPromoRate(listing.promoRatePercent)}
-                            </Badge>
+                            />
+                            <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground">
+                              %
+                            </span>
                           </div>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
+                          {isSavingPromo ? (
+                            <p className="text-xs text-muted-foreground">Saving…</p>
+                          ) : listingHasEbayPromo(listing) ? (
+                            <p className="truncate text-xs text-muted-foreground">
+                              {listing.promoCampaignName ?? "Promoted"}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">Est. only</p>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums align-top">
                         {listing.quantity != null
@@ -1107,8 +1336,9 @@ export function ActiveEbayListingsPanel() {
         Loads Seller Hub listings via the Trading API and Promoted Listings ad
         rates via the Marketing API (same eBay login as fee sync). Select
         listings and use Apply price to change all variation prices by a
-        percentage, Generate SKU to assign seller SKUs, or click a listing to
-        edit individually.
+        percentage, edit promo % to update profit estimates (and push to eBay
+        when promoted), Generate SKU to assign seller SKUs, or click a listing
+        to edit individually.
       </p>
     </div>
   );

@@ -25,6 +25,8 @@ export type ActiveEbayListing = {
   promoRatePercent: number | null;
   promoAdStatus: string | null;
   promoCampaignName: string | null;
+  promoCampaignId: string | null;
+  promoAdId: string | null;
   /** Unit cost ex-VAT from product catalog (when SKU is linked). */
   unitCost: number | null;
   /** Default postage from product catalog. */
@@ -99,6 +101,8 @@ function parseItem(itemXml: string, marketplaceId: string): ActiveEbayListing | 
     promoRatePercent: null,
     promoAdStatus: null,
     promoCampaignName: null,
+    promoCampaignId: null,
+    promoAdId: null,
     unitCost: null,
     defaultPostage: null,
   };
@@ -170,6 +174,8 @@ export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResul
       promoRatePercent: rate.bidPercentage,
       promoAdStatus: rate.adStatus,
       promoCampaignName: rate.campaignName,
+      promoCampaignId: rate.campaignId,
+      promoAdId: rate.adId,
     };
   });
 

@@ -7,6 +7,7 @@ export type EbayListingPromoRate = {
   /** Ad rate percent, e.g. 12 means 12%. */
   bidPercentage: number | null;
   adStatus: string | null;
+  adId: string | null;
   campaignId: string | null;
   campaignName: string | null;
   fundingModel: string | null;
@@ -68,6 +69,80 @@ function parseBidPercentage(value: string | undefined): number | null {
 
   const amount = Number.parseFloat(value);
   return Number.isFinite(amount) ? amount : null;
+}
+
+/** eBay accepts 1.0–100.0 with at most one decimal place. */
+export function normalizeBidPercentage(value: number): number {
+  const clamped = Math.min(100, Math.max(1, value));
+  return Math.round(clamped * 10) / 10;
+}
+
+export function formatBidPercentageForApi(value: number): string {
+  return normalizeBidPercentage(value).toFixed(1);
+}
+
+export async function updateEbayListingPromoBid(input: {
+  campaignId: string;
+  adId: string;
+  bidPercentage: number;
+}): Promise<void> {
+  const campaignId = input.campaignId.trim();
+  const adId = input.adId.trim();
+  if (!campaignId || !adId) {
+    throw new Error("Campaign ID and ad ID are required to update promo rate.");
+  }
+
+  await ebayMarketingFetch(
+    `/ad_campaign/${encodeURIComponent(campaignId)}/ad/${encodeURIComponent(adId)}/update_bid`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        bidPercentage: formatBidPercentageForApi(input.bidPercentage),
+      }),
+    },
+  );
+}
+
+export async function updateEbayPromoRateByListingId(input: {
+  listingId: string;
+  bidPercentage: number;
+  campaignId?: string | null;
+  adId?: string | null;
+}): Promise<EbayListingPromoRate> {
+  const listingId = input.listingId.trim();
+  if (!listingId) {
+    throw new Error("Listing ID is required.");
+  }
+
+  let campaignId = input.campaignId?.trim() || null;
+  let adId = input.adId?.trim() || null;
+  let existing: EbayListingPromoRate | undefined;
+
+  if (!campaignId || !adId) {
+    const promo = await fetchEbayPromoRatesByListingId({ listingIds: [listingId] });
+    existing = promo.ratesByListingId[listingId];
+    campaignId = existing?.campaignId ?? null;
+    adId = existing?.adId ?? null;
+  }
+
+  if (!campaignId || !adId) {
+    throw new Error(
+      "This listing is not in a Promoted Listings campaign. Set a promo rate here for profit estimates only.",
+    );
+  }
+
+  const bidPercentage = normalizeBidPercentage(input.bidPercentage);
+  await updateEbayListingPromoBid({ campaignId, adId, bidPercentage });
+
+  return {
+    listingId,
+    bidPercentage,
+    adStatus: existing?.adStatus ?? null,
+    adId,
+    campaignId,
+    campaignName: existing?.campaignName ?? null,
+    fundingModel: existing?.fundingModel ?? null,
+  };
 }
 
 function isActiveCampaignStatus(status: string | undefined): boolean {
@@ -183,6 +258,7 @@ export async function fetchEbayPromoRatesByListingId(options?: {
           listingId,
           bidPercentage: parseBidPercentage(ad.bidPercentage),
           adStatus: ad.adStatus?.trim() || null,
+          adId: ad.adId?.trim() || null,
           campaignId,
           campaignName: campaign.campaignName?.trim() || null,
           fundingModel: campaign.fundingStrategy?.fundingModel?.trim() || null,
@@ -231,7 +307,7 @@ export async function fetchEbayPromoRatesByListingId(options?: {
         campaignsScanned: 0,
         adsScanned: 0,
         warning: needsReconnect
-          ? "Promoted Listings rates need sell.marketing.readonly. Reconnect eBay in Settings to grant this scope."
+          ? "Promoted Listings need sell.marketing (or sell.marketing.readonly to view). Reconnect eBay in Settings to grant scopes."
           : `Could not load promo rates: ${error.message}`,
       };
     }

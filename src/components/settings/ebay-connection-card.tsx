@@ -175,7 +175,8 @@ export function EbayConnectionCard() {
         <code className="text-xs">sell.finances</code>,{" "}
         <code className="text-xs">sell.analytics.readonly</code>,{" "}
         <code className="text-xs">sell.inventory</code>,{" "}
-        <code className="text-xs">sell.marketing.readonly</code> (promo rates),
+        <code className="text-xs">sell.marketing.readonly</code> /{" "}
+        <code className="text-xs">sell.marketing</code> (promo rates),
         and <code className="text-xs">commerce.message</code>. Reconnect if you
         linked eBay before a scope was added.
       </p>

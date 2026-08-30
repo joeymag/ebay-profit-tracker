@@ -15,6 +15,9 @@ export const EBAY_MESSAGE_SCOPE =
 export const EBAY_MARKETING_READONLY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly";
 
+export const EBAY_MARKETING_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.marketing";
+
 export const EBAY_APPLICATION_SCOPE = "https://api.ebay.com/oauth/api_scope";
 
 /** OAuth scopes requested when connecting eBay (space-separated). */
@@ -24,6 +27,7 @@ export const EBAY_OAUTH_SCOPES = [
   EBAY_INVENTORY_SCOPE,
   EBAY_MESSAGE_SCOPE,
   EBAY_MARKETING_READONLY_SCOPE,
+  EBAY_MARKETING_SCOPE,
 ].join(" ");
 
 export function getEbayConfig() {
