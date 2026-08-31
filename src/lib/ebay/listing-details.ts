@@ -118,42 +118,114 @@ function normalizeAspectKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function varyingAspectNamesFromMembers(
-  members: Array<{ specificsPairs: Array<{ name: string; value: string }> }>,
-): Set<string> {
-  const valuesByName = new Map<string, Set<string>>();
+/** Item specifics that appear on Browse rows but are not eBay variation axes. */
+const NON_VARIATION_ASPECT_NAMES = new Set([
+  "brand",
+  "mpn",
+  "upc",
+  "ean",
+  "isbn",
+  "epid",
+  "type",
+  "model",
+]);
 
-  for (const member of members) {
-    for (const pair of member.specificsPairs) {
-      const name = pair.name.trim();
-      if (!name) {
-        continue;
-      }
-      const bucket = valuesByName.get(name) ?? new Set<string>();
-      bucket.add(normalizeAspectKey(pair.value));
-      valuesByName.set(name, bucket);
+function parseVariationSpecificsSetNames(itemXml: string): string[] {
+  const variationsXml = extractXmlTag(itemXml, "Variations");
+  if (!variationsXml) {
+    return [];
+  }
+
+  const setXml = extractXmlTag(variationsXml, "VariationSpecificsSet");
+  if (!setXml) {
+    return [];
+  }
+
+  const names: string[] = [];
+  for (const list of extractXmlBlocks(setXml, "NameValueList")) {
+    const name = extractXmlTag(list, "Name")?.trim();
+    if (name && !names.some((existing) => normalizeAspectKey(existing) === normalizeAspectKey(name))) {
+      names.push(name);
     }
   }
 
-  const varying = new Set<string>();
-  for (const [name, values] of valuesByName) {
-    if (values.size > 1) {
-      varying.add(name);
-    }
-  }
-
-  return varying;
+  return names;
 }
 
-function filterVariationAspects(
+function variationAxisNamesFromGetItem(
+  itemXml: string,
+  variations: EbayListingVariation[],
+): string[] {
+  const fromSet = parseVariationSpecificsSetNames(itemXml);
+  if (fromSet.length) {
+    return fromSet;
+  }
+
+  const names: string[] = [];
+  for (const variation of variations) {
+    for (const pair of variation.specificsPairs) {
+      const name = pair.name.trim();
+      if (
+        !name ||
+        names.some(
+          (existing) =>
+            normalizeAspectKey(existing) === normalizeAspectKey(name),
+        )
+      ) {
+        continue;
+      }
+      names.push(name);
+    }
+  }
+
+  return names;
+}
+
+function filterToVariationAxes(
   pairs: EbayVariationSpecific[],
-  varyingNames: Set<string>,
+  axisNames: string[],
 ): EbayVariationSpecific[] {
-  if (!varyingNames.size) {
+  if (!axisNames.length) {
+    return pairs.filter(
+      (pair) =>
+        !NON_VARIATION_ASPECT_NAMES.has(normalizeAspectKey(pair.name)),
+    );
+  }
+
+  const axisKeys = new Set(axisNames.map(normalizeAspectKey));
+  return pairs.filter((pair) => axisKeys.has(normalizeAspectKey(pair.name)));
+}
+
+function orderSpecificsByAxes(
+  pairs: EbayVariationSpecific[],
+  axisNames: string[],
+): EbayVariationSpecific[] {
+  if (!axisNames.length) {
     return pairs;
   }
 
-  return pairs.filter((pair) => varyingNames.has(pair.name.trim()));
+  const ordered: EbayVariationSpecific[] = [];
+  for (const axis of axisNames) {
+    const match = pairs.find(
+      (pair) => normalizeAspectKey(pair.name) === normalizeAspectKey(axis),
+    );
+    if (match) {
+      ordered.push({ name: axis, value: match.value });
+    }
+  }
+
+  for (const pair of pairs) {
+    if (
+      !ordered.some(
+        (existing) =>
+          normalizeAspectKey(existing.name) === normalizeAspectKey(pair.name),
+      )
+    ) {
+      ordered.push(pair);
+    }
+  }
+
+  return ordered;
 }
 
 function variationMatchesAspects(
@@ -173,25 +245,19 @@ function variationMatchesAspects(
   );
 }
 
-function enrichVariationFromGetItem(
-  target: EbayListingVariation,
-  source: EbayListingVariation,
+function enrichSellerVariationWithBrowse(
+  sellerRow: EbayListingVariation,
+  browseRow: EbayListingVariation,
 ): EbayListingVariation {
   return {
-    ...target,
-    sku: target.sku ?? source.sku,
-    price: target.price ?? source.price,
-    currency: target.currency ?? source.currency,
-    quantity: target.quantity ?? source.quantity,
-    quantitySold: target.quantitySold ?? source.quantitySold,
-    quantityAvailable: target.quantityAvailable ?? source.quantityAvailable,
-    specificsPairs: target.specificsPairs.length
-      ? target.specificsPairs
-      : source.specificsPairs,
-    specifics:
-      target.specificsPairs.length || !source.specificsPairs.length
-        ? target.specifics
-        : source.specifics,
+    ...sellerRow,
+    sku: sellerRow.sku ?? browseRow.sku,
+    price: sellerRow.price ?? browseRow.price,
+    currency: sellerRow.currency ?? browseRow.currency,
+    quantity: sellerRow.quantity ?? browseRow.quantity,
+    quantitySold: sellerRow.quantitySold ?? browseRow.quantitySold,
+    quantityAvailable:
+      sellerRow.quantityAvailable ?? browseRow.quantityAvailable,
   };
 }
 
@@ -366,31 +432,37 @@ function isWithinBrowseAspectUniverse(
   browseMembers: Array<{
     specificsPairs: Array<{ name: string; value: string }>;
   }>,
-  varyingNames: Set<string>,
+  axisNames: string[],
 ): boolean {
-  if (!varyingNames.size || !variation.specificsPairs.length) {
+  if (!axisNames.length || !variation.specificsPairs.length) {
     return true;
   }
 
   const allowedValues = new Map<string, Set<string>>();
   for (const member of browseMembers) {
     for (const pair of member.specificsPairs) {
-      const name = pair.name.trim();
-      if (!varyingNames.has(name)) {
+      const key = normalizeAspectKey(pair.name);
+      if (
+        axisNames.length &&
+        !axisNames.some((axis) => normalizeAspectKey(axis) === key)
+      ) {
         continue;
       }
-      const bucket = allowedValues.get(name) ?? new Set<string>();
+      const bucket = allowedValues.get(key) ?? new Set<string>();
       bucket.add(normalizeAspectKey(pair.value));
-      allowedValues.set(name, bucket);
+      allowedValues.set(key, bucket);
     }
   }
 
   for (const pair of variation.specificsPairs) {
-    const name = pair.name.trim();
-    if (!varyingNames.has(name)) {
+    const key = normalizeAspectKey(pair.name);
+    if (
+      axisNames.length &&
+      !axisNames.some((axis) => normalizeAspectKey(axis) === key)
+    ) {
       continue;
     }
-    const allowed = allowedValues.get(name);
+    const allowed = allowedValues.get(key);
     if (allowed && !allowed.has(normalizeAspectKey(pair.value))) {
       return false;
     }
@@ -401,45 +473,77 @@ function isWithinBrowseAspectUniverse(
 
 async function reconcileVariationsWithBrowse(input: {
   listingId: string;
+  itemXml: string;
   getItemVariations: EbayListingVariation[];
 }): Promise<{ variations: EbayListingVariation[]; warning: string | null }> {
-  let getItemVariations = [...input.getItemVariations];
+  const axisNames = variationAxisNamesFromGetItem(
+    input.itemXml,
+    input.getItemVariations,
+  );
+
+  let getItemVariations = input.getItemVariations.map((variation) => {
+    const pairs = orderSpecificsByAxes(
+      filterToVariationAxes(variation.specificsPairs, axisNames),
+      axisNames,
+    );
+    return {
+      ...variation,
+      specificsPairs: pairs.length ? pairs : variation.specificsPairs,
+      specifics: pairs.length
+        ? formatSpecifics(pairs)
+        : variation.specifics,
+    };
+  });
 
   try {
     const browseMembers = await fetchBrowseGroupMembersByListingId(
       input.listingId,
     );
-    if (!browseMembers?.length) {
+    if (!browseMembers?.length || browseMembers.length === 1) {
       return { variations: getItemVariations, warning: null };
     }
 
-    if (browseMembers.length === 1) {
-      return { variations: getItemVariations, warning: null };
-    }
+    // Prefer seller axes; otherwise keep Browse aspects that look like variation options.
+    const browseAxisNames =
+      axisNames.length > 0
+        ? axisNames
+        : [
+            ...new Set(
+              browseMembers.flatMap((member) =>
+                member.specificsPairs
+                  .map((pair) => pair.name.trim())
+                  .filter(
+                    (name) =>
+                      name &&
+                      !NON_VARIATION_ASPECT_NAMES.has(normalizeAspectKey(name)),
+                  ),
+              ),
+            ),
+          ];
 
-    const varyingNames = varyingAspectNamesFromMembers(browseMembers);
     const filteredGetItem = getItemVariations.filter((variation) =>
-      isWithinBrowseAspectUniverse(variation, browseMembers, varyingNames),
+      isWithinBrowseAspectUniverse(
+        variation,
+        browseMembers,
+        browseAxisNames,
+      ),
     );
-    if (
-      filteredGetItem.length &&
-      filteredGetItem.length < getItemVariations.length
-    ) {
+    if (filteredGetItem.length) {
       getItemVariations = filteredGetItem;
     }
 
     const browseVariations = browseMembers.map((member) => {
-      const pairs = filterVariationAspects(member.specificsPairs, varyingNames);
+      const pairs = orderSpecificsByAxes(
+        filterToVariationAxes(member.specificsPairs, browseAxisNames),
+        browseAxisNames,
+      );
       const getItemMatch = getItemVariations.find((variation) =>
         variationMatchesAspects(variation, pairs),
       );
 
       const base: EbayListingVariation = {
         sku: member.sku,
-        specifics:
-          pairs.map((pair) => `${pair.name}: ${pair.value}`).join(" · ") ||
-          member.sku ||
-          "Variation",
+        specifics: formatSpecifics(pairs) || member.sku || "Variation",
         specificsPairs: pairs,
         price: member.price,
         currency: member.currency,
@@ -450,17 +554,19 @@ async function reconcileVariationsWithBrowse(input: {
         postageCost: null,
       };
 
-      return getItemMatch ? enrichVariationFromGetItem(base, getItemMatch) : base;
+      return getItemMatch
+        ? enrichSellerVariationWithBrowse(getItemMatch, base)
+        : base;
     });
 
-    // Prefer seller GetItem rows when they match the live listing option set.
+    // Prefer seller GetItem rows when they cover the live listing option set.
     if (getItemVariations.length >= browseVariations.length) {
       const reconciled = getItemVariations.map((variation) => {
         const browseMatch = browseVariations.find((candidate) =>
           variationMatchesAspects(variation, candidate.specificsPairs),
         );
         return browseMatch
-          ? enrichVariationFromGetItem(variation, browseMatch)
+          ? enrichSellerVariationWithBrowse(variation, browseMatch)
           : variation;
       });
 
@@ -477,7 +583,7 @@ async function reconcileVariationsWithBrowse(input: {
     return {
       variations: browseVariations,
       warning:
-        "Variation list matched to the live eBay listing options (size/colour).",
+        "Variation list matched to the live eBay listing (size / pack qty / finish).",
     };
   } catch {
     return { variations: getItemVariations, warning: null };
@@ -507,6 +613,7 @@ export async function fetchEbayListingDetails(
 
   const reconciled = await reconcileVariationsWithBrowse({
     listingId: trimmedId,
+    itemXml,
     getItemVariations: variations,
   });
   variations = reconciled.variations;
