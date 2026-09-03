@@ -12,6 +12,7 @@ import {
   Mail,
   Map,
   Package,
+  Printer,
   ScanBarcode,
   Settings,
   ShoppingBag,
@@ -53,6 +54,7 @@ const iconMap = {
   map: Map,
   "layout-grid": LayoutGrid,
   package: Package,
+  printer: Printer,
   "scan-barcode": ScanBarcode,
   settings: Settings,
 } as const;

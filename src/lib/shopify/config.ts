@@ -81,11 +81,28 @@ export function getShopifyProductAdminUrl(productId: number) {
   return `https://${host}/admin/products/${productId}`;
 }
 
-export function getShopifyStorefrontProductUrl(productHandle: string) {
+/** Public website origin for product pages (QR codes / customer links). */
+export function getShopifyStorefrontOrigin() {
+  const fromEnv =
+    process.env.PACK_SHEET_WEBSITE?.trim() ||
+    process.env.SHOPIFY_STOREFRONT_URL?.trim() ||
+    process.env.PRODUCT_LABEL_WEBSITE?.trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, "");
+  }
+
   const host = getShopifyStoreHost();
+  if (host && !host.toLowerCase().endsWith(".myshopify.com")) {
+    return `https://${host}`;
+  }
+
+  return "https://tstrade.co.uk";
+}
+
+export function getShopifyStorefrontProductUrl(productHandle: string) {
   const handle = productHandle.trim();
-  if (!host || !handle) {
+  if (!handle) {
     return null;
   }
-  return `https://${host}/products/${handle}`;
+  return `${getShopifyStorefrontOrigin()}/products/${handle}`;
 }

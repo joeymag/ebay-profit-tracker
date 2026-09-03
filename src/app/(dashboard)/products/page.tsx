@@ -1,6 +1,7 @@
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { ProductSearchFilterBar } from "@/components/filters/product-search-filter-bar";
+import { PrintBagLabelButton } from "@/components/products/print-bag-label-button";
 import { ProductCostInput } from "@/components/products/product-cost-input";
 import { SyncProductsButton } from "@/components/products/sync-products-button";
 import { Badge } from "@/components/ui/badge";
@@ -93,12 +94,15 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-16 pl-6" />
-                        <TableHead className="w-[36%]">Product</TableHead>
-                        <TableHead className="w-[16%]">SKU</TableHead>
-                        <TableHead className="w-[14%]">Temu SKU</TableHead>
-                        <TableHead className="w-[18%]">Unit cost</TableHead>
-                        <TableHead className="w-[10%] pr-6 text-right">
+                        <TableHead className="w-[32%]">Product</TableHead>
+                        <TableHead className="w-[14%]">SKU</TableHead>
+                        <TableHead className="w-[12%]">Temu SKU</TableHead>
+                        <TableHead className="w-[16%]">Unit cost</TableHead>
+                        <TableHead className="w-[10%] text-right">
                           In orders
+                        </TableHead>
+                        <TableHead className="w-[10%] pr-6 text-right">
+                          Label
                         </TableHead>
                       </TableRow>
                     </TableHeader>
@@ -106,7 +110,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       {products.length === 0 ? (
                         <TableRow>
                           <TableCell
-                            colSpan={6}
+                            colSpan={7}
                             className="h-24 whitespace-normal text-center text-muted-foreground"
                           >
                             Click &quot;Sync from Shopify&quot; to load your
@@ -116,7 +120,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                       ) : filteredProducts.length === 0 ? (
                         <TableRow>
                           <TableCell
-                            colSpan={6}
+                            colSpan={7}
                             className="h-24 whitespace-normal text-center text-muted-foreground"
                           >
                             No products match &quot;{searchQuery}&quot;.
@@ -171,8 +175,11 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                                 initialCost={product.unitCost}
                               />
                             </TableCell>
-                            <TableCell className="pr-6 text-right tabular-nums text-muted-foreground">
+                            <TableCell className="text-right tabular-nums text-muted-foreground">
                               {product.orderLineCount}
+                            </TableCell>
+                            <TableCell className="pr-6 text-right">
+                              <PrintBagLabelButton sku={product.sku} />
                             </TableCell>
                           </TableRow>
                         ))
