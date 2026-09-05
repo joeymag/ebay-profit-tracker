@@ -4,16 +4,11 @@ import path from "path";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import QRCode from "qrcode";
 
-/** mm → PDF points (1pt = 1/72"). */
-function mm(value: number): number {
-  return (value * 72) / 25.4;
-}
-
 const PAGE_WIDTH = 4 * 72;
 const PAGE_HEIGHT = 6 * 72;
 const MARGIN = 18;
-/** Bottom stub height (cut line sits this far from the bottom edge). */
-const CUT_FROM_BOTTOM = mm(75);
+/** Bottom stub height — max 1.5" from cut line to page bottom. */
+const CUT_FROM_BOTTOM = 1.5 * 72;
 const INK = rgb(0, 0, 0);
 const MUTED = rgb(0.28, 0.28, 0.28);
 
@@ -266,24 +261,30 @@ async function drawLabelPage(
 
   drawCutLine(page, fonts.regular);
 
-  // Bottom stub: centered product name + centered QR.
-  const stubTop = CUT_FROM_BOTTOM - 16;
+  // Bottom stub (≤1.5"): product name beside QR code.
+  const stubPad = 10;
+  const stubTop = CUT_FROM_BOTTOM - stubPad;
   const stubBottom = MARGIN;
   const stubHeight = stubTop - stubBottom;
-  const qrSize = Math.min(108, stubHeight - 48);
+  const gap = 10;
+  const qrSize = Math.min(92, stubHeight);
 
-  let stubNameSize = 13;
+  const qrX = PAGE_WIDTH - MARGIN - qrSize;
+  const qrY = stubBottom + (stubHeight - qrSize) / 2;
+
+  const textMaxWidth = Math.max(48, qrX - gap - MARGIN);
+  let stubNameSize = 11;
   let stubLines = wrapText(
     input.productName,
     fonts.bold,
     stubNameSize,
-    contentWidth,
+    textMaxWidth,
   );
   while (
-    stubNameSize > 9.5 &&
-    (stubLines.length > 3 ||
+    stubNameSize > 8 &&
+    (stubLines.length * (stubNameSize + 2.5) > stubHeight ||
       stubLines.some(
-        (line) => fonts.bold.widthOfTextAtSize(line, stubNameSize) > contentWidth,
+        (line) => fonts.bold.widthOfTextAtSize(line, stubNameSize) > textMaxWidth,
       ))
   ) {
     stubNameSize -= 0.5;
@@ -291,20 +292,24 @@ async function drawLabelPage(
       input.productName,
       fonts.bold,
       stubNameSize,
-      contentWidth,
-    ).slice(0, 3);
+      textMaxWidth,
+    );
   }
-  stubLines = stubLines.slice(0, 3);
+  stubLines = stubLines.slice(0, Math.max(2, Math.floor(stubHeight / (stubNameSize + 2.5))));
 
-  const stubNameBlock = stubLines.length * (stubNameSize + 3) - 3;
-  drawCenteredLines(
-    page,
-    stubLines,
-    fonts.bold,
-    stubNameSize,
-    stubTop - stubNameSize,
-    stubNameSize + 3,
-  );
+  const lineHeight = stubNameSize + 2.5;
+  const textBlockHeight = stubLines.length * lineHeight - 2.5;
+  let textY = stubBottom + (stubHeight - textBlockHeight) / 2 + textBlockHeight - stubNameSize;
+  for (const line of stubLines) {
+    page.drawText(line, {
+      x: MARGIN,
+      y: textY,
+      size: stubNameSize,
+      font: fonts.bold,
+      color: INK,
+    });
+    textY -= lineHeight;
+  }
 
   const qrPng = await QRCode.toBuffer(input.productUrl, {
     type: "png",
@@ -314,12 +319,8 @@ async function drawLabelPage(
     color: { dark: "#000000", light: "#ffffff" },
   });
   const qrImage = await pdf.embedPng(qrPng);
-  const qrY = Math.max(
-    stubBottom + 4,
-    stubTop - stubNameBlock - 10 - qrSize,
-  );
   page.drawImage(qrImage, {
-    x: (PAGE_WIDTH - qrSize) / 2,
+    x: qrX,
     y: qrY,
     width: qrSize,
     height: qrSize,
