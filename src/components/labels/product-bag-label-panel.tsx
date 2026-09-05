@@ -97,9 +97,9 @@ export function ProductBagLabelPanel({ initialSku = "" }: { initialSku?: string 
         <CardHeader>
           <CardTitle>Print a 4×6 bag label</CardTitle>
           <CardDescription>
-            Logo at the top, product name in the middle, then a cut line 2"
-            from the bottom. Below the cut: product name plus a QR code to the
-            website product page.
+            Logo and black tstrade.co.uk at the top, product name in the middle,
+            scan/app instructions, then a clear cut line. Bottom stub is 75mm
+            with centered name and QR to the website product page.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -217,25 +217,31 @@ export function ProductBagLabelPanel({ initialSku = "" }: { initialSku?: string 
         </CardHeader>
         <CardContent>
           <div className="mx-auto w-[11rem] rounded-sm border border-foreground/30 bg-white p-3 text-center text-zinc-900 shadow-sm">
-            <p className="text-[10px] font-bold tracking-wide">tstrade</p>
-            <div className="mt-8 mb-10 space-y-1 px-1">
+            <p className="text-[10px] font-bold tracking-wide text-black">
+              tstrade.co.uk
+            </p>
+            <div className="mt-6 mb-3 space-y-1 px-1">
               <p className="text-[11px] leading-tight font-semibold">
                 {productName.trim() || "Product name"}
               </p>
+              <p className="text-[7px] leading-snug text-zinc-700">
+                Scan QR with your camera or download our app to take you to the
+                product page
+              </p>
             </div>
-            <div className="border-t border-dashed border-zinc-400 pt-2">
-              <p className="text-[8px] text-zinc-500">CUT</p>
-              <div className="mt-2 flex items-end justify-between gap-1">
-                <p className="min-w-0 flex-1 text-left text-[8px] leading-tight font-semibold">
-                  {productName.trim() || "Product name"}
-                </p>
-                <div className="size-8 shrink-0 border border-zinc-400 bg-[repeating-conic-gradient(#111_0_25%,#fff_0_50%)] bg-[length:6px_6px]" />
-              </div>
+            <div className="border-y-2 border-black py-1">
+              <p className="text-[8px] font-bold tracking-wide">CUT HERE</p>
+            </div>
+            <div className="mt-3 flex flex-col items-center gap-2">
+              <p className="text-[10px] leading-tight font-semibold">
+                {productName.trim() || "Product name"}
+              </p>
+              <div className="size-10 shrink-0 border border-zinc-900 bg-[repeating-conic-gradient(#000_0_25%,#fff_0_50%)] bg-[length:5px_5px]" />
             </div>
           </div>
           <p className="mt-4 text-sm text-muted-foreground">
-            Print on a 4×6 printer (or A4 and cut). The QR opens the product
-            page on tstrade.co.uk.
+            4×6 label · bottom stub 75mm. Print on a 4×6 printer. The QR opens
+            the product page on tstrade.co.uk.
           </p>
         </CardContent>
       </Card>
