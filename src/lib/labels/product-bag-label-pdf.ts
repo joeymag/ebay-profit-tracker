@@ -11,14 +11,14 @@ function mm(value: number): number {
 
 const PAGE_WIDTH = 4 * 72;
 const PAGE_HEIGHT = 6 * 72;
-const MARGIN = 16;
+const MARGIN = 18;
 /** Bottom stub height (cut line sits this far from the bottom edge). */
 const CUT_FROM_BOTTOM = mm(75);
 const INK = rgb(0, 0, 0);
-const MUTED = rgb(0.2, 0.2, 0.2);
+const MUTED = rgb(0.28, 0.28, 0.28);
 
 const SCAN_INSTRUCTION =
-  "Scan QR with your camera or download our app to take you to the product page";
+  "Scan the QR code with your camera, or open our app, to view this product";
 
 export type ProductBagLabelInput = {
   productName: string;
@@ -54,19 +54,30 @@ function wrapText(
 }
 
 async function loadLogoBytes(): Promise<Uint8Array | null> {
-  try {
-    const filePath = path.join(
+  const candidates = [
+    path.join(
+      /*turbopackIgnore: true*/ process.cwd(),
+      "public",
+      "brand",
+      "tstrade-logo-print-black.png",
+    ),
+    path.join(
       /*turbopackIgnore: true*/ process.cwd(),
       "public",
       "brand",
       "tstrade-logo.png",
-    );
-    const bytes = new Uint8Array(await fs.readFile(filePath));
-    if (bytes.length >= 8) {
-      return bytes;
+    ),
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      const bytes = new Uint8Array(await fs.readFile(filePath));
+      if (bytes.length >= 8) {
+        return bytes;
+      }
+    } catch {
+      // Try the next candidate.
     }
-  } catch {
-    // Fall through to the live logo URL.
   }
 
   try {
@@ -107,18 +118,14 @@ function drawCenteredLines(
   return y;
 }
 
-/**
- * Logo image (if available) plus a solid black "tstrade.co.uk" wordmark so the
- * light grey ".co.uk" in the logo always prints clearly.
- */
+/** Solid black logo only — no duplicate URL text underneath. */
 async function drawBrandHeader(
   page: PDFPage,
   pdf: PDFDocument,
-  fonts: { regular: PDFFont; bold: PDFFont },
 ): Promise<number> {
   const maxWidth = PAGE_WIDTH - MARGIN * 2;
-  const maxLogoHeight = 56;
-  let y = PAGE_HEIGHT - MARGIN;
+  const maxLogoHeight = 42;
+  let y = PAGE_HEIGHT - MARGIN - 4;
 
   const logoBytes = await loadLogoBytes();
   if (logoBytes) {
@@ -132,51 +139,56 @@ async function drawBrandHeader(
       width,
       height,
     });
-    y -= height + 8;
+    y -= height + 14;
+
+    // Subtle rule under the logo.
+    const ruleWidth = Math.min(maxWidth * 0.55, width * 0.9);
+    page.drawLine({
+      start: { x: (PAGE_WIDTH - ruleWidth) / 2, y },
+      end: { x: (PAGE_WIDTH + ruleWidth) / 2, y },
+      thickness: 0.6,
+      color: INK,
+    });
+    return y - 4;
   }
 
-  const brand = "tstrade.co.uk";
-  const brandSize = 16;
-  const brandWidth = fonts.bold.widthOfTextAtSize(brand, brandSize);
+  // Fallback wordmark if the image is unavailable.
+  const brand = "TS TRADE";
+  const brandSize = 18;
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const brandWidth = bold.widthOfTextAtSize(brand, brandSize);
   page.drawText(brand, {
     x: (PAGE_WIDTH - brandWidth) / 2,
     y: y - brandSize,
     size: brandSize,
-    font: fonts.bold,
+    font: bold,
     color: INK,
   });
-
-  return y - brandSize;
+  return y - brandSize - 10;
 }
 
 function drawCutLine(page: PDFPage, font: PDFFont) {
   const y = CUT_FROM_BOTTOM;
   const label = "CUT HERE";
-  const labelSize = 9;
+  const labelSize = 7.5;
   const labelWidth = font.widthOfTextAtSize(label, labelSize);
+  const gap = 10;
+  const leftEnd = PAGE_WIDTH / 2 - labelWidth / 2 - gap;
+  const rightStart = PAGE_WIDTH / 2 + labelWidth / 2 + gap;
 
-  // Solid black guide (prints clearly on thermal + laser).
   page.drawLine({
-    start: { x: MARGIN, y: y + 1.5 },
-    end: { x: PAGE_WIDTH - MARGIN, y: y + 1.5 },
-    thickness: 1.25,
+    start: { x: MARGIN, y },
+    end: { x: leftEnd, y },
+    thickness: 0.75,
     color: INK,
+    dashArray: [2.5, 2],
   });
   page.drawLine({
-    start: { x: MARGIN, y: y - 1.5 },
-    end: { x: PAGE_WIDTH - MARGIN, y: y - 1.5 },
-    thickness: 0.8,
+    start: { x: rightStart, y },
+    end: { x: PAGE_WIDTH - MARGIN, y },
+    thickness: 0.75,
     color: INK,
-    dashArray: [3, 2.5],
-  });
-
-  // White strip behind the CUT label so it stays readable over the lines.
-  page.drawRectangle({
-    x: PAGE_WIDTH / 2 - labelWidth / 2 - 6,
-    y: y - 5,
-    width: labelWidth + 12,
-    height: 12,
-    color: rgb(1, 1, 1),
+    dashArray: [2.5, 2],
   });
 
   page.drawText(label, {
@@ -184,15 +196,14 @@ function drawCutLine(page: PDFPage, font: PDFFont) {
     y: y - 2.5,
     size: labelSize,
     font,
-    color: INK,
+    color: MUTED,
   });
 
-  // Tick marks at the edges.
   for (const x of [MARGIN, PAGE_WIDTH - MARGIN]) {
     page.drawLine({
-      start: { x, y: y + 6 },
-      end: { x, y: y - 6 },
-      thickness: 1.5,
+      start: { x, y: y + 5 },
+      end: { x, y: y - 5 },
+      thickness: 1,
       color: INK,
     });
   }
@@ -204,19 +215,19 @@ async function drawLabelPage(
   fonts: { regular: PDFFont; bold: PDFFont },
 ) {
   const page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  const brandBottom = await drawBrandHeader(page, pdf, fonts);
+  const brandBottom = await drawBrandHeader(page, pdf);
 
   const contentWidth = PAGE_WIDTH - MARGIN * 2;
-  const nameTop = brandBottom - 22;
-  const instructionReserve = 42;
-  const nameBottomLimit = CUT_FROM_BOTTOM + instructionReserve + 16;
+  const nameTop = brandBottom - 20;
+  const instructionReserve = 38;
+  const nameBottomLimit = CUT_FROM_BOTTOM + instructionReserve + 14;
   const availableHeight = Math.max(36, nameTop - nameBottomLimit);
 
-  let nameSize = 22;
+  let nameSize = 20;
   let nameLines = wrapText(input.productName, fonts.bold, nameSize, contentWidth);
   while (
-    nameSize > 12 &&
-    (nameLines.length * (nameSize + 5) > availableHeight ||
+    nameSize > 11 &&
+    (nameLines.length * (nameSize + 4) > availableHeight ||
       nameLines.some(
         (line) => fonts.bold.widthOfTextAtSize(line, nameSize) > contentWidth,
       ))
@@ -225,7 +236,7 @@ async function drawLabelPage(
     nameLines = wrapText(input.productName, fonts.bold, nameSize, contentWidth);
   }
 
-  const blockHeight = nameLines.length * (nameSize + 5) - 5;
+  const blockHeight = nameLines.length * (nameSize + 4) - 4;
   const nameStartY = nameTop - (availableHeight - blockHeight) / 2 - nameSize;
   const nameEndY = drawCenteredLines(
     page,
@@ -233,35 +244,35 @@ async function drawLabelPage(
     fonts.bold,
     nameSize,
     nameStartY,
-    nameSize + 5,
+    nameSize + 4,
   );
 
-  const instructionSize = 8.5;
+  const instructionSize = 8;
   const instructionLines = wrapText(
     SCAN_INSTRUCTION,
     fonts.regular,
     instructionSize,
-    contentWidth,
+    contentWidth - 8,
   );
   drawCenteredLines(
     page,
     instructionLines,
     fonts.regular,
     instructionSize,
-    Math.min(nameEndY - 14, CUT_FROM_BOTTOM + instructionReserve),
-    instructionSize + 3,
+    Math.min(nameEndY - 16, CUT_FROM_BOTTOM + instructionReserve),
+    instructionSize + 2.5,
     MUTED,
   );
 
-  drawCutLine(page, fonts.bold);
+  drawCutLine(page, fonts.regular);
 
   // Bottom stub: centered product name + centered QR.
-  const stubTop = CUT_FROM_BOTTOM - 18;
+  const stubTop = CUT_FROM_BOTTOM - 16;
   const stubBottom = MARGIN;
   const stubHeight = stubTop - stubBottom;
-  const qrSize = Math.min(110, stubHeight - 52);
+  const qrSize = Math.min(108, stubHeight - 48);
 
-  let stubNameSize = 14;
+  let stubNameSize = 13;
   let stubLines = wrapText(
     input.productName,
     fonts.bold,
@@ -269,7 +280,7 @@ async function drawLabelPage(
     contentWidth,
   );
   while (
-    stubNameSize > 10 &&
+    stubNameSize > 9.5 &&
     (stubLines.length > 3 ||
       stubLines.some(
         (line) => fonts.bold.widthOfTextAtSize(line, stubNameSize) > contentWidth,
@@ -286,13 +297,12 @@ async function drawLabelPage(
   stubLines = stubLines.slice(0, 3);
 
   const stubNameBlock = stubLines.length * (stubNameSize + 3) - 3;
-  const stubNameStartY = stubTop - stubNameSize;
   drawCenteredLines(
     page,
     stubLines,
     fonts.bold,
     stubNameSize,
-    stubNameStartY,
+    stubTop - stubNameSize,
     stubNameSize + 3,
   );
 
@@ -306,7 +316,7 @@ async function drawLabelPage(
   const qrImage = await pdf.embedPng(qrPng);
   const qrY = Math.max(
     stubBottom + 4,
-    stubTop - stubNameBlock - 12 - qrSize,
+    stubTop - stubNameBlock - 10 - qrSize,
   );
   page.drawImage(qrImage, {
     x: (PAGE_WIDTH - qrSize) / 2,
