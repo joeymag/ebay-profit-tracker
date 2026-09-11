@@ -55,6 +55,30 @@ function parseQty(value: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Amazon flat-file item-condition codes → label. */
+function formatCondition(value: string | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const map: Record<string, string> = {
+    "1": "Used - Like New",
+    "2": "Used - Very Good",
+    "3": "Used - Good",
+    "4": "Used - Acceptable",
+    "5": "Collectible - Like New",
+    "6": "Collectible - Very Good",
+    "7": "Collectible - Good",
+    "8": "Collectible - Acceptable",
+    "10": "Refurbished",
+    "11": "New",
+  };
+  return map[raw] ?? raw;
+}
+
+function amazonImageFromAsin(asin: string | null): string | null {
+  if (!asin) return null;
+  return `https://m.media-amazon.com/images/P/${asin}.01._SCLZZZZZZZ_SX200_.jpg`;
+}
+
 function parseTsv(text: string): AmazonListing[] {
   const cleaned = text.replace(/^\uFEFF/, "");
   const lines = cleaned.split(/\r?\n/).filter((line) => line.length > 0);
