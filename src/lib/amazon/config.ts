@@ -25,9 +25,10 @@ const REGION_ENDPOINTS: Record<
 export function getAmazonConfig() {
   const clientId = process.env.AMAZON_CLIENT_ID?.trim();
   const clientSecret = process.env.AMAZON_CLIENT_SECRET?.trim();
-  const env = (process.env.AMAZON_ENV?.trim().toLowerCase() === "production"
-    ? "production"
-    : "sandbox") as AmazonEnvironment;
+  // Default production — private seller apps use live LWA keys.
+  // Set AMAZON_ENV=sandbox only when intentionally testing mocked APIs.
+  const envRaw = process.env.AMAZON_ENV?.trim().toLowerCase();
+  const env = (envRaw === "sandbox" ? "sandbox" : "production") as AmazonEnvironment;
   const regionRaw = process.env.AMAZON_REGION?.trim().toLowerCase();
   const region = (
     regionRaw === "na" || regionRaw === "fe" ? regionRaw : "eu"
