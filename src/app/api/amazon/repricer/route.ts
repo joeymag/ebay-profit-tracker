@@ -5,6 +5,7 @@ import { fetchAmazonListings } from "@/lib/amazon/listings";
 import {
   buildRepriceSuggestion,
   listRepriceRules,
+  type RepriceSuggestion,
 } from "@/lib/amazon/repricer";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 
@@ -31,7 +32,7 @@ export async function GET() {
     const ruleBySku = new Map(rules.map((rule) => [rule.sku, rule]));
 
     // Competitive calls are rate-limited — batch in small parallel chunks.
-    const suggestions = [];
+    const suggestions: RepriceSuggestion[] = [];
     const chunkSize = 3;
     for (let i = 0; i < listings.length; i += chunkSize) {
       const chunk = listings.slice(i, i + chunkSize);
