@@ -207,14 +207,40 @@ export type Database = {
         Row: {
           id: string;
           refresh_token: string;
+          seller_id: string | null;
           updated_at: string;
         };
         Insert: {
           id: string;
           refresh_token: string;
+          seller_id?: string | null;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["amazon_oauth"]["Insert"]>;
+        Relationships: [];
+      };
+      amazon_reprice_rules: {
+        Row: {
+          sku: string;
+          enabled: boolean;
+          strategy: string;
+          min_price: number | null;
+          max_price: number | null;
+          undercut_amount: number;
+          updated_at: string;
+        };
+        Insert: {
+          sku: string;
+          enabled?: boolean;
+          strategy?: string;
+          min_price?: number | null;
+          max_price?: number | null;
+          undercut_amount?: number;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_reprice_rules"]["Insert"]
+        >;
         Relationships: [];
       };
       ebay_oauth: {

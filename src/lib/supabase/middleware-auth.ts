@@ -103,7 +103,17 @@ export async function updateSession(request: NextRequest) {
 
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", pathname);
+    // Normalize expired Supabase email-link errors onto /login cleanly.
+    const errorCode = url.searchParams.get("error_code");
+    const oauthError = url.searchParams.get("error");
+    url.searchParams.delete("error_description");
+    if (errorCode === "otp_expired" || oauthError === "access_denied") {
+      url.searchParams.set("error", errorCode === "otp_expired" ? "otp_expired" : "access_denied");
+      url.searchParams.delete("error_code");
+    }
+    if (pathname !== "/login") {
+      url.searchParams.set("next", pathname === "/" ? "/" : pathname);
+    }
     return NextResponse.redirect(url);
   }
 

@@ -1,0 +1,415 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Loader2, RefreshCw, Search } from "lucide-react";
+
+import { LineItemImage } from "@/components/orders/line-item-image";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import type { AmazonListing } from "@/lib/amazon/listings";
+import type {
+  AmazonRepriceRule,
+  RepriceStrategy,
+} from "@/lib/amazon/repricer";
+import type { AmazonCompetitiveSnapshot } from "@/lib/amazon/pricing";
+import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import Link from "next/link";
+
+type RepricerRow = AmazonListing & {
+  rule: AmazonRepriceRule | null;
+  competitive: AmazonCompetitiveSnapshot | null;
+  suggestedPrice: number | null;
+  reason: string;
+};
+
+type RepricerResponse =
+  | { ok: true; count: number; rows: RepricerRow[] }
+  | { ok: false; error: string; code?: string; details?: string };
+
+const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
+  { value: "undercut_lowest", label: "Undercut lowest" },
+  { value: "match_lowest", label: "Match lowest" },
+  { value: "match_buybox", label: "Match Buy Box" },
+  { value: "manual", label: "Manual only" },
+];
+
+type DraftRule = {
+  enabled: boolean;
+  strategy: RepriceStrategy;
+  minPrice: string;
+  maxPrice: string;
+  undercutAmount: string;
+};
+
+function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
+  return {
+    enabled: rule?.enabled ?? true,
+    strategy: rule?.strategy ?? "undercut_lowest",
+    minPrice: rule?.minPrice != null ? String(rule.minPrice) : "",
+    maxPrice: rule?.maxPrice != null ? String(rule.maxPrice) : "",
+    undercutAmount:
+      rule?.undercutAmount != null ? String(rule.undercutAmount) : "0.01",
+  };
+}
+
+export function AmazonRepricerPanel() {
+  const [rows, setRows] = useState<RepricerRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | undefined>();
+  const [search, setSearch] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, DraftRule>>({});
+  const [busySku, setBusySku] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/amazon/repricer");
+      const json = (await res.json()) as RepricerResponse;
+      if (!json.ok) {
+        setRows([]);
+        setError(json.error);
+        setErrorCode(json.code);
+        return;
+      }
+      setRows(json.rows);
+      setDrafts(
+        Object.fromEntries(
+          json.rows.map((row) => [row.sku, draftFromRule(row.rule)]),
+        ),
+      );
+    } catch {
+      setError("Could not reach the Amazon repricer API.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) =>
+      [row.title, row.sku, row.asin]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [rows, search]);
+
+  function updateDraft(sku: string, patch: Partial<DraftRule>) {
+    setDrafts((prev) => ({
+      ...prev,
+      [sku]: { ...(prev[sku] ?? draftFromRule(null)), ...patch },
+    }));
+  }
+
+  async function saveRule(sku: string) {
+    const draft = drafts[sku] ?? draftFromRule(null);
+    setBusySku(sku);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/amazon/repricer/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sku,
+          enabled: draft.enabled,
+          strategy: draft.strategy,
+          minPrice: draft.minPrice === "" ? null : Number(draft.minPrice),
+          maxPrice: draft.maxPrice === "" ? null : Number(draft.maxPrice),
+          undercutAmount:
+            draft.undercutAmount === "" ? 0.01 : Number(draft.undercutAmount),
+        }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        setMessage(json.error || "Failed to save rule.");
+        return;
+      }
+      setMessage(`Saved rule for ${sku}. Refresh to recalculate suggestions.`);
+    } finally {
+      setBusySku(null);
+    }
+  }
+
+  async function applyPrice(sku: string, price: number) {
+    setBusySku(sku);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/amazon/repricer/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku, price }),
+      });
+      const json = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        price?: number;
+        status?: string;
+      };
+      if (!json.ok) {
+        setMessage(json.error || "Failed to apply price.");
+        return;
+      }
+      setMessage(
+        `Updated ${sku} to ${formatMoney(json.price ?? price)} (${json.status || "OK"}).`,
+      );
+      setRows((prev) =>
+        prev.map((row) =>
+          row.sku === sku
+            ? { ...row, price: json.price ?? price, suggestedPrice: null }
+            : row,
+        ),
+      );
+    } finally {
+      setBusySku(null);
+    }
+  }
+
+  if (loading && rows.length === 0) {
+    return (
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        Loading listings + competitive prices (can take a minute)…
+      </div>
+    );
+  }
+
+  if (error && rows.length === 0) {
+    return (
+      <Card className="surface-card">
+        <CardHeader>
+          <CardTitle>Could not load Amazon repricer</CardTitle>
+          <CardDescription>{error}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button type="button" onClick={() => void load()}>
+            Retry
+          </Button>
+          {errorCode === "NOT_CONNECTED" ? (
+            <Link
+              href="/settings"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              Open Settings
+            </Link>
+          ) : null}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Set a min/max floor for each SKU, choose a strategy, then apply the
+        suggested price to Amazon. Start with min prices so you never race to
+        the bottom.
+      </p>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Badge variant="outline">{filtered.length} listings</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="Search title, SKU, ASIN…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loading}
+            onClick={() => void load()}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="animate-spin" />
+                Refreshing…
+              </>
+            ) : (
+              <>
+                <RefreshCw />
+                Refresh
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {message ? (
+        <div className="rounded-lg border bg-muted/40 p-3 text-sm">{message}</div>
+      ) : null}
+
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-14">Image</TableHead>
+              <TableHead>Listing</TableHead>
+              <TableHead className="text-right">Yours</TableHead>
+              <TableHead className="text-right">Buy Box</TableHead>
+              <TableHead className="text-right">Lowest</TableHead>
+              <TableHead>Strategy</TableHead>
+              <TableHead>Min / Max</TableHead>
+              <TableHead className="text-right">Suggested</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map((row) => {
+              const draft = drafts[row.sku] ?? draftFromRule(row.rule);
+              const busy = busySku === row.sku;
+              return (
+                <TableRow key={row.sku}>
+                  <TableCell>
+                    <LineItemImage
+                      src={row.imageUrl}
+                      alt={row.title}
+                      className="size-10 rounded-md object-cover"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="max-w-[280px] space-y-1">
+                      <p className="line-clamp-2 text-sm font-medium leading-snug">
+                        {row.title}
+                      </p>
+                      <p className="font-mono text-[11px] text-muted-foreground">
+                        {row.sku}
+                        {row.asin ? ` · ${row.asin}` : ""}
+                      </p>
+                      {row.competitive?.youHaveBuyBox ? (
+                        <Badge className="bg-green-600">Buy Box</Badge>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.price != null ? formatMoney(row.price) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.competitive?.buyBoxPrice != null
+                      ? formatMoney(row.competitive.buyBoxPrice)
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.competitive?.lowestPrice != null
+                      ? formatMoney(row.competitive.lowestPrice)
+                      : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <select
+                      className="h-8 rounded-md border bg-background px-2 text-xs"
+                      value={draft.strategy}
+                      onChange={(event) =>
+                        updateDraft(row.sku, {
+                          strategy: event.target.value as RepriceStrategy,
+                        })
+                      }
+                    >
+                      {STRATEGIES.map((strategy) => (
+                        <option key={strategy.value} value={strategy.value}>
+                          {strategy.label}
+                        </option>
+                      ))}
+                    </select>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <Input
+                        className="h-8 w-20 text-xs"
+                        inputMode="decimal"
+                        placeholder="Min"
+                        value={draft.minPrice}
+                        onChange={(event) =>
+                          updateDraft(row.sku, { minPrice: event.target.value })
+                        }
+                      />
+                      <Input
+                        className="h-8 w-20 text-xs"
+                        inputMode="decimal"
+                        placeholder="Max"
+                        value={draft.maxPrice}
+                        onChange={(event) =>
+                          updateDraft(row.sku, { maxPrice: event.target.value })
+                        }
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="space-y-1">
+                      <p className="tabular-nums font-medium">
+                        {row.suggestedPrice != null
+                          ? formatMoney(row.suggestedPrice)
+                          : "—"}
+                      </p>
+                      <p className="max-w-[140px] text-[10px] leading-snug text-muted-foreground">
+                        {row.reason}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => void saveRule(row.sku)}
+                      >
+                        Save rule
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={busy || row.suggestedPrice == null}
+                        onClick={() =>
+                          row.suggestedPrice != null
+                            ? void applyPrice(row.sku, row.suggestedPrice)
+                            : undefined
+                        }
+                      >
+                        {busy ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          "Apply"
+                        )}
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}

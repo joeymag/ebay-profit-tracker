@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, TrendingUp } from "lucide-react";
 
@@ -22,22 +22,53 @@ const URL_ERROR_MESSAGES: Record<string, string> = {
     "That reset link is invalid or expired. Request a new password reset email.",
   reset_session_expired:
     "Your reset session expired. Request a new password reset email.",
+  access_denied:
+    "That email link is invalid or expired. Sign in with your password, or request a new reset email.",
+  otp_expired:
+    "That email link has expired. Sign in with your password, or request a new reset email.",
 };
+
+function resolveUrlError(searchParams: URLSearchParams): string | null {
+  const errorCode = searchParams.get("error_code");
+  if (errorCode === "otp_expired") {
+    return URL_ERROR_MESSAGES.otp_expired!;
+  }
+  const error = searchParams.get("error");
+  if (!error) return null;
+  return URL_ERROR_MESSAGES[error] ?? "Sign-in failed.";
+}
 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/";
-  const urlError = searchParams.get("error");
+  const urlErrorMessage = resolveUrlError(searchParams);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-  const [error, setError] = useState<string | null>(
-    urlError ? (URL_ERROR_MESSAGES[urlError] ?? "Sign-in failed.") : null,
-  );
+  const [error, setError] = useState<string | null>(urlErrorMessage);
+
+  // Expired Supabase email links include long error_description query strings.
+  // Keep a short error= code for the message, strip the noisy extras once.
+  useEffect(() => {
+    const hasNoise =
+      searchParams.has("error_description") || searchParams.has("error_code");
+    if (!hasNoise) return;
+
+    const clean = new URLSearchParams();
+    const mapped =
+      searchParams.get("error_code") === "otp_expired"
+        ? "otp_expired"
+        : searchParams.get("error") || "access_denied";
+    clean.set("error", mapped);
+    if (nextPath && nextPath !== "/") {
+      clean.set("next", nextPath);
+    }
+    router.replace(`/login?${clean.toString()}`);
+  }, [nextPath, router, searchParams]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

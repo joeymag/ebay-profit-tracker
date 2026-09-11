@@ -12,6 +12,7 @@ const TOKEN_FILE = path.join(process.cwd(), "data", "amazon-oauth.json");
 
 type StoredAmazonTokens = {
   refreshToken: string;
+  sellerId?: string;
   updatedAt: string;
 };
 
@@ -158,5 +159,87 @@ export async function clearStoredAmazonRefreshToken(): Promise<void> {
     await fs.unlink(TOKEN_FILE);
   } catch {
     // ignore
+  }
+}
+
+export async function getStoredAmazonSellerId(): Promise<string | null> {
+  const fromEnv = process.env.AMAZON_SELLER_ID?.trim();
+  if (fromEnv) return fromEnv;
+
+  if (isSupabaseConfigured()) {
+    try {
+      const supabase = createSupabaseAdmin();
+      const { data } = await supabase
+        .from("amazon_oauth")
+        .select("seller_id")
+        .eq("id", TOKEN_ROW_ID)
+        .maybeSingle();
+      if (data?.seller_id?.trim()) return data.seller_id.trim();
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const raw = await fs.readFile(TOKEN_FILE, "utf8");
+    const parsed = JSON.parse(raw) as StoredAmazonTokens;
+    return parsed.sellerId?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveAmazonSellerId(sellerId: string): Promise<void> {
+  const trimmed = sellerId.trim();
+  if (!trimmed) return;
+
+  if (isSupabaseConfigured() && hasSupabaseServiceRoleKey()) {
+    try {
+      const supabase = createSupabaseAdmin();
+      const existing = await getStoredAmazonRefreshToken();
+      if (existing) {
+        await supabase.from("amazon_oauth").upsert(
+          {
+            id: TOKEN_ROW_ID,
+            refresh_token: existing,
+            seller_id: trimmed,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" },
+        );
+      } else {
+        await supabase
+          .from("amazon_oauth")
+          .update({
+            seller_id: trimmed,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", TOKEN_ROW_ID);
+      }
+    } catch {
+      // fall through to file
+    }
+  }
+
+  if (!process.env.VERCEL) {
+    try {
+      let refreshToken = "";
+      try {
+        const raw = await fs.readFile(TOKEN_FILE, "utf8");
+        refreshToken = (JSON.parse(raw) as StoredAmazonTokens).refreshToken || "";
+      } catch {
+        refreshToken = (await getStoredAmazonRefreshToken()) || "";
+      }
+      if (!refreshToken) return;
+      await fs.mkdir(path.dirname(TOKEN_FILE), { recursive: true });
+      const payload: StoredAmazonTokens = {
+        refreshToken,
+        sellerId: trimmed,
+        updatedAt: new Date().toISOString(),
+      };
+      await fs.writeFile(TOKEN_FILE, JSON.stringify(payload, null, 2), "utf8");
+    } catch {
+      // ignore
+    }
   }
 }
