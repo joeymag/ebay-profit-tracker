@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { DatabaseStatus } from "@/components/settings/database-status";
 import { AutoSyncStatusCard } from "@/components/orders/auto-sync-status-card";
+import { AmazonConnectionCard } from "@/components/settings/amazon-connection-card";
 import { EbayConnectionCard } from "@/components/settings/ebay-connection-card";
 import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button";
 import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
@@ -28,7 +29,7 @@ export default async function SettingsPage() {
     <>
       <DashboardHeader
         title="Settings"
-        description="Shopify, eBay, and database"
+        description="Shopify, eBay, Amazon, and database"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <Card className="surface-card">
@@ -151,6 +152,20 @@ export default async function SettingsPage() {
                 <EbayFeesSyncButton />
               </div>
             </Suspense>
+          </CardContent>
+        </Card>
+
+        <Card className="surface-card">
+          <CardHeader>
+            <CardTitle>Amazon SP-API</CardTitle>
+            <CardDescription>
+              Connect your Amazon seller app via Login with Amazon. Add LWA
+              client credentials to <code className="text-xs">.env.local</code>{" "}
+              / Vercel, then paste a sandbox or production refresh token.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AmazonConnectionCard />
           </CardContent>
         </Card>
       </div>

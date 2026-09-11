@@ -203,6 +203,20 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["products"]["Insert"]>;
         Relationships: [];
       };
+      amazon_oauth: {
+        Row: {
+          id: string;
+          refresh_token: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          refresh_token: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["amazon_oauth"]["Insert"]>;
+        Relationships: [];
+      };
       ebay_oauth: {
         Row: {
           id: string;
