@@ -70,9 +70,24 @@ function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
   };
 }
 
+type CompetitiveBatchResponse =
+  | {
+      ok: true;
+      suggestions: Array<{
+        sku: string;
+        competitive: AmazonCompetitiveSnapshot | null;
+        suggestedPrice: number | null;
+        reason: string;
+        rule: AmazonRepriceRule | null;
+      }>;
+    }
+  | { ok: false; error: string };
+
 export function AmazonRepricerPanel() {
   const [rows, setRows] = useState<RepricerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichProgress, setEnrichProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [search, setSearch] = useState("");
@@ -80,13 +95,79 @@ export function AmazonRepricerPanel() {
   const [busySku, setBusySku] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const enrichCompetitive = useCallback(async (listings: RepricerRow[]) => {
+    const skus = listings.map((row) => row.sku).filter(Boolean);
+    if (skus.length === 0) return;
+
+    setEnriching(true);
+    setEnrichProgress({ done: 0, total: skus.length });
+    const chunkSize = 5;
+    const priceBySku = Object.fromEntries(
+      listings.map((row) => [row.sku, row.price]),
+    );
+
+    try {
+      for (let i = 0; i < skus.length; i += chunkSize) {
+        const chunk = skus.slice(i, i + chunkSize);
+        const res = await fetch("/api/amazon/repricer/competitive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skus: chunk, prices: priceBySku }),
+        });
+        let json: CompetitiveBatchResponse;
+        try {
+          json = (await res.json()) as CompetitiveBatchResponse;
+        } catch {
+          setEnrichProgress({ done: i + chunk.length, total: skus.length });
+          continue;
+        }
+        if (!json.ok) {
+          setEnrichProgress({ done: i + chunk.length, total: skus.length });
+          continue;
+        }
+
+        const bySku = new Map(json.suggestions.map((s) => [s.sku, s]));
+        setRows((prev) =>
+          prev.map((row) => {
+            const suggestion = bySku.get(row.sku);
+            if (!suggestion) return row;
+            return {
+              ...row,
+              competitive: suggestion.competitive,
+              suggestedPrice: suggestion.suggestedPrice,
+              reason: suggestion.reason,
+              rule: suggestion.rule ?? row.rule,
+            };
+          }),
+        );
+        setEnrichProgress({ done: i + chunk.length, total: skus.length });
+      }
+    } finally {
+      setEnriching(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setErrorCode(undefined);
     setMessage(null);
+    setEnriching(false);
+    setEnrichProgress({ done: 0, total: 0 });
     try {
       const res = await fetch("/api/amazon/repricer");
-      const json = (await res.json()) as RepricerResponse;
+      let json: RepricerResponse;
+      try {
+        json = (await res.json()) as RepricerResponse;
+      } catch {
+        setRows([]);
+        setError(
+          res.ok
+            ? "Amazon repricer returned an invalid response."
+            : `Amazon repricer failed (HTTP ${res.status}). Try again.`,
+        );
+        return;
+      }
       if (!json.ok) {
         setRows([]);
         setError(json.error);
@@ -99,12 +180,16 @@ export function AmazonRepricerPanel() {
           json.rows.map((row) => [row.sku, draftFromRule(row.rule)]),
         ),
       );
+      setLoading(false);
+      void enrichCompetitive(json.rows);
+      return;
     } catch {
+      setRows([]);
       setError("Could not reach the Amazon repricer API.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enrichCompetitive]);
 
   useEffect(() => {
     void load();
@@ -196,7 +281,7 @@ export function AmazonRepricerPanel() {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        Loading listings + competitive prices (can take a minute)…
+        Loading Amazon listings…
       </div>
     );
   }
@@ -236,7 +321,16 @@ export function AmazonRepricerPanel() {
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Badge variant="outline">{filtered.length} listings</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{filtered.length} listings</Badge>
+          {enriching ? (
+            <Badge variant="secondary" className="gap-1.5">
+              <Loader2 className="size-3 animate-spin" />
+              Buy Box {Math.min(enrichProgress.done, enrichProgress.total)}/
+              {enrichProgress.total}
+            </Badge>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -250,13 +344,13 @@ export function AmazonRepricerPanel() {
           <Button
             type="button"
             variant="secondary"
-            disabled={loading}
+            disabled={loading || enriching}
             onClick={() => void load()}
           >
-            {loading ? (
+            {loading || enriching ? (
               <>
                 <Loader2 className="animate-spin" />
-                Refreshing…
+                {loading ? "Refreshing…" : "Loading Buy Box…"}
               </>
             ) : (
               <>
