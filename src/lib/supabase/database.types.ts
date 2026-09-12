@@ -219,6 +219,22 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["amazon_oauth"]["Insert"]>;
         Relationships: [];
       };
+      amazon_listings_cache: {
+        Row: {
+          marketplace_id: string;
+          listings: unknown;
+          fetched_at: string;
+        };
+        Insert: {
+          marketplace_id: string;
+          listings?: unknown;
+          fetched_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_listings_cache"]["Insert"]
+        >;
+        Relationships: [];
+      };
       amazon_reprice_rules: {
         Row: {
           sku: string;

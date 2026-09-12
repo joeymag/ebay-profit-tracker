@@ -293,18 +293,70 @@ export function AmazonRepricerPanel() {
           <CardTitle>Could not load Amazon repricer</CardTitle>
           <CardDescription>{error}</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button type="button" onClick={() => void load()}>
-            Retry
-          </Button>
-          {errorCode === "NOT_CONNECTED" ? (
-            <Link
-              href="/settings"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              Open Settings
-            </Link>
+        <CardContent className="flex flex-col gap-3">
+          {message ? (
+            <p className="text-sm text-muted-foreground">{message}</p>
           ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={() => void load()}>
+              Retry
+            </Button>
+            {errorCode === "NOT_CONNECTED" ? (
+              <Link
+                href="/settings"
+                className={cn(buttonVariants({ variant: "outline" }))}
+              >
+                Open Settings
+              </Link>
+            ) : null}
+            {errorCode === "CACHE_EMPTY" ? (
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    void (async () => {
+                      setMessage("Starting listings cache build…");
+                      try {
+                        const res = await fetch("/api/amazon/listings/warm", {
+                          method: "POST",
+                        });
+                        const json = (await res.json()) as {
+                          ok?: boolean;
+                          status?: string;
+                          message?: string;
+                          error?: string;
+                        };
+                        if (!res.ok || json.ok === false) {
+                          setMessage(
+                            json.error || "Could not start listings cache build.",
+                          );
+                          return;
+                        }
+                        if (json.status === "ready") {
+                          setMessage("Cache ready — click Retry.");
+                          return;
+                        }
+                        setMessage(
+                          "Building listings cache… wait about 1–2 minutes, then click Retry.",
+                        );
+                      } catch {
+                        setMessage("Could not start listings cache build.");
+                      }
+                    })();
+                  }}
+                >
+                  Build listings cache
+                </Button>
+                <Link
+                  href="/amazon-listings"
+                  className={cn(buttonVariants({ variant: "outline" }))}
+                >
+                  Open Amazon listings
+                </Link>
+              </>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
     );

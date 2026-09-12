@@ -3,6 +3,8 @@ import { gunzipSync } from "zlib";
 import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
+import { createSupabaseAdmin } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export type AmazonListing = {
   listingId: string;
@@ -23,6 +25,10 @@ type GetReportResponse = {
   reportId: string;
   processingStatus: string;
   reportDocumentId?: string;
+  createdTime?: string;
+};
+type GetReportsResponse = {
+  reports?: GetReportResponse[];
 };
 type GetReportDocumentResponse = {
   reportDocumentId: string;
@@ -36,8 +42,12 @@ type ListingsCache = {
   fetchedAt: number;
 };
 
-let listingsCache: ListingsCache | null = null;
-const CACHE_TTL_MS = 10 * 60_000;
+let memoryCache: ListingsCache | null = null;
+const CACHE_TTL_MS = 30 * 60_000;
+/** Serve stale cache up to this age to avoid Vercel 504s. */
+const STALE_MAX_MS = 24 * 60 * 60_000;
+/** Prefer a DONE report created within this window instead of making a new one. */
+const REUSE_REPORT_MAX_MS = 6 * 60 * 60_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -159,13 +169,155 @@ async function downloadReportDocument(documentId: string): Promise<string> {
   return buffer.toString("utf8");
 }
 
+async function readPersistedCache(
+  marketplaceId: string,
+): Promise<ListingsCache | null> {
+  if (!isSupabaseConfigured()) return null;
+  try {
+    const supabase = createSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("amazon_listings_cache")
+      .select("listings, fetched_at")
+      .eq("marketplace_id", marketplaceId)
+      .maybeSingle();
+    if (error || !data) return null;
+    const listings = Array.isArray(data.listings)
+      ? (data.listings as AmazonListing[])
+      : [];
+    const fetchedAt = Date.parse(data.fetched_at);
+    if (!Number.isFinite(fetchedAt) || listings.length === 0) return null;
+    return { marketplaceId, listings, fetchedAt };
+  } catch {
+    return null;
+  }
+}
+
+async function writePersistedCache(cache: ListingsCache): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const supabase = createSupabaseAdmin();
+    await supabase.from("amazon_listings_cache").upsert(
+      {
+        marketplace_id: cache.marketplaceId,
+        listings: cache.listings,
+        fetched_at: new Date(cache.fetchedAt).toISOString(),
+      },
+      { onConflict: "marketplace_id" },
+    );
+  } catch {
+    // Cache write failures should not break listing loads.
+  }
+}
+
+function cacheResult(cache: ListingsCache, cached: boolean) {
+  memoryCache = cache;
+  return {
+    marketplaceId: cache.marketplaceId,
+    listings: cache.listings,
+    fetchedAt: new Date(cache.fetchedAt).toISOString(),
+    cached,
+  };
+}
+
+async function findRecentDoneReportDocumentId(
+  marketplaceId: string,
+): Promise<string | null> {
+  try {
+    const data = await amazonFetch<GetReportsResponse>({
+      path: "/reports/2021-06-30/reports",
+      query: {
+        reportTypes: "GET_MERCHANT_LISTINGS_DATA",
+        processingStatuses: "DONE",
+        marketplaceIds: marketplaceId,
+        pageSize: "10",
+      },
+    });
+    const cutoff = Date.now() - REUSE_REPORT_MAX_MS;
+    const candidates = (data.reports ?? [])
+      .filter((r) => r.reportDocumentId)
+      .filter((r) => {
+        if (!r.createdTime) return true;
+        const created = Date.parse(r.createdTime);
+        return Number.isFinite(created) ? created >= cutoff : true;
+      });
+    return candidates[0]?.reportDocumentId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildListingsFromDocument(
+  marketplaceId: string,
+  documentId: string,
+): Promise<ListingsCache> {
+  const tsv = await downloadReportDocument(documentId);
+  const listings = parseTsv(tsv).sort((a, b) =>
+    a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
+  );
+  const cache: ListingsCache = {
+    marketplaceId,
+    listings,
+    fetchedAt: Date.now(),
+  };
+  await writePersistedCache(cache);
+  return cache;
+}
+
+async function createAndWaitForReport(
+  marketplaceId: string,
+  maxWaitMs: number,
+): Promise<ListingsCache> {
+  const created = await amazonFetch<CreateReportResponse>({
+    method: "POST",
+    path: "/reports/2021-06-30/reports",
+    body: {
+      reportType: "GET_MERCHANT_LISTINGS_DATA",
+      marketplaceIds: [marketplaceId],
+    },
+  });
+
+  const started = Date.now();
+  let documentId: string | undefined;
+  let attempt = 0;
+  while (Date.now() - started < maxWaitMs) {
+    await sleep(attempt === 0 ? 1500 : 2500);
+    attempt += 1;
+    const status = await amazonFetch<GetReportResponse>({
+      path: `/reports/2021-06-30/reports/${created.reportId}`,
+    });
+
+    if (status.processingStatus === "DONE") {
+      documentId = status.reportDocumentId;
+      break;
+    }
+    if (
+      status.processingStatus === "CANCELLED" ||
+      status.processingStatus === "FATAL"
+    ) {
+      throw new Error(
+        `Amazon listings report failed (${status.processingStatus}).`,
+      );
+    }
+  }
+
+  if (!documentId) {
+    throw new Error(
+      "Amazon listings report is still generating. Open Amazon listings once to warm the cache, then retry Repricer.",
+    );
+  }
+
+  return buildListingsFromDocument(marketplaceId, documentId);
+}
+
 /**
  * Pull open/active merchant listings for the configured marketplace via
- * GET_MERCHANT_LISTINGS_DATA (Reports API). Cached briefly to avoid
- * re-running a slow report on every page refresh.
+ * GET_MERCHANT_LISTINGS_DATA (Reports API). Uses memory + Supabase cache and
+ * reuses recent DONE reports so Vercel requests stay under gateway timeouts.
  */
 export async function fetchAmazonListings(options?: {
   forceRefresh?: boolean;
+  /** Prefer cache / existing report; never wait long for a new report. */
+  fast?: boolean;
 }): Promise<{
   marketplaceId: string;
   listings: AmazonListing[];
@@ -187,69 +339,76 @@ export async function fetchAmazonListings(options?: {
   }
 
   const now = Date.now();
+  const forceRefresh = options?.forceRefresh === true;
+  const fast = options?.fast === true;
+
   if (
-    !options?.forceRefresh &&
-    listingsCache &&
-    listingsCache.marketplaceId === config.marketplaceId &&
-    now - listingsCache.fetchedAt < CACHE_TTL_MS
+    !forceRefresh &&
+    memoryCache &&
+    memoryCache.marketplaceId === config.marketplaceId &&
+    now - memoryCache.fetchedAt < CACHE_TTL_MS
   ) {
-    return {
-      marketplaceId: listingsCache.marketplaceId,
-      listings: listingsCache.listings,
-      fetchedAt: new Date(listingsCache.fetchedAt).toISOString(),
-      cached: true,
-    };
+    return cacheResult(memoryCache, true);
   }
 
-  const created = await amazonFetch<CreateReportResponse>({
-    method: "POST",
-    path: "/reports/2021-06-30/reports",
-    body: {
-      reportType: "GET_MERCHANT_LISTINGS_DATA",
-      marketplaceIds: [config.marketplaceId],
-    },
-  });
-
-  let documentId: string | undefined;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    await sleep(attempt === 0 ? 2000 : 3000);
-    const status = await amazonFetch<GetReportResponse>({
-      path: `/reports/2021-06-30/reports/${created.reportId}`,
-    });
-
-    if (status.processingStatus === "DONE") {
-      documentId = status.reportDocumentId;
-      break;
-    }
-    if (
-      status.processingStatus === "CANCELLED" ||
-      status.processingStatus === "FATAL"
-    ) {
-      throw new Error(
-        `Amazon listings report failed (${status.processingStatus}).`,
-      );
+  if (!forceRefresh) {
+    const persisted = await readPersistedCache(config.marketplaceId);
+    if (persisted) {
+      memoryCache = persisted;
+      const age = now - persisted.fetchedAt;
+      if (age < CACHE_TTL_MS || (fast && age < STALE_MAX_MS)) {
+        return cacheResult(persisted, true);
+      }
+      // Freshness expired but keep as fallback if refresh fails / times out.
+      if (!fast && age < STALE_MAX_MS) {
+        // Fall through to refresh, but we'll return stale on timeout.
+      } else if (fast) {
+        return cacheResult(persisted, true);
+      }
     }
   }
 
-  if (!documentId) {
-    throw new Error("Timed out waiting for Amazon listings report.");
-  }
-
-  const tsv = await downloadReportDocument(documentId);
-  const listings = parseTsv(tsv).sort((a, b) =>
-    a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
+  // Fast path: download a recent DONE report (no create + poll).
+  const existingDocId = await findRecentDoneReportDocumentId(
+    config.marketplaceId,
   );
+  if (existingDocId) {
+    try {
+      const cache = await buildListingsFromDocument(
+        config.marketplaceId,
+        existingDocId,
+      );
+      return cacheResult(cache, false);
+    } catch {
+      // Fall through.
+    }
+  }
 
-  listingsCache = {
-    marketplaceId: config.marketplaceId,
-    listings,
-    fetchedAt: now,
-  };
+  if (fast) {
+    const stale =
+      memoryCache?.marketplaceId === config.marketplaceId
+        ? memoryCache
+        : await readPersistedCache(config.marketplaceId);
+    if (stale && now - stale.fetchedAt < STALE_MAX_MS) {
+      return cacheResult(stale, true);
+    }
+    throw new Error(
+      "Amazon listings cache is empty. Open Amazon listings once to build it (takes ~1–2 min), then return here.",
+    );
+  }
 
-  return {
-    marketplaceId: config.marketplaceId,
-    listings,
-    fetchedAt: new Date(now).toISOString(),
-    cached: false,
-  };
+  const maxWaitMs = 90_000;
+  try {
+    const cache = await createAndWaitForReport(config.marketplaceId, maxWaitMs);
+    return cacheResult(cache, false);
+  } catch (error) {
+    const stale =
+      memoryCache?.marketplaceId === config.marketplaceId
+        ? memoryCache
+        : await readPersistedCache(config.marketplaceId);
+    if (stale && now - stale.fetchedAt < STALE_MAX_MS) {
+      return cacheResult(stale, true);
+    }
+    throw error;
+  }
 }

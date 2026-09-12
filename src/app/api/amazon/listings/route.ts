@@ -37,7 +37,12 @@ export async function GET(request: Request) {
     new URL(request.url).searchParams.get("refresh") === "1";
 
   try {
-    const result = await fetchAmazonListings({ forceRefresh });
+    // Default to cache / recent DONE report so the page does not 504.
+    // Use ?refresh=1 only when you can wait (local/dev or after warm).
+    const result = await fetchAmazonListings({
+      forceRefresh,
+      fast: !forceRefresh,
+    });
     return NextResponse.json({
       ok: true,
       env: config.env,

@@ -25,7 +25,9 @@ export async function GET() {
 
   try {
     const [{ listings }, rules] = await Promise.all([
-      fetchAmazonListings(),
+      // Prefer Supabase / recent DONE report — never wait for a fresh report
+      // (that path routinely exceeds Vercel gateway timeouts).
+      fetchAmazonListings({ fast: true }),
       listRepriceRules(),
     ]);
     const ruleBySku = new Map(rules.map((rule) => [rule.sku, rule]));
@@ -66,6 +68,12 @@ export async function GET() {
     }
     const message =
       error instanceof Error ? error.message : "Failed to load repricer data.";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    const code = message.includes("listings cache is empty")
+      ? "CACHE_EMPTY"
+      : undefined;
+    return NextResponse.json(
+      { ok: false, code, error: message },
+      { status: code === "CACHE_EMPTY" ? 409 : 500 },
+    );
   }
 }
