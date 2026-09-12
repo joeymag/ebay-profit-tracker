@@ -228,8 +228,11 @@ export function AmazonRepricerPanel() {
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         Set a min/max floor for each SKU, choose a strategy, then apply the
-        suggested price to Amazon. Start with min prices so you never race to
-        the bottom.
+        suggested price to Amazon. Auto-reprice runs via cron every 15–30
+        minutes for enabled rules that have a min price set (manual strategy
+        is skipped). Point cron-job.org at{" "}
+        <code className="text-xs">/api/cron/amazon-reprice</code> with{" "}
+        <code className="text-xs">Authorization: Bearer CRON_SECRET</code>.
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

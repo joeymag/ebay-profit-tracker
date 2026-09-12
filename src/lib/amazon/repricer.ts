@@ -1,5 +1,6 @@
 import { amazonFetch } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import { fetchAmazonListings } from "@/lib/amazon/listings";
 import {
   getCompetitiveSnapshot,
   resolveAmazonSellerId,
@@ -251,5 +252,113 @@ export async function updateAmazonListingPrice(input: {
     sku: input.sku,
     price,
     status: result.status || "ACCEPTED",
+  };
+}
+
+export type AutoRepriceResult = {
+  checked: number;
+  applied: number;
+  skipped: number;
+  failed: number;
+  results: Array<{
+    sku: string;
+    status: "applied" | "skipped" | "failed";
+    reason: string;
+    fromPrice?: number | null;
+    toPrice?: number | null;
+  }>;
+};
+
+/**
+ * Check enabled non-manual rules against live offers and apply price updates.
+ * Requires a min price on each rule before auto-applying (safety floor).
+ */
+export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
+  const rules = (await listRepriceRules()).filter(
+    (rule) => rule.enabled && rule.strategy !== "manual",
+  );
+
+  const listings = await fetchAmazonListings().catch(() => null);
+  const priceBySku = new Map(
+    (listings?.listings ?? []).map((listing) => [listing.sku, listing.price]),
+  );
+
+  const results: AutoRepriceResult["results"] = [];
+  let applied = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const rule of rules) {
+    if (rule.minPrice == null) {
+      skipped += 1;
+      results.push({
+        sku: rule.sku,
+        status: "skipped",
+        reason: "Set a min price before auto-reprice will apply.",
+      });
+      continue;
+    }
+
+    try {
+      const currentPrice = priceBySku.get(rule.sku) ?? null;
+      const suggestion = await buildRepriceSuggestion({
+        sku: rule.sku,
+        currentPrice,
+        rule,
+      });
+
+      if (suggestion.suggestedPrice == null) {
+        skipped += 1;
+        results.push({
+          sku: rule.sku,
+          status: "skipped",
+          reason: suggestion.reason,
+          fromPrice: currentPrice,
+        });
+        continue;
+      }
+
+      if (suggestion.suggestedPrice < rule.minPrice) {
+        skipped += 1;
+        results.push({
+          sku: rule.sku,
+          status: "skipped",
+          reason: `Suggested £${suggestion.suggestedPrice.toFixed(2)} below min £${rule.minPrice.toFixed(2)}.`,
+          fromPrice: currentPrice,
+          toPrice: suggestion.suggestedPrice,
+        });
+        continue;
+      }
+
+      const update = await updateAmazonListingPrice({
+        sku: rule.sku,
+        price: suggestion.suggestedPrice,
+      });
+      applied += 1;
+      results.push({
+        sku: rule.sku,
+        status: "applied",
+        reason: suggestion.reason,
+        fromPrice: currentPrice,
+        toPrice: update.price,
+      });
+    } catch (error) {
+      failed += 1;
+      results.push({
+        sku: rule.sku,
+        status: "failed",
+        reason: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  return {
+    checked: rules.length,
+    applied,
+    skipped,
+    failed,
+    results,
   };
 }
