@@ -117,6 +117,7 @@ function parseTsv(text: string): AmazonListing[] {
     const sku = (iSku >= 0 ? cols[iSku]?.trim() : "") || "";
     const listingId =
       (iListingId >= 0 ? cols[iListingId]?.trim() : "") || sku || `row-${row}`;
+    const reportImage = (iImage >= 0 ? cols[iImage]?.trim() : "") || "";
 
     listings.push({
       listingId,
@@ -125,11 +126,11 @@ function parseTsv(text: string): AmazonListing[] {
       asin: asin || null,
       price: parseMoney(iPrice >= 0 ? cols[iPrice] : undefined),
       quantity: parseQty(iQty >= 0 ? cols[iQty] : undefined),
-      imageUrl: (iImage >= 0 ? cols[iImage]?.trim() : "") || null,
+      imageUrl: reportImage || amazonImageFromAsin(asin),
       openDate: (iOpen >= 0 ? cols[iOpen]?.trim() : "") || null,
       fulfillmentChannel:
         (iFulfillment >= 0 ? cols[iFulfillment]?.trim() : "") || null,
-      condition: (iCondition >= 0 ? cols[iCondition]?.trim() : "") || null,
+      condition: formatCondition(iCondition >= 0 ? cols[iCondition] : undefined),
       productUrl: asin ? `https://${domain}/dp/${asin}` : null,
     });
   }
