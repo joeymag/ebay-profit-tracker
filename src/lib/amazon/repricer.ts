@@ -13,7 +13,8 @@ export type RepriceStrategy =
   | "manual"
   | "match_buybox"
   | "match_lowest"
-  | "undercut_lowest";
+  | "undercut_lowest"
+  | "undercut_buybox";
 
 export type AmazonRepriceRule = {
   sku: string;
@@ -73,7 +74,19 @@ export function computeSuggestedPrice(input: {
   let target: number | null = null;
   let reason = "";
 
-  if (rule.strategy === "match_buybox") {
+  if (rule.strategy === "undercut_buybox") {
+    if (competitive.youHaveBuyBox) {
+      return {
+        suggestedPrice: null,
+        reason: "You already hold the Buy Box.",
+      };
+    }
+    if (competitive.buyBoxPrice == null) {
+      return { suggestedPrice: null, reason: "No Buy Box price to beat." };
+    }
+    target = competitive.buyBoxPrice - undercut;
+    reason = `Beat Buy Box (£${competitive.buyBoxPrice.toFixed(2)}) by £${undercut.toFixed(2)}`;
+  } else if (rule.strategy === "match_buybox") {
     target = competitive.buyBoxPrice;
     reason = target != null ? `Match Buy Box (£${target.toFixed(2)})` : "No Buy Box price.";
   } else if (rule.strategy === "match_lowest") {

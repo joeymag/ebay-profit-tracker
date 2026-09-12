@@ -10,6 +10,7 @@ const STRATEGIES = new Set<RepriceStrategy>([
   "match_buybox",
   "match_lowest",
   "undercut_lowest",
+  "undercut_buybox",
 ]);
 
 export async function POST(request: Request) {
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const strategy = (body.strategy || "undercut_lowest") as RepriceStrategy;
+  const strategy = (body.strategy || "undercut_buybox") as RepriceStrategy;
   if (!STRATEGIES.has(strategy)) {
     return NextResponse.json(
       { ok: false, error: "Invalid strategy." },

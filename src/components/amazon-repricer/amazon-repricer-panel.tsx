@@ -44,6 +44,7 @@ type RepricerResponse =
   | { ok: false; error: string; code?: string; details?: string };
 
 const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
+  { value: "undercut_buybox", label: "Beat Buy Box by £0.01" },
   { value: "undercut_lowest", label: "Undercut lowest" },
   { value: "match_lowest", label: "Match lowest" },
   { value: "match_buybox", label: "Match Buy Box" },
@@ -61,7 +62,7 @@ type DraftRule = {
 function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
   return {
     enabled: rule?.enabled ?? true,
-    strategy: rule?.strategy ?? "undercut_lowest",
+    strategy: rule?.strategy ?? "undercut_buybox",
     minPrice: rule?.minPrice != null ? String(rule.minPrice) : "",
     maxPrice: rule?.maxPrice != null ? String(rule.maxPrice) : "",
     undercutAmount:
@@ -227,11 +228,10 @@ export function AmazonRepricerPanel() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Set a min/max floor for each SKU, choose a strategy, then apply the
-        suggested price to Amazon. Auto-reprice runs via cron every 15–30
-        minutes for enabled rules that have a min price set (manual strategy
-        is skipped). Point cron-job.org at{" "}
-        <code className="text-xs">/api/cron/amazon-reprice</code> with{" "}
+        Set min and max for each SKU, then use Beat Buy Box by £0.01 to win the
+        Buy Box within your floor/ceiling. Auto-reprice runs every 15–30 minutes
+        for enabled rules with a min price (manual is skipped). Point cron-job.org
+        at <code className="text-xs">/api/cron/amazon-reprice</code> with{" "}
         <code className="text-xs">Authorization: Bearer CRON_SECRET</code>.
       </p>
 
