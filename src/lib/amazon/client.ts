@@ -14,7 +14,7 @@ export class AmazonApiError extends Error {
 }
 
 type AmazonFetchOptions = {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   query?: Record<string, string | undefined>;
   body?: unknown;
