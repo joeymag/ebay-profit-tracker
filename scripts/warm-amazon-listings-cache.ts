@@ -3,7 +3,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 async function main() {
-  const { fetchAmazonListings } = await import("../src/lib/amazon/listings.ts");
+  const { fetchAmazonListings } = await import("../src/lib/amazon/listings");
   console.log("Warming Amazon listings cache…");
   const result = await fetchAmazonListings({ forceRefresh: true });
   console.log(
