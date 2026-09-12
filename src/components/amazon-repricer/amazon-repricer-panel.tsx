@@ -51,6 +51,8 @@ const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
   { value: "manual", label: "Manual only" },
 ];
 
+type BuyBoxFilter = "all" | "in" | "out" | "unknown";
+
 type DraftRule = {
   enabled: boolean;
   strategy: RepriceStrategy;
@@ -91,6 +93,7 @@ export function AmazonRepricerPanel() {
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [search, setSearch] = useState("");
+  const [buyBoxFilter, setBuyBoxFilter] = useState<BuyBoxFilter>("all");
   const [drafts, setDrafts] = useState<Record<string, DraftRule>>({});
   const [busySku, setBusySku] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -197,15 +200,24 @@ export function AmazonRepricerPanel() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
-      [row.title, row.sku, row.asin]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [rows, search]);
+    return rows.filter((row) => {
+      if (q) {
+        const haystack = [row.title, row.sku, row.asin]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+
+      const youHaveBuyBox = row.competitive?.youHaveBuyBox;
+      if (buyBoxFilter === "in") return youHaveBuyBox === true;
+      if (buyBoxFilter === "out") return youHaveBuyBox === false;
+      if (buyBoxFilter === "unknown") {
+        return row.competitive == null || youHaveBuyBox == null;
+      }
+      return true;
+    });
+  }, [rows, search, buyBoxFilter]);
 
   function updateDraft(sku: string, patch: Partial<DraftRule>) {
     setDrafts((prev) => ({
@@ -393,6 +405,19 @@ export function AmazonRepricerPanel() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
+          <select
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={buyBoxFilter}
+            onChange={(event) =>
+              setBuyBoxFilter(event.target.value as BuyBoxFilter)
+            }
+            aria-label="Filter by Buy Box"
+          >
+            <option value="all">All Buy Box</option>
+            <option value="in">In Buy Box</option>
+            <option value="out">Not in Buy Box</option>
+            <option value="unknown">Buy Box unknown</option>
+          </select>
           <Button
             type="button"
             variant="secondary"
