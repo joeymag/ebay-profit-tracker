@@ -274,7 +274,8 @@ export function AmazonRepricerPanel() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-14">Image</TableHead>
-              <TableHead>Listing</TableHead>
+              <TableHead>Product</TableHead>
+              <TableHead>SKU</TableHead>
               <TableHead className="text-right">Yours</TableHead>
               <TableHead className="text-right">Buy Box</TableHead>
               <TableHead className="text-right">Lowest</TableHead>
@@ -298,18 +299,31 @@ export function AmazonRepricerPanel() {
                     />
                   </TableCell>
                   <TableCell>
-                    <div className="max-w-[280px] space-y-1">
-                      <p className="line-clamp-2 text-sm font-medium leading-snug">
+                    <div className="min-w-[260px] max-w-[420px] space-y-1.5">
+                      <p className="text-sm font-medium leading-snug whitespace-normal break-words">
                         {row.title}
                       </p>
-                      <p className="font-mono text-[11px] text-muted-foreground">
-                        {row.sku}
-                        {row.asin ? ` · ${row.asin}` : ""}
-                      </p>
+                      {row.asin ? (
+                        <p className="text-xs text-muted-foreground">
+                          ASIN:{" "}
+                          <span className="font-mono text-foreground">
+                            {row.asin}
+                          </span>
+                        </p>
+                      ) : null}
                       {row.competitive?.youHaveBuyBox ? (
                         <Badge className="bg-green-600">Buy Box</Badge>
                       ) : null}
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    {row.sku ? (
+                      <span className="font-mono text-xs break-all">
+                        {row.sku}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {row.price != null ? formatMoney(row.price) : "—"}
