@@ -9,6 +9,7 @@ import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button"
 import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
 import { ShopifyAdminAppCard } from "@/components/settings/shopify-admin-app-card";
 import { ShopifyConnectionTest } from "@/components/settings/shopify-connection-test";
+import { TwilioSmsTestCard } from "@/components/settings/twilio-sms-test-card";
 import { getStorageBackend } from "@/lib/orders/store";
 import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
 import { getAuthUser } from "@/lib/supabase/server-auth";
@@ -29,7 +30,7 @@ export default async function SettingsPage() {
     <>
       <DashboardHeader
         title="Settings"
-        description="Shopify, eBay, Amazon, and database"
+        description="Shopify, eBay, Amazon, SMS, and database"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <Card className="surface-card">
@@ -166,6 +167,20 @@ export default async function SettingsPage() {
           </CardHeader>
           <CardContent>
             <AmazonConnectionCard />
+          </CardContent>
+        </Card>
+
+        <Card className="surface-card">
+          <CardHeader>
+            <CardTitle>SMS (Twilio)</CardTitle>
+            <CardDescription>
+              Test SMS only for now — sends to your number. Order notifications
+              can be added later. Add credentials to{" "}
+              <code className="text-xs">.env.local</code> / Vercel.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TwilioSmsTestCard />
           </CardContent>
         </Card>
       </div>
