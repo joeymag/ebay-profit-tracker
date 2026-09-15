@@ -19,7 +19,7 @@ export function normalizeUkPhone(input: string): string | null {
     if (digits.startsWith("0") && digits.length === 11) {
       digits = `44${digits.slice(1)}`;
     }
-    digits = `+${digits}`;
+    if (!digits.startsWith("+")) digits = `+${digits}`;
   }
 
   if (!/^\+[1-9]\d{7,14}$/.test(digits)) return null;
@@ -37,9 +37,26 @@ export async function sendSms(input: {
     );
   }
 
+  if (config.accountSid.startsWith("SK")) {
+    throw new Error(
+      "TWILIO_ACCOUNT_SID looks like an API Key (SK…). Use the Account SID that starts with AC from the Twilio Console home page.",
+    );
+  }
+
   const to = normalizeUkPhone(input.to);
   if (!to) {
     throw new Error("Invalid phone number. Use +447… or 07… format.");
+  }
+
+  // Alphanumeric sender IDs (e.g. TSTrade) are allowed as-is; numbers need E.164.
+  const fromLooksLikeNumber = /^[+\d]/.test(config.fromNumber);
+  const from = fromLooksLikeNumber
+    ? normalizeUkPhone(config.fromNumber)
+    : config.fromNumber.trim();
+  if (!from) {
+    throw new Error(
+      "Invalid TWILIO_FROM_NUMBER. Use a Twilio UK number (+447…) or an approved sender ID.",
+    );
   }
 
   const body = input.body.trim();
@@ -50,14 +67,14 @@ export async function sendSms(input: {
   const client = twilio(config.accountSid, config.authToken);
   const message = await client.messages.create({
     to,
-    from: config.fromNumber,
+    from,
     body,
   });
 
   return {
     sid: message.sid,
     to,
-    from: config.fromNumber,
+    from,
     status: message.status || "queued",
   };
 }
