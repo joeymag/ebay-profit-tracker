@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 
 import { getTwilioConfig } from "@/lib/twilio/config";
 import { normalizeUkPhone, sendSms } from "@/lib/twilio/sms";
+import {
+  getSmsTemplatePreview,
+  renderSmsTemplate,
+  type SmsTemplateId,
+} from "@/lib/twilio/templates";
 
 export async function POST(request: Request) {
   const config = getTwilioConfig();
@@ -17,9 +22,15 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { to?: unknown; message?: unknown };
+  let body: {
+    to?: unknown;
+    message?: unknown;
+    template?: unknown;
+    name?: unknown;
+    orderNumber?: unknown;
+  };
   try {
-    body = (await request.json()) as { to?: unknown; message?: unknown };
+    body = (await request.json()) as typeof body;
   } catch {
     body = {};
   }
@@ -48,10 +59,20 @@ export async function POST(request: Request) {
     );
   }
 
+  const templateId =
+    body.template === "order_dispatched" || body.template === "order_confirmed"
+      ? (body.template as SmsTemplateId)
+      : "order_confirmed";
+
   const message =
     typeof body.message === "string" && body.message.trim()
       ? body.message.trim()
-      : "TS Trade test SMS — Twilio is connected.";
+      : renderSmsTemplate(templateId, {
+          name: typeof body.name === "string" ? body.name : "there",
+          orderNumber:
+            typeof body.orderNumber === "string" ? body.orderNumber : "#TEST",
+          storeName: "TS Trade",
+        });
 
   try {
     const result = await sendSms({ to, body: message });
@@ -61,6 +82,9 @@ export async function POST(request: Request) {
       to: result.to,
       from: result.from,
       status: result.status,
+      template: templateId,
+      preview: getSmsTemplatePreview(templateId),
+      body: message,
       message: `Test SMS sent to ${result.to} (${result.status}).`,
     });
   } catch (error) {

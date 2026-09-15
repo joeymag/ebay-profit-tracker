@@ -27,7 +27,7 @@ export function TwilioSmsTestCard() {
   const [sending, setSending] = useState(false);
   const [to, setTo] = useState("");
   const [message, setMessage] = useState(
-    "TS Trade test SMS — Twilio is connected.",
+    "Hi Joey, thanks for your order #1042 from TS Trade. We'll message you when it ships.",
   );
   const [result, setResult] = useState<TestResult | null>(null);
 
