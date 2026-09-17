@@ -235,6 +235,32 @@ export type Database = {
         >;
         Relationships: [];
       };
+      amazon_reprice_events: {
+        Row: {
+          id: number;
+          sku: string;
+          from_price: number | null;
+          to_price: number;
+          source: string;
+          reason: string | null;
+          status: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          sku: string;
+          from_price?: number | null;
+          to_price: number;
+          source?: string;
+          reason?: string | null;
+          status?: string;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_reprice_events"]["Insert"]
+        >;
+        Relationships: [];
+      };
       amazon_reprice_rules: {
         Row: {
           sku: string;

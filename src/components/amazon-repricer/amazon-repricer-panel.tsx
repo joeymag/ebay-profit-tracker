@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import type { AmazonListing } from "@/lib/amazon/listings";
 import type {
+  AmazonRepriceEvent,
   AmazonRepriceRule,
   RepriceStrategy,
 } from "@/lib/amazon/repricer";
@@ -43,6 +44,10 @@ type RepricerResponse =
   | { ok: true; count: number; rows: RepricerRow[] }
   | { ok: false; error: string; code?: string; details?: string };
 
+type HistoryResponse =
+  | { ok: true; days: number; count: number; events: AmazonRepriceEvent[] }
+  | { ok: false; error: string };
+
 const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
   { value: "undercut_buybox", label: "Beat Buy Box by £0.01" },
   { value: "undercut_lowest", label: "Undercut lowest" },
@@ -52,6 +57,18 @@ const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
 ];
 
 type BuyBoxFilter = "all" | "in" | "out" | "unknown";
+type ChangedFilter = "all" | "changed" | "unchanged";
+
+function formatWhen(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 type DraftRule = {
   enabled: boolean;
@@ -94,9 +111,32 @@ export function AmazonRepricerPanel() {
   const [errorCode, setErrorCode] = useState<string | undefined>();
   const [search, setSearch] = useState("");
   const [buyBoxFilter, setBuyBoxFilter] = useState<BuyBoxFilter>("all");
+  const [changedFilter, setChangedFilter] = useState<ChangedFilter>("all");
+  const [history, setHistory] = useState<AmazonRepriceEvent[]>([]);
+  const [historyDays] = useState(7);
   const [drafts, setDrafts] = useState<Record<string, DraftRule>>({});
   const [busySku, setBusySku] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/amazon/repricer/history?days=${historyDays}&limit=150`,
+      );
+      const json = (await res.json()) as HistoryResponse;
+      if (json.ok) setHistory(json.events);
+    } catch {
+      // Non-blocking — listings still work without history.
+    }
+  }, [historyDays]);
+
+  const lastChangeBySku = useMemo(() => {
+    const map = new Map<string, AmazonRepriceEvent>();
+    for (const event of history) {
+      if (!map.has(event.sku)) map.set(event.sku, event);
+    }
+    return map;
+  }, [history]);
 
   const enrichCompetitive = useCallback(async (listings: RepricerRow[]) => {
     const skus = listings.map((row) => row.sku).filter(Boolean);
@@ -185,6 +225,7 @@ export function AmazonRepricerPanel() {
       );
       setLoading(false);
       void enrichCompetitive(json.rows);
+      void loadHistory();
       return;
     } catch {
       setRows([]);
@@ -192,7 +233,7 @@ export function AmazonRepricerPanel() {
     } finally {
       setLoading(false);
     }
-  }, [enrichCompetitive]);
+  }, [enrichCompetitive, loadHistory]);
 
   useEffect(() => {
     void load();
@@ -210,14 +251,19 @@ export function AmazonRepricerPanel() {
       }
 
       const youHaveBuyBox = row.competitive?.youHaveBuyBox;
-      if (buyBoxFilter === "in") return youHaveBuyBox === true;
-      if (buyBoxFilter === "out") return youHaveBuyBox === false;
+      if (buyBoxFilter === "in" && youHaveBuyBox !== true) return false;
+      if (buyBoxFilter === "out" && youHaveBuyBox !== false) return false;
       if (buyBoxFilter === "unknown") {
-        return row.competitive == null || youHaveBuyBox == null;
+        if (!(row.competitive == null || youHaveBuyBox == null)) return false;
       }
+
+      const changedRecently = lastChangeBySku.has(row.sku);
+      if (changedFilter === "changed" && !changedRecently) return false;
+      if (changedFilter === "unchanged" && changedRecently) return false;
+
       return true;
     });
-  }, [rows, search, buyBoxFilter]);
+  }, [rows, search, buyBoxFilter, changedFilter, lastChangeBySku]);
 
   function updateDraft(sku: string, patch: Partial<DraftRule>) {
     setDrafts((prev) => ({
@@ -258,11 +304,17 @@ export function AmazonRepricerPanel() {
   async function applyPrice(sku: string, price: number) {
     setBusySku(sku);
     setMessage(null);
+    const current = rows.find((row) => row.sku === sku);
     try {
       const res = await fetch("/api/amazon/repricer/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, price }),
+        body: JSON.stringify({
+          sku,
+          price,
+          fromPrice: current?.price ?? null,
+          reason: current?.reason || "Manual apply from Amazon repricer",
+        }),
       });
       const json = (await res.json()) as {
         ok: boolean;
@@ -284,6 +336,7 @@ export function AmazonRepricerPanel() {
             : row,
         ),
       );
+      void loadHistory();
     } finally {
       setBusySku(null);
     }
@@ -418,6 +471,18 @@ export function AmazonRepricerPanel() {
             <option value="out">Not in Buy Box</option>
             <option value="unknown">Buy Box unknown</option>
           </select>
+          <select
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={changedFilter}
+            onChange={(event) =>
+              setChangedFilter(event.target.value as ChangedFilter)
+            }
+            aria-label="Filter by recent price changes"
+          >
+            <option value="all">All prices</option>
+            <option value="changed">Changed last {historyDays} days</option>
+            <option value="unchanged">Not changed last {historyDays} days</option>
+          </select>
           <Button
             type="button"
             variant="secondary"
@@ -443,6 +508,68 @@ export function AmazonRepricerPanel() {
         <div className="rounded-lg border bg-muted/40 p-3 text-sm">{message}</div>
       ) : null}
 
+      <Card className="surface-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">
+            Price changes (last {historyDays} days)
+          </CardTitle>
+          <CardDescription>
+            Logged when you Apply manually or when cron auto-reprices. Older
+            changes before this feature won&apos;t appear.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No price changes logged yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>When</TableHead>
+                    <TableHead>SKU</TableHead>
+                    <TableHead className="text-right">From</TableHead>
+                    <TableHead className="text-right">To</TableHead>
+                    <TableHead>Source</TableHead>
+                    <TableHead>Reason</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.slice(0, 40).map((event) => (
+                    <TableRow key={event.id}>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatWhen(event.createdAt)}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs break-all">
+                        {event.sku}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {event.fromPrice != null
+                          ? formatMoney(event.fromPrice)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">
+                        {formatMoney(event.toPrice)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="capitalize">
+                          {event.source}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[240px] text-xs text-muted-foreground">
+                        {event.reason || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="overflow-x-auto rounded-lg border">
         <Table>
           <TableHeader>
@@ -453,6 +580,7 @@ export function AmazonRepricerPanel() {
               <TableHead className="text-right">Yours</TableHead>
               <TableHead className="text-right">Buy Box</TableHead>
               <TableHead className="text-right">Lowest</TableHead>
+              <TableHead>Last change</TableHead>
               <TableHead>Strategy</TableHead>
               <TableHead>Min / Max</TableHead>
               <TableHead className="text-right">Suggested</TableHead>
@@ -511,6 +639,29 @@ export function AmazonRepricerPanel() {
                     {row.competitive?.lowestPrice != null
                       ? formatMoney(row.competitive.lowestPrice)
                       : "—"}
+                  </TableCell>
+                  <TableCell>
+                    {(() => {
+                      const last = lastChangeBySku.get(row.sku);
+                      if (!last) {
+                        return (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        );
+                      }
+                      return (
+                        <div className="space-y-0.5 text-xs">
+                          <p className="tabular-nums font-medium">
+                            {last.fromPrice != null
+                              ? `${formatMoney(last.fromPrice)} → `
+                              : ""}
+                            {formatMoney(last.toPrice)}
+                          </p>
+                          <p className="text-muted-foreground">
+                            {formatWhen(last.createdAt)} · {last.source}
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell>
                     <select

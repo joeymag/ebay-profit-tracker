@@ -35,6 +35,17 @@ export type RepriceSuggestion = {
   rule: AmazonRepriceRule | null;
 };
 
+export type AmazonRepriceEvent = {
+  id: number;
+  sku: string;
+  fromPrice: number | null;
+  toPrice: number;
+  source: string;
+  reason: string | null;
+  status: string;
+  createdAt: string;
+};
+
 const DEFAULT_UNDERCUT = 0.01;
 
 function roundMoney(value: number): number {
@@ -224,10 +235,74 @@ export async function buildRepriceSuggestion(input: {
   };
 }
 
+export async function logRepriceEvent(input: {
+  sku: string;
+  fromPrice?: number | null;
+  toPrice: number;
+  source?: string;
+  reason?: string | null;
+  status?: string;
+}): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const supabase = createSupabaseAdmin();
+    await supabase.from("amazon_reprice_events").insert({
+      sku: input.sku.trim(),
+      from_price: input.fromPrice ?? null,
+      to_price: roundMoney(input.toPrice),
+      source: input.source ?? "manual",
+      reason: input.reason ?? null,
+      status: input.status ?? "applied",
+    });
+  } catch {
+    // History logging should never block price updates.
+  }
+}
+
+export async function listRepriceEvents(options?: {
+  days?: number;
+  limit?: number;
+  sku?: string;
+}): Promise<AmazonRepriceEvent[]> {
+  if (!isSupabaseConfigured()) return [];
+  try {
+    const days = options?.days ?? 7;
+    const limit = options?.limit ?? 100;
+    const since = new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
+    const supabase = createSupabaseAdmin();
+    let query = supabase
+      .from("amazon_reprice_events")
+      .select("*")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (options?.sku?.trim()) {
+      query = query.eq("sku", options.sku.trim());
+    }
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return data.map((row) => ({
+      id: Number(row.id),
+      sku: row.sku,
+      fromPrice: row.from_price == null ? null : Number(row.from_price),
+      toPrice: Number(row.to_price),
+      source: row.source,
+      reason: row.reason,
+      status: row.status,
+      createdAt: row.created_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function updateAmazonListingPrice(input: {
   sku: string;
   price: number;
   seedSkuForSellerId?: string;
+  fromPrice?: number | null;
+  reason?: string | null;
+  source?: string;
 }): Promise<{ sku: string; price: number; status: string }> {
   const price = roundMoney(input.price);
   if (!(price > 0)) {
@@ -261,10 +336,20 @@ export async function updateAmazonListingPrice(input: {
     },
   });
 
+  const status = result.status || "ACCEPTED";
+  await logRepriceEvent({
+    sku: input.sku,
+    fromPrice: input.fromPrice,
+    toPrice: price,
+    source: input.source ?? "manual",
+    reason: input.reason,
+    status: "applied",
+  });
+
   return {
     sku: input.sku,
     price,
-    status: result.status || "ACCEPTED",
+    status,
   };
 }
 
@@ -346,6 +431,9 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
       const update = await updateAmazonListingPrice({
         sku: rule.sku,
         price: suggestion.suggestedPrice,
+        fromPrice: currentPrice,
+        reason: suggestion.reason,
+        source: "cron",
       });
       applied += 1;
       results.push({
