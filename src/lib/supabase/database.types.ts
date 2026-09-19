@@ -235,6 +235,22 @@ export type Database = {
         >;
         Relationships: [];
       };
+      amazon_competitive_cache: {
+        Row: {
+          sku: string;
+          snapshot: unknown;
+          fetched_at: string;
+        };
+        Insert: {
+          sku: string;
+          snapshot: unknown;
+          fetched_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_competitive_cache"]["Insert"]
+        >;
+        Relationships: [];
+      };
       amazon_reprice_events: {
         Row: {
           id: number;

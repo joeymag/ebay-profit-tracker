@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 
 import { AmazonApiError } from "@/lib/amazon/client";
+import { getCompetitiveSnapshotsBatch } from "@/lib/amazon/pricing";
 import {
-  buildRepriceSuggestion,
+  computeSuggestedPrice,
   listRepriceRules,
+  type AmazonRepriceRule,
 } from "@/lib/amazon/repricer";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 
 export const maxDuration = 60;
 
-const MAX_SKUS = 8;
+const MAX_SKUS = 20;
 
 export async function POST(request: Request) {
   const refreshToken = await getStoredAmazonRefreshToken();
@@ -24,9 +26,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { skus?: unknown; prices?: unknown };
+  let body: { skus?: unknown; prices?: unknown; bypassCache?: unknown };
   try {
-    body = (await request.json()) as { skus?: unknown; prices?: unknown };
+    body = (await request.json()) as {
+      skus?: unknown;
+      prices?: unknown;
+      bypassCache?: unknown;
+    };
   } catch {
     return NextResponse.json(
       { ok: false, error: "Invalid JSON body." },
@@ -62,31 +68,43 @@ export async function POST(request: Request) {
   }
 
   try {
-    const rules = await listRepriceRules();
-    const ruleBySku = new Map(rules.map((rule) => [rule.sku, rule]));
+    const [rules, competitiveBySku] = await Promise.all([
+      listRepriceRules(),
+      getCompetitiveSnapshotsBatch({
+        skus,
+        priceBySku,
+        concurrency: 4,
+        bypassCache: body.bypassCache === true,
+      }),
+    ]);
+    const ruleBySku = new Map<string, AmazonRepriceRule>(
+      rules.map((rule) => [rule.sku, rule]),
+    );
 
-    const suggestions = [];
-    for (const sku of skus) {
-      suggestions.push(
-        await buildRepriceSuggestion({
-          sku,
-          currentPrice: priceBySku.has(sku) ? priceBySku.get(sku)! : null,
-          rule: ruleBySku.get(sku) ?? null,
-        }),
-      );
-      // Soft pacing for Amazon pricing rate limits.
-      await new Promise((resolve) => setTimeout(resolve, 120));
-    }
+    const suggestions = skus.map((sku) => {
+      const rule = ruleBySku.get(sku) ?? null;
+      const competitive = competitiveBySku.get(sku) ?? null;
+      const currentPrice = priceBySku.has(sku) ? priceBySku.get(sku)! : null;
+      const { suggestedPrice, reason } = computeSuggestedPrice({
+        currentPrice,
+        competitive,
+        rule,
+      });
+      return {
+        sku,
+        competitive,
+        suggestedPrice,
+        reason:
+          competitive == null
+            ? "Could not load Buy Box data."
+            : reason,
+        rule,
+      };
+    });
 
     return NextResponse.json({
       ok: true,
-      suggestions: suggestions.map((s) => ({
-        sku: s.sku,
-        competitive: s.competitive,
-        suggestedPrice: s.suggestedPrice,
-        reason: s.reason,
-        rule: s.rule,
-      })),
+      suggestions,
     });
   } catch (error) {
     if (error instanceof AmazonApiError) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, Search } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
@@ -58,6 +58,9 @@ const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
 
 type BuyBoxFilter = "all" | "in" | "out" | "unknown";
 type ChangedFilter = "all" | "changed" | "unchanged";
+
+const PAGE_SIZE = 25;
+const ENRICH_CHUNK = 16;
 
 function formatWhen(iso: string): string {
   const date = new Date(iso);
@@ -117,11 +120,14 @@ export function AmazonRepricerPanel() {
   const [drafts, setDrafts] = useState<Record<string, DraftRule>>({});
   const [busySku, setBusySku] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [showHistory, setShowHistory] = useState(false);
+  const enrichAbortRef = useRef<AbortController | null>(null);
 
   const loadHistory = useCallback(async () => {
     try {
       const res = await fetch(
-        `/api/amazon/repricer/history?days=${historyDays}&limit=150`,
+        `/api/amazon/repricer/history?days=${historyDays}&limit=80`,
       );
       const json = (await res.json()) as HistoryResponse;
       if (json.ok) setHistory(json.events);
@@ -142,20 +148,25 @@ export function AmazonRepricerPanel() {
     const skus = listings.map((row) => row.sku).filter(Boolean);
     if (skus.length === 0) return;
 
+    enrichAbortRef.current?.abort();
+    const abort = new AbortController();
+    enrichAbortRef.current = abort;
+
     setEnriching(true);
     setEnrichProgress({ done: 0, total: skus.length });
-    const chunkSize = 5;
     const priceBySku = Object.fromEntries(
       listings.map((row) => [row.sku, row.price]),
     );
 
     try {
-      for (let i = 0; i < skus.length; i += chunkSize) {
-        const chunk = skus.slice(i, i + chunkSize);
+      for (let i = 0; i < skus.length; i += ENRICH_CHUNK) {
+        if (abort.signal.aborted) return;
+        const chunk = skus.slice(i, i + ENRICH_CHUNK);
         const res = await fetch("/api/amazon/repricer/competitive", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ skus: chunk, prices: priceBySku }),
+          signal: abort.signal,
         });
         let json: CompetitiveBatchResponse;
         try {
@@ -170,23 +181,27 @@ export function AmazonRepricerPanel() {
         }
 
         const bySku = new Map(json.suggestions.map((s) => [s.sku, s]));
-        setRows((prev) =>
-          prev.map((row) => {
-            const suggestion = bySku.get(row.sku);
-            if (!suggestion) return row;
-            return {
-              ...row,
-              competitive: suggestion.competitive,
-              suggestedPrice: suggestion.suggestedPrice,
-              reason: suggestion.reason,
-              rule: suggestion.rule ?? row.rule,
-            };
-          }),
-        );
-        setEnrichProgress({ done: i + chunk.length, total: skus.length });
+        startTransition(() => {
+          setRows((prev) =>
+            prev.map((row) => {
+              const suggestion = bySku.get(row.sku);
+              if (!suggestion) return row;
+              return {
+                ...row,
+                competitive: suggestion.competitive,
+                suggestedPrice: suggestion.suggestedPrice,
+                reason: suggestion.reason,
+                rule: suggestion.rule ?? row.rule,
+              };
+            }),
+          );
+          setEnrichProgress({ done: i + chunk.length, total: skus.length });
+        });
       }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
     } finally {
-      setEnriching(false);
+      if (!abort.signal.aborted) setEnriching(false);
     }
   }, []);
 
@@ -197,6 +212,8 @@ export function AmazonRepricerPanel() {
     setMessage(null);
     setEnriching(false);
     setEnrichProgress({ done: 0, total: 0 });
+    setPage(1);
+    enrichAbortRef.current?.abort();
     try {
       const res = await fetch("/api/amazon/repricer");
       let json: RepricerResponse;
@@ -237,6 +254,7 @@ export function AmazonRepricerPanel() {
 
   useEffect(() => {
     void load();
+    return () => enrichAbortRef.current?.abort();
   }, [load]);
 
   const filtered = useMemo(() => {
@@ -264,6 +282,17 @@ export function AmazonRepricerPanel() {
       return true;
     });
   }, [rows, search, buyBoxFilter, changedFilter, lastChangeBySku]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, currentPage]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, buyBoxFilter, changedFilter]);
 
   function updateDraft(sku: string, patch: Partial<DraftRule>) {
     setDrafts((prev) => ({
@@ -510,65 +539,109 @@ export function AmazonRepricerPanel() {
 
       <Card className="surface-card">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">
-            Price changes (last {historyDays} days)
-          </CardTitle>
-          <CardDescription>
-            Logged when you Apply manually or when cron auto-reprices. Older
-            changes before this feature won&apos;t appear.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No price changes logged yet.
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>SKU</TableHead>
-                    <TableHead className="text-right">From</TableHead>
-                    <TableHead className="text-right">To</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Reason</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {history.slice(0, 40).map((event) => (
-                    <TableRow key={event.id}>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {formatWhen(event.createdAt)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs break-all">
-                        {event.sku}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {event.fromPrice != null
-                          ? formatMoney(event.fromPrice)
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums font-medium">
-                        {formatMoney(event.toPrice)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="capitalize">
-                          {event.source}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="max-w-[240px] text-xs text-muted-foreground">
-                        {event.reason || "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">
+                Price changes (last {historyDays} days)
+              </CardTitle>
+              <CardDescription>
+                {history.length} logged · expands only when opened to keep the
+                page fast.
+              </CardDescription>
             </div>
-          )}
-        </CardContent>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowHistory((open) => !open)}
+            >
+              {showHistory ? "Hide" : "Show"} history
+            </Button>
+          </div>
+        </CardHeader>
+        {showHistory ? (
+          <CardContent>
+            {history.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No price changes logged yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>When</TableHead>
+                      <TableHead>SKU</TableHead>
+                      <TableHead className="text-right">From</TableHead>
+                      <TableHead className="text-right">To</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Reason</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.slice(0, 40).map((event) => (
+                      <TableRow key={event.id}>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                          {formatWhen(event.createdAt)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs break-all">
+                          {event.sku}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {event.fromPrice != null
+                            ? formatMoney(event.fromPrice)
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-medium">
+                          {formatMoney(event.toPrice)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {event.source}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="max-w-[240px] text-xs text-muted-foreground">
+                          {event.reason || "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        ) : null}
       </Card>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+        <p>
+          Showing {(currentPage - 1) * PAGE_SIZE + (paged.length ? 1 : 0)}–
+          {(currentPage - 1) * PAGE_SIZE + paged.length} of {filtered.length}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={currentPage <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            Previous
+          </Button>
+          <span>
+            Page {currentPage} / {pageCount}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={currentPage >= pageCount}
+            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
 
       <div className="overflow-x-auto rounded-lg border">
         <Table>
@@ -588,7 +661,7 @@ export function AmazonRepricerPanel() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((row) => {
+            {paged.map((row) => {
               const draft = drafts[row.sku] ?? draftFromRule(row.rule);
               const busy = busySku === row.sku;
               return (
