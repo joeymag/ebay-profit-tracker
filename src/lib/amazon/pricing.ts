@@ -60,6 +60,11 @@ function moneyAmount(value: Money | undefined): number | null {
 
 async function resolveStoredSellerId(): Promise<string | null> {
   if (cachedSellerId !== undefined) return cachedSellerId;
+  const fromEnv = process.env.AMAZON_SELLER_ID?.trim() || null;
+  if (fromEnv) {
+    cachedSellerId = fromEnv;
+    return cachedSellerId;
+  }
   cachedSellerId = await getStoredAmazonSellerId();
   return cachedSellerId;
 }
@@ -85,10 +90,12 @@ function snapshotFromOffers(
   const offers = data.payload?.Offers ?? [];
 
   const buyBoxPrice =
+    moneyAmount(summary?.BuyBoxPrices?.[0]?.LandedPrice) ??
     moneyAmount(summary?.BuyBoxPrices?.[0]?.ListingPrice) ??
     moneyAmount(offers.find((o) => o.IsBuyBoxWinner)?.ListingPrice);
 
   const lowestPrice =
+    moneyAmount(summary?.LowestPrices?.[0]?.LandedPrice) ??
     moneyAmount(summary?.LowestPrices?.[0]?.ListingPrice) ??
     offers.reduce<number | null>((min, offer) => {
       const amount = moneyAmount(offer.ListingPrice);
@@ -96,18 +103,47 @@ function snapshotFromOffers(
       return min == null ? amount : Math.min(min, amount);
     }, null);
 
-  let yourOffer: Offer | undefined;
-  if (storedSellerId) {
-    yourOffer = offers.find((o) => o.SellerId === storedSellerId);
-  }
+  const ourOffers = storedSellerId
+    ? offers.filter((o) => o.SellerId === storedSellerId)
+    : [];
+
+  // Never treat another seller's Buy Box offer as "ours".
+  let yourOffer: Offer | undefined =
+    ourOffers.find((o) => o.IsBuyBoxWinner) ?? ourOffers[0];
+
   if (!yourOffer && yourListedPrice != null) {
-    yourOffer = offers.find((o) => {
+    const atOurPrice = offers.filter((o) => {
       const amount = moneyAmount(o.ListingPrice);
-      return amount != null && Math.abs(amount - yourListedPrice) < 0.005;
+      return amount != null && Math.abs(amount - yourListedPrice) < 0.015;
     });
+    yourOffer =
+      (storedSellerId
+        ? atOurPrice.find((o) => o.SellerId === storedSellerId)
+        : undefined) ??
+      atOurPrice.find((o) => o.IsBuyBoxWinner) ??
+      atOurPrice[0];
   }
-  if (!yourOffer) {
-    yourOffer = offers.find((o) => o.IsBuyBoxWinner);
+
+  const buyBoxWinner = offers.find((o) => o.IsBuyBoxWinner);
+  const weAreMarkedWinner = ourOffers.some((o) => o.IsBuyBoxWinner === true);
+  const winnerIsUs = Boolean(
+    storedSellerId && buyBoxWinner?.SellerId === storedSellerId,
+  );
+
+  let youHaveBuyBox: boolean | null = null;
+  if (weAreMarkedWinner || winnerIsUs) {
+    youHaveBuyBox = true;
+  } else if (ourOffers.length > 0) {
+    youHaveBuyBox = false;
+  } else if (
+    yourOffer &&
+    storedSellerId &&
+    yourOffer.SellerId === storedSellerId
+  ) {
+    youHaveBuyBox = Boolean(yourOffer.IsBuyBoxWinner);
+  } else if (yourOffer && !storedSellerId) {
+    // Without a known seller ID, only trust an offer that Amazon marks as winner.
+    youHaveBuyBox = yourOffer.IsBuyBoxWinner === true;
   }
 
   return {
@@ -115,9 +151,14 @@ function snapshotFromOffers(
     buyBoxPrice,
     lowestPrice,
     offerCount: summary?.TotalOfferCount ?? offers.length,
-    yourOfferPrice: moneyAmount(yourOffer?.ListingPrice),
-    youHaveBuyBox: yourOffer ? Boolean(yourOffer.IsBuyBoxWinner) : null,
-    sellerIdGuess: yourOffer?.SellerId?.trim() || null,
+    yourOfferPrice:
+      moneyAmount(yourOffer?.ListingPrice) ??
+      (typeof yourListedPrice === "number" ? yourListedPrice : null),
+    youHaveBuyBox,
+    sellerIdGuess:
+      yourOffer?.SellerId?.trim() ||
+      ourOffers[0]?.SellerId?.trim() ||
+      storedSellerId,
   };
 }
 

@@ -144,7 +144,10 @@ export function AmazonRepricerPanel() {
     return map;
   }, [history]);
 
-  const enrichCompetitive = useCallback(async (listings: RepricerRow[]) => {
+  const enrichCompetitive = useCallback(async (
+    listings: RepricerRow[],
+    options?: { bypassCache?: boolean },
+  ) => {
     const skus = listings.map((row) => row.sku).filter(Boolean);
     if (skus.length === 0) return;
 
@@ -165,7 +168,11 @@ export function AmazonRepricerPanel() {
         const res = await fetch("/api/amazon/repricer/competitive", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skus: chunk, prices: priceBySku }),
+          body: JSON.stringify({
+            skus: chunk,
+            prices: priceBySku,
+            bypassCache: options?.bypassCache === true,
+          }),
           signal: abort.signal,
         });
         let json: CompetitiveBatchResponse;
@@ -205,7 +212,7 @@ export function AmazonRepricerPanel() {
     }
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: { bypassCache?: boolean }) => {
     setLoading(true);
     setError(null);
     setErrorCode(undefined);
@@ -241,7 +248,9 @@ export function AmazonRepricerPanel() {
         ),
       );
       setLoading(false);
-      void enrichCompetitive(json.rows);
+      void enrichCompetitive(json.rows, {
+        bypassCache: options?.bypassCache === true,
+      });
       void loadHistory();
       return;
     } catch {
@@ -516,7 +525,7 @@ export function AmazonRepricerPanel() {
             type="button"
             variant="secondary"
             disabled={loading || enriching}
-            onClick={() => void load()}
+            onClick={() => void load({ bypassCache: true })}
           >
             {loading || enriching ? (
               <>
@@ -526,7 +535,7 @@ export function AmazonRepricerPanel() {
             ) : (
               <>
                 <RefreshCw />
-                Refresh
+                Refresh Buy Box
               </>
             )}
           </Button>
@@ -688,6 +697,19 @@ export function AmazonRepricerPanel() {
                       ) : null}
                       {row.competitive?.youHaveBuyBox ? (
                         <Badge className="bg-green-600">Buy Box</Badge>
+                      ) : row.competitive &&
+                        row.price != null &&
+                        row.competitive.lowestPrice != null &&
+                        Math.abs(row.price - row.competitive.lowestPrice) <
+                          0.015 &&
+                        row.competitive.youHaveBuyBox === false ? (
+                        <Badge variant="outline" title="Lowest price, but Amazon Featured Offer is another seller">
+                          Lowest · no Buy Box
+                        </Badge>
+                      ) : row.competitive == null ? (
+                        <span className="text-[10px] text-muted-foreground">
+                          Checking…
+                        </span>
                       ) : null}
                     </div>
                   </TableCell>
