@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { syncEbayPostageFromApis } from "@/lib/ebay/ebay-postage-enrichment";
 import { syncEbayFeesFromFinancesApi } from "@/lib/ebay/sync-fees";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
 import {
@@ -28,11 +29,28 @@ async function runAutoSync(): Promise<void> {
   });
 
   const refreshToken = await getStoredEbayRefreshToken();
-  if (refreshToken && orderResult.imported > 0) {
+  if (refreshToken) {
     try {
       await syncEbayFeesFromFinancesApi({ days: 30 });
     } catch (error) {
       console.error("[cron/sync-orders] eBay fee sync failed:", error);
+    }
+
+    try {
+      const postageResult = await syncEbayPostageFromApis({
+        days: 30,
+        maxFulfillmentLookups: 25,
+      });
+      console.info(
+        "[cron/sync-orders] eBay postage sync",
+        JSON.stringify({
+          postageUpdated: postageResult.postageUpdated,
+          trackingUpdated: postageResult.trackingUpdated,
+          skipped: postageResult.skipped,
+        }),
+      );
+    } catch (error) {
+      console.error("[cron/sync-orders] eBay postage sync failed:", error);
     }
   }
 

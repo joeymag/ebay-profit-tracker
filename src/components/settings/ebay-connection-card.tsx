@@ -173,7 +173,8 @@ export function EbayConnectionCard() {
       <p className="text-sm text-muted-foreground">
         OAuth scopes:{" "}
         <code className="text-xs">sell.finances</code>,{" "}
-        <code className="text-xs">sell.analytics.readonly</code>,{" "}
+        <code className="text-xs">sell.fulfillment</code> (eBay postage +
+        tracking), <code className="text-xs">sell.analytics.readonly</code>,{" "}
         <code className="text-xs">sell.inventory</code>,{" "}
         <code className="text-xs">sell.marketing.readonly</code> /{" "}
         <code className="text-xs">sell.marketing</code> (promo rates),

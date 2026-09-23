@@ -49,7 +49,9 @@ export type EbayTransaction = {
   orderId?: string;
   transactionType?: string;
   transactionDate?: string;
+  bookingEntry?: string;
   feeType?: string;
+  transactionMemo?: string;
   amount?: { value?: string; currency?: string };
   totalFeeAmount?: { value?: string; currency?: string };
   references?: Array<{
@@ -77,13 +79,18 @@ function sleep(ms: number) {
 export async function fetchEbayTransactionsInRange(
   start: Date,
   end: Date,
+  options?: { transactionType?: string },
 ): Promise<EbayTransaction[]> {
   const transactions: EbayTransaction[] = [];
   const limit = 200;
   let offset = 0;
-  const filter = encodeURIComponent(
+  const filters = [
     `transactionDate:[${start.toISOString()}..${end.toISOString()}]`,
-  );
+  ];
+  if (options?.transactionType) {
+    filters.push(`transactionType:{${options.transactionType}}`);
+  }
+  const filter = encodeURIComponent(filters.join(","));
 
   while (true) {
     const data = await ebayFinancesFetch<EbayTransactionsResponse>(

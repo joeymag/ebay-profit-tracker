@@ -18,6 +18,9 @@ export const EBAY_MARKETING_READONLY_SCOPE =
 export const EBAY_MARKETING_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.marketing";
 
+export const EBAY_FULFILLMENT_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment";
+
 export const EBAY_APPLICATION_SCOPE = "https://api.ebay.com/oauth/api_scope";
 
 /** OAuth scopes requested when connecting eBay (space-separated). */
@@ -28,6 +31,7 @@ export const EBAY_OAUTH_SCOPES = [
   EBAY_MESSAGE_SCOPE,
   EBAY_MARKETING_READONLY_SCOPE,
   EBAY_MARKETING_SCOPE,
+  EBAY_FULFILLMENT_SCOPE,
 ].join(" ");
 
 export function getEbayConfig() {
@@ -65,6 +69,9 @@ export function getEbayConfig() {
     marketingBaseUrl: isSandbox
       ? "https://api.sandbox.ebay.com/sell/marketing/v1"
       : "https://api.ebay.com/sell/marketing/v1",
+    fulfillmentBaseUrl: isSandbox
+      ? "https://api.sandbox.ebay.com/sell/fulfillment/v1"
+      : "https://api.ebay.com/sell/fulfillment/v1",
     marketplaceId:
       process.env.EBAY_MARKETPLACE?.trim().toUpperCase() || "EBAY_GB",
     sellerUsername: process.env.EBAY_SELLER_USERNAME?.trim() || null,

@@ -6,6 +6,7 @@ import {
   fetchAllShopifyOrders,
   fetchShopifyOrdersUpdatedSince,
 } from "@/lib/shopify/orders";
+import { enrichOrdersWithEbayPostageAndTracking } from "@/lib/ebay/ebay-postage-enrichment";
 import { enrichOrdersWithLineItemImages } from "@/lib/shopify/line-item-images";
 import { enrichOrdersWithPostageAndTracking } from "@/lib/shopify/postage-enrichment";
 import { getLastOrderSyncCompletedAt } from "@/lib/shopify/sync-state";
@@ -45,6 +46,36 @@ const SYNC_OVERLAP_MS = 10 * 60 * 1000;
 /** Keep manual quick sync under Vercel/browser timeouts. */
 const QUICK_POSTAGE_RECENT_DAYS = 60;
 const QUICK_POSTAGE_MAX_LOOKUPS = 20;
+const QUICK_EBAY_FULFILLMENT_LOOKUPS = 15;
+const FULL_EBAY_FULFILLMENT_LOOKUPS = 60;
+
+async function applyEbayPostageEnrichment(
+  orders: StoredOrder[],
+  options: {
+    recentDays?: number;
+    maxFulfillmentLookups: number;
+  },
+): Promise<{
+  orders: StoredOrder[];
+  postageApplied: number;
+  trackingApplied: number;
+}> {
+  try {
+    const result = await enrichOrdersWithEbayPostageAndTracking(orders, {
+      recentDays: options.recentDays ?? QUICK_POSTAGE_RECENT_DAYS,
+      maxFulfillmentLookups: options.maxFulfillmentLookups,
+      onlyMissing: true,
+    });
+    return {
+      orders: result.orders,
+      postageApplied: result.postageApplied,
+      trackingApplied: result.trackingApplied,
+    };
+  } catch (error) {
+    console.error("[run-order-sync] eBay postage enrichment failed:", error);
+    return { orders, postageApplied: 0, trackingApplied: 0 };
+  }
+}
 
 export function resolveIncrementalSince(lastSyncAt: string | null): string {
   if (lastSyncAt) {
@@ -64,10 +95,32 @@ async function enrichOrdersForFullSync(orders: StoredOrder[]): Promise<{
     concurrency: 5,
   });
 
-  return enrichOrdersWithPostageAndTracking(ordersWithImages, {
-    onlyMissingPostage: false,
-    concurrency: 8,
+  const shopifyEnriched = await enrichOrdersWithPostageAndTracking(
+    ordersWithImages,
+    {
+      onlyMissingPostage: false,
+      concurrency: 8,
+    },
+  );
+
+  const ebayEnriched = await applyEbayPostageEnrichment(shopifyEnriched.orders, {
+    recentDays: 120,
+    maxFulfillmentLookups: FULL_EBAY_FULFILLMENT_LOOKUPS,
   });
+
+  const withPostage = ebayEnriched.orders.filter(
+    (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
+  ).length;
+  const withTracking = ebayEnriched.orders.filter(
+    (o) => o.trackingNumbers.length > 0,
+  ).length;
+
+  return {
+    orders: ebayEnriched.orders,
+    withPostage,
+    withTracking,
+    labelLookups: shopifyEnriched.labelLookups,
+  };
 }
 
 export async function runOrderSync(
@@ -104,9 +157,17 @@ export async function runOrderSync(
       onlyMissingPostage: false,
       concurrency: 8,
     });
-    ordersEnriched = enriched.orders;
-    withPostage = enriched.withPostage;
-    withTracking = enriched.withTracking;
+    const ebayEnriched = await applyEbayPostageEnrichment(enriched.orders, {
+      recentDays: QUICK_POSTAGE_RECENT_DAYS,
+      maxFulfillmentLookups: QUICK_EBAY_FULFILLMENT_LOOKUPS,
+    });
+    ordersEnriched = ebayEnriched.orders;
+    withPostage = ebayEnriched.orders.filter(
+      (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
+    ).length;
+    withTracking = ebayEnriched.orders.filter(
+      (o) => o.trackingNumbers.length > 0,
+    ).length;
     labelLookups = enriched.labelLookups;
   } else {
     // Manual quick sync: light postage backfill only (avoids timeouts).
@@ -116,9 +177,17 @@ export async function runOrderSync(
       maxLabelLookups: QUICK_POSTAGE_MAX_LOOKUPS,
       concurrency: 6,
     });
-    ordersEnriched = enriched.orders;
-    withPostage = enriched.withPostage;
-    withTracking = enriched.withTracking;
+    const ebayEnriched = await applyEbayPostageEnrichment(enriched.orders, {
+      recentDays: QUICK_POSTAGE_RECENT_DAYS,
+      maxFulfillmentLookups: QUICK_EBAY_FULFILLMENT_LOOKUPS,
+    });
+    ordersEnriched = ebayEnriched.orders;
+    withPostage = ebayEnriched.orders.filter(
+      (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
+    ).length;
+    withTracking = ebayEnriched.orders.filter(
+      (o) => o.trackingNumbers.length > 0,
+    ).length;
     labelLookups = enriched.labelLookups;
   }
 
