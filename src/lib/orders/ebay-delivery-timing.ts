@@ -256,3 +256,74 @@ export function listLateEbayOrders(orders: StoredOrder[]): LateEbayOrder[] {
       new Date(a.timing.deliveredAt!).getTime(),
   );
 }
+
+export type AtRiskEbayOrder = {
+  order: StoredOrder;
+  timing: EbayDeliveryTiming;
+  /** overdue = past eBay deliver-by; at_risk = due today or within atRiskDays */
+  status: "overdue" | "at_risk";
+  daysPastDue: number;
+  daysUntilDue: number;
+};
+
+/**
+ * Open eBay orders that are past the promised deliver-by date, or due within
+ * the next `atRiskDays` calendar days (default 1 = today + tomorrow).
+ */
+export function listAtRiskEbayOrders(
+  orders: StoredOrder[],
+  options?: { atRiskDays?: number; nowIso?: string },
+): AtRiskEbayOrder[] {
+  const atRiskDays = options?.atRiskDays ?? 1;
+  const nowIso = options?.nowIso ?? new Date().toISOString();
+  const todayYmd = ymdFromIso(nowIso);
+  const results: AtRiskEbayOrder[] = [];
+
+  for (const order of orders) {
+    if (order.cancelledAt) continue;
+    if (getSalesChannel(order.tags) !== "eBay") continue;
+    if (!order.ebayDeliverByAt) continue;
+    if (order.shipmentStatus === "delivered" && order.deliveredAt) continue;
+
+    const timing = getEbayDeliveryTiming(order);
+    if (!timing.deliverByAt) continue;
+
+    const deliverByYmd = ymdFromIso(timing.deliverByAt);
+    const daysPastDue =
+      todayYmd > deliverByYmd
+        ? calendarDaysBetween(timing.deliverByAt, nowIso)
+        : 0;
+    const daysUntilDue =
+      todayYmd <= deliverByYmd
+        ? calendarDaysBetween(nowIso, timing.deliverByAt)
+        : 0;
+
+    let status: "overdue" | "at_risk" | null = null;
+    if (timing.overdue || daysPastDue > 0) {
+      status = "overdue";
+    } else if (daysUntilDue <= atRiskDays) {
+      status = "at_risk";
+    }
+
+    if (!status) continue;
+
+    results.push({
+      order,
+      timing,
+      status,
+      daysPastDue,
+      daysUntilDue,
+    });
+  }
+
+  return results.sort((a, b) => {
+    if (a.status !== b.status) {
+      return a.status === "overdue" ? -1 : 1;
+    }
+    if (a.status === "overdue") {
+      return b.daysPastDue - a.daysPastDue;
+    }
+    return a.daysUntilDue - b.daysUntilDue;
+  });
+}
+

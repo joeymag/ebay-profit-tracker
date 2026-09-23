@@ -18,7 +18,7 @@ import {
   parseDateRange,
   type DateRangeKey,
 } from "@/lib/date-range";
-import { aggregateEbayOnTimeDelivery, listLateEbayOrders } from "@/lib/orders/ebay-delivery-timing";
+import { aggregateEbayOnTimeDelivery, listAtRiskEbayOrders, listLateEbayOrders } from "@/lib/orders/ebay-delivery-timing";
 import { aggregateEbayDashboardFees } from "@/lib/orders/platform-fees";
 import { effectiveProductCost } from "@/lib/orders/product-cost-vat";
 import { getRepeatEbayCustomerUsernames } from "@/lib/orders/customer-history";
@@ -208,9 +208,12 @@ export async function getLateDeliveriesForRange(searchParams?: {
   const database = await getStoredOrders();
   const deliveryOrders = filterOrdersByDeliveryDateRange(database.orders, range);
   const lateOrders = listLateEbayOrders(deliveryOrders);
+  // Open orders: not filtered by delivery-date range (they aren't delivered yet).
+  const atRiskOrders = listAtRiskEbayOrders(database.orders, { atRiskDays: 1 });
 
   return {
     lateOrders,
+    atRiskOrders,
     range,
     rangeLabel: getDeliveryDateRangeLabel(range),
   };
