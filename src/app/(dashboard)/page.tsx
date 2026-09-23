@@ -5,6 +5,7 @@ import {
   Receipt,
 } from "lucide-react";
 
+import { CarrierPostageCard } from "@/components/dashboard/carrier-postage-card";
 import { ChannelProfitCard } from "@/components/dashboard/channel-profit-card";
 import { DailyChannelChart } from "@/components/dashboard/daily-channel-chart";
 import { CostBreakdownCard } from "@/components/dashboard/cost-breakdown-card";
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { formatMoney } from "@/lib/format";
+import { aggregateCarrierPostageStats } from "@/lib/orders/carrier-stats";
 import { aggregateChannelStats } from "@/lib/orders/channel";
 import { aggregateDailyChannelPerformance } from "@/lib/orders/daily-channel-stats";
 import {
@@ -44,6 +46,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     await getStoredOrdersForRange(params);
   const currency = orders[0]?.currency ?? "GBP";
   const channelStats = aggregateChannelStats(orders);
+  const carrierStats = aggregateCarrierPostageStats(orders);
   const dailySummary = aggregateDailyChannelPerformance(orders, range);
   const summary = summarizeOrders(orders, currency, range, allOrders, channel);
   const onTimeDelivery = summarizeOnTimeDelivery(allOrders, range, channel);
@@ -117,6 +120,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               summary={summary}
               rangeLabel={rangeLabel}
               orderCount={orders.length}
+            />
+            <CarrierPostageCard
+              stats={carrierStats}
+              currency={currency}
+              rangeLabel={rangeLabel}
             />
             <ChannelProfitCard
               stats={channelStats}
