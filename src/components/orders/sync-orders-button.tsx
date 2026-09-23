@@ -12,11 +12,12 @@ type SyncResult =
   | {
       ok: true;
       mode?: string;
+      status?: string;
       imported: number;
       total: number;
       postageLabelsFound?: number;
       trackingFound?: number;
-      syncedAt: string;
+      syncedAt: string | null;
       hint?: string;
     }
   | { ok: false; error: string; hint?: string };
@@ -62,13 +63,16 @@ export function SyncOrdersButton({
       }
 
       setMessage(
-        mode === "quick"
-          ? `Updated ${data.imported} orders (quick sync · eBay IDs, order fields${
-              data.postageLabelsFound
-                ? ` · ${data.postageLabelsFound} with postage`
-                : ""
-            }).`
-          : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.`,
+        data.status === "started"
+          ? data.hint ||
+              "Full sync started in the background. Refresh in a few minutes."
+          : mode === "quick"
+            ? `Updated ${data.imported} order${data.imported === 1 ? "" : "s"} (quick sync · only recent Shopify changes${
+                data.postageLabelsFound
+                  ? ` · ${data.postageLabelsFound} with postage`
+                  : ""
+              }).`
+            : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.`,
       );
       if (data.hint) {
         setMessage((prev) => (prev ? `${prev} ${data.hint}` : data.hint ?? null));
@@ -129,10 +133,10 @@ export function SyncOrdersButton({
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Manual sync still available below. With auto-import enabled on Vercel,
-        new eBay orders (via Shopify) appear every ~15 minutes. When you buy
-        postage in Shopify, auto/quick sync applies that label cost to the
-        order. Full sync also refreshes images.
+        Quick sync only pulls orders changed since the last sync (fast). Full
+        sync runs in the background and refreshes labels &amp; images — refresh
+        the page after a few minutes. Auto-import also runs about every 15
+        minutes when cron is set up.
       </p>
       {message ? (
         <Badge variant="secondary" className="font-normal">

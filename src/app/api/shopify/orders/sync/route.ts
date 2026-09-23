@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import {
   isShopifyApiSyncError,
@@ -7,7 +7,7 @@ import {
 } from "@/lib/shopify/run-order-sync";
 import { getShopifyConfig } from "@/lib/shopify/config";
 
-/** Vercel Pro allows up to 300s; full sync can still exceed Hobby limits. */
+/** Vercel Pro allows up to 300s; quick sync should finish well under that. */
 export const maxDuration = 300;
 
 function parseSyncMode(request: Request): OrderSyncMode {
@@ -26,17 +26,56 @@ export async function POST(request: Request) {
     );
   }
 
+  // Full sync can exceed gateway timeouts — run in the background.
+  if (mode === "full") {
+    after(async () => {
+      try {
+        const result = await runOrderSync({
+          mode: "full",
+          incremental: false,
+          skipRecalculateCosts: true,
+        });
+        console.info(
+          "[shopify/orders/sync] full sync completed",
+          JSON.stringify({
+            imported: result.imported,
+            postageLabelsFound: result.postageLabelsFound,
+            trackingFound: result.trackingFound,
+          }),
+        );
+      } catch (error) {
+        console.error(
+          "[shopify/orders/sync] full sync failed:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    });
+
+    return NextResponse.json({
+      ok: true,
+      mode: "full",
+      status: "started",
+      imported: 0,
+      total: 0,
+      postageLabelsFound: 0,
+      trackingFound: 0,
+      syncedAt: null,
+      hint: "Full sync started in the background (labels & images). Refresh the page in a few minutes.",
+    });
+  }
+
   try {
+    // Quick sync: only orders changed since last sync (same as auto-sync).
     const result = await runOrderSync({
-      mode,
-      incremental: false,
-      // Full catalog cost recalc is too slow for Vercel; saveOrders updates imported rows.
+      mode: "quick",
+      incremental: true,
       skipRecalculateCosts: true,
     });
 
     return NextResponse.json({
       ok: true,
       mode: result.mode,
+      status: "completed",
       imported: result.imported,
       total: result.total,
       postageLabelsFound: result.postageLabelsFound,
@@ -47,6 +86,7 @@ export async function POST(request: Request) {
       productsTotal: result.productsTotal,
       ordersWithCostsUpdated: result.ordersWithCostsUpdated,
       removedCancelled: result.removedCancelled,
+      updatedSince: result.updatedSince,
       hint: result.hint,
     });
   } catch (error) {
