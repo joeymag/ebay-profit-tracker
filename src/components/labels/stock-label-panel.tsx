@@ -102,10 +102,10 @@ export function StockLabelPanel({ initialSku = "" }: { initialSku?: string }) {
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
       <Card className="surface-card">
         <CardHeader>
-          <CardTitle>Print a 4×6 stock label</CardTitle>
+          <CardTitle>Print 4×6 stock labels (2 per sheet)</CardTitle>
           <CardDescription>
-            Item name on top, scannable barcode underneath — for shelves, bins,
-            and stock locations.
+            Each 4×6 label prints two stock stickers (name + barcode) with a cut
+            line in the middle — for shelves, bins, and stock locations.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -190,7 +190,7 @@ export function StockLabelPanel({ initialSku = "" }: { initialSku?: string }) {
                     htmlFor="stock-label-copies"
                     className="text-sm font-medium"
                   >
-                    Copies
+                    Sheets
                   </label>
                   <Input
                     id="stock-label-copies"
@@ -236,7 +236,7 @@ export function StockLabelPanel({ initialSku = "" }: { initialSku?: string }) {
                 }}
               >
                 <Printer className="size-4" />
-                Print stock label
+                Print stock labels
               </Button>
             </div>
           ) : null}
@@ -246,23 +246,39 @@ export function StockLabelPanel({ initialSku = "" }: { initialSku?: string }) {
       <Card className="surface-card h-fit">
         <CardHeader>
           <CardTitle>Label layout</CardTitle>
-          <CardDescription>4&quot; wide × 6&quot; tall thermal label.</CardDescription>
+          <CardDescription>
+            4&quot; × 6&quot; sheet · two 4&quot; × 3&quot; stickers.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="mx-auto w-[11rem] rounded-sm border border-foreground/30 bg-white p-3 text-center text-zinc-900 shadow-sm">
-            <div className="mt-8 mb-10 space-y-1 px-1">
-              <p className="text-[11px] leading-tight font-semibold">
+          <div className="mx-auto w-[11rem] overflow-hidden rounded-sm border border-foreground/30 bg-white text-center text-zinc-900 shadow-sm">
+            <div className="space-y-1.5 px-3 py-3">
+              <p className="text-[10px] leading-tight font-semibold">
                 {productName.trim() || "Item name"}
               </p>
+              <div className="mx-auto h-6 w-full max-w-[8rem] bg-[repeating-linear-gradient(90deg,#000_0_1px,#fff_1px_3px)]" />
+              <p className="font-mono text-[7px] text-zinc-600">
+                {barcodeValue.trim() || "BARCODE"}
+              </p>
             </div>
-            <div className="mx-auto h-10 w-full max-w-[8.5rem] bg-[repeating-linear-gradient(90deg,#000_0_1px,#fff_1px_3px)]" />
-            <p className="mt-2 font-mono text-[8px] text-zinc-600">
-              {barcodeValue.trim() || "BARCODE"}
-            </p>
+            <div className="border-y border-dashed border-zinc-400 py-0.5">
+              <p className="text-[7px] font-bold tracking-wide text-zinc-500">
+                CUT HERE
+              </p>
+            </div>
+            <div className="space-y-1.5 px-3 py-3">
+              <p className="text-[10px] leading-tight font-semibold">
+                {productName.trim() || "Item name"}
+              </p>
+              <div className="mx-auto h-6 w-full max-w-[8rem] bg-[repeating-linear-gradient(90deg,#000_0_1px,#fff_1px_3px)]" />
+              <p className="font-mono text-[7px] text-zinc-600">
+                {barcodeValue.trim() || "BARCODE"}
+              </p>
+            </div>
           </div>
           <p className="mt-4 text-sm text-muted-foreground">
-            Name on top, Code 128 barcode below. Uses the Shopify barcode when
-            set, otherwise the SKU.
+            Each sheet = 2 identical stickers. Sheets count is how many 4×6
+            labels to print. Uses Shopify barcode when set, otherwise SKU.
           </p>
         </CardContent>
       </Card>

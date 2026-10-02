@@ -14,7 +14,7 @@ export default async function StockLabelsPage({
     <>
       <DashboardHeader
         title="Stock labels"
-        description="Print 4×6 stickers with the item name and a scannable barcode"
+        description="Print two stock stickers (name + barcode) on each 4×6 label"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <StockLabelPanel initialSku={params.sku?.trim() ?? ""} />
