@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Barcode,
   BarChart3,
   Calculator,
   ClockAlert,
@@ -57,6 +58,7 @@ const iconMap = {
   "layout-grid": LayoutGrid,
   package: Package,
   printer: Printer,
+  barcode: Barcode,
   "scan-barcode": ScanBarcode,
   settings: Settings,
 } as const;

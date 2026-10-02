@@ -28,6 +28,7 @@ export type StockLocationLevel = {
 
 export type StockSkuLookup = {
   sku: string;
+  barcode: string | null;
   variantId: number;
   productId: number;
   productHandle: string;
@@ -356,6 +357,7 @@ const VARIANT_BY_SKU_QUERY = `
         node {
           id
           sku
+          barcode
           title
           displayName
           selectedOptions {
@@ -386,6 +388,7 @@ type VariantBySkuResponse = {
       node: {
         id: string;
         sku: string | null;
+        barcode: string | null;
         title: string;
         displayName: string;
         selectedOptions: { name: string; value: string }[];
@@ -431,6 +434,7 @@ async function buildStockSkuLookup(match: VariantBySkuNode): Promise<StockSkuLoo
 
   return {
     sku: match.sku,
+    barcode: match.barcode?.trim() || null,
     variantId: parseShopifyGid(match.id),
     productId,
     productHandle,
