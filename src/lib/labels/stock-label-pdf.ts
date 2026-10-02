@@ -9,11 +9,20 @@ const MARGIN = 14;
 const INK = rgb(0, 0, 0);
 const MUTED = rgb(0.28, 0.28, 0.28);
 
-export type StockLabelInput = {
+export type StockLabelHalf = {
   productName: string;
-  /** Value encoded in the barcode (Shopify barcode, or SKU fallback). */
   barcodeValue: string;
-  /** Number of 4×6 sheets (each sheet has 2 stock labels). */
+};
+
+export type StockLabelInput = {
+  /** Top half of the 4×6 sheet. */
+  top: StockLabelHalf;
+  /**
+   * Bottom half. When omitted, the top product is printed twice
+   * (same SKU on both stickers).
+   */
+  bottom?: StockLabelHalf;
+  /** Number of 4×6 sheets. */
   copies?: number;
 };
 
@@ -108,7 +117,6 @@ function drawHalfLabel(
   const innerBottom = bandBottom + MARGIN;
   const innerHeight = innerTop - innerBottom;
 
-  // Name in the upper ~45% of the half; barcode in the lower ~55%.
   const nameRegionHeight = innerHeight * 0.42;
   const nameTop = innerTop - 2;
 
@@ -187,29 +195,42 @@ function drawHalfLabel(
   });
 }
 
+function normalizeHalf(half: StockLabelHalf): StockLabelHalf {
+  const productName = half.productName.trim();
+  const barcodeValue = half.barcodeValue.trim();
+  if (!productName) {
+    throw new Error("Product name is required.");
+  }
+  if (!barcodeValue) {
+    throw new Error("Barcode value is required.");
+  }
+  return { productName, barcodeValue };
+}
+
 async function drawLabelPage(
   pdf: PDFDocument,
-  input: StockLabelInput,
+  top: StockLabelHalf,
+  bottom: StockLabelHalf,
   fonts: { regular: PDFFont; bold: PDFFont },
-  barcodeImage: PDFImage,
+  topBarcode: PDFImage,
+  bottomBarcode: PDFImage,
 ) {
   const page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
 
-  // Top half then bottom half (same product twice).
   drawHalfLabel(
     page,
     fonts,
-    input.productName,
-    input.barcodeValue,
-    barcodeImage,
+    top.productName,
+    top.barcodeValue,
+    topBarcode,
     HALF_HEIGHT,
   );
   drawHalfLabel(
     page,
     fonts,
-    input.productName,
-    input.barcodeValue,
-    barcodeImage,
+    bottom.productName,
+    bottom.barcodeValue,
+    bottomBarcode,
     0,
   );
   drawCutLine(page, fonts.regular);
@@ -218,14 +239,8 @@ async function drawLabelPage(
 export async function buildStockLabelPdf(
   input: StockLabelInput,
 ): Promise<Uint8Array> {
-  const name = input.productName.trim();
-  const barcodeValue = input.barcodeValue.trim();
-  if (!name) {
-    throw new Error("Product name is required.");
-  }
-  if (!barcodeValue) {
-    throw new Error("Barcode value is required.");
-  }
+  const top = normalizeHalf(input.top);
+  const bottom = normalizeHalf(input.bottom ?? input.top);
 
   const copies = Math.min(50, Math.max(1, Math.round(input.copies ?? 1)));
   const pdf = await PDFDocument.create();
@@ -234,16 +249,16 @@ export async function buildStockLabelPdf(
     bold: await pdf.embedFont(StandardFonts.HelveticaBold),
   };
 
-  const barcodePng = await renderBarcodePng(barcodeValue);
-  const barcodeImage = await pdf.embedPng(barcodePng);
+  const topBarcode = await pdf.embedPng(
+    await renderBarcodePng(top.barcodeValue),
+  );
+  const bottomBarcode =
+    bottom.barcodeValue === top.barcodeValue
+      ? topBarcode
+      : await pdf.embedPng(await renderBarcodePng(bottom.barcodeValue));
 
   for (let i = 0; i < copies; i += 1) {
-    await drawLabelPage(
-      pdf,
-      { productName: name, barcodeValue },
-      fonts,
-      barcodeImage,
-    );
+    await drawLabelPage(pdf, top, bottom, fonts, topBarcode, bottomBarcode);
   }
 
   return pdf.save();
