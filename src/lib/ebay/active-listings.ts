@@ -31,6 +31,11 @@ export type ActiveEbayListing = {
   unitCost: number | null;
   /** Default postage from product catalog. */
   defaultPostage: number | null;
+  /**
+   * Completed transactions in the last 30 days (eBay Analytics).
+   * Null when analytics could not be loaded for this fetch.
+   */
+  transactionsLast30Days: number | null;
 };
 
 export type ActiveEbayListingsResult = {
@@ -44,6 +49,8 @@ export type ActiveEbayListingsResult = {
   promoCampaignsScanned: number;
   promoAdsScanned: number;
   promoWarning: string | null;
+  /** Best-effort eBay Analytics enrichment warning (30-day sales). */
+  salesWarning: string | null;
   fetchedAt: string;
 };
 
@@ -105,6 +112,7 @@ function parseItem(itemXml: string, marketplaceId: string): ActiveEbayListing | 
     promoAdId: null,
     unitCost: null,
     defaultPostage: null,
+    transactionsLast30Days: null,
   };
 }
 
@@ -195,9 +203,45 @@ export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResul
     // Cost enrichment is best-effort.
   }
 
+  let withSales = withCosts;
+  let salesWarning: string | null = null;
+  try {
+    const { fetchListingTrafficReport } = await import(
+      "@/lib/ebay/traffic-report"
+    );
+    const traffic = await fetchListingTrafficReport({ range: "30days" });
+    const salesByListingId = new Map<string, number>();
+    for (const row of traffic.listings) {
+      const listingId = row.listingId.trim();
+      if (!listingId) continue;
+      salesByListingId.set(listingId, row.transactions ?? 0);
+    }
+
+    withSales = withCosts.map((listing) => {
+      const listingId = listing.listingId?.trim();
+      if (!listingId) {
+        return { ...listing, transactionsLast30Days: 0 };
+      }
+      // Missing from the report usually means no measurable sales/traffic.
+      return {
+        ...listing,
+        transactionsLast30Days: salesByListingId.get(listingId) ?? 0,
+      };
+    });
+
+    if (traffic.warnings.length) {
+      salesWarning = traffic.warnings[0] ?? null;
+    }
+  } catch (error) {
+    salesWarning =
+      error instanceof Error
+        ? `Could not load 30-day sales: ${error.message}`
+        : "Could not load 30-day sales from eBay Analytics.";
+  }
+
   return {
     marketplaceId,
-    listings: withCosts,
+    listings: withSales,
     inventoryItemsScanned: enriched.length,
     publishedCount: enriched.length,
     unpublishedCount: 0,
@@ -205,6 +249,7 @@ export async function fetchActiveEbayListings(): Promise<ActiveEbayListingsResul
     promoCampaignsScanned: promo.campaignsScanned,
     promoAdsScanned: promo.adsScanned,
     promoWarning: promo.warning,
+    salesWarning,
     fetchedAt: new Date().toISOString(),
   };
 }

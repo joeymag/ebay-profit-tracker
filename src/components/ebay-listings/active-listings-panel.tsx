@@ -45,6 +45,7 @@ type ActiveListingsResponse =
       promoCampaignsScanned?: number;
       promoAdsScanned?: number;
       promoWarning?: string | null;
+      salesWarning?: string | null;
       fetchedAt: string;
     }
   | {
@@ -176,6 +177,8 @@ function formatProfitDelta(value: number): string {
   return `${sign}${formatMoney(value)}`;
 }
 
+type SalesFilter = "all" | "no_sales_30d" | "has_sales_30d";
+
 export function ActiveEbayListingsPanel() {
   const [data, setData] = useState<Extract<ActiveListingsResponse, { ok: true }> | null>(
     null,
@@ -185,6 +188,7 @@ export function ActiveEbayListingsPanel() {
   );
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [salesFilter, setSalesFilter] = useState<SalesFilter>("all");
   const [skuPrefix, setSkuPrefix] = useState("EBAY");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [generatingKeys, setGeneratingKeys] = useState<Set<string>>(() => new Set());
@@ -249,17 +253,44 @@ export function ActiveEbayListingsPanel() {
     void loadListings();
   }, [loadListings]);
 
+  const noSales30dCount = useMemo(
+    () =>
+      (data?.listings ?? []).filter(
+        (listing) =>
+          listing.transactionsLast30Days != null &&
+          listing.transactionsLast30Days <= 0,
+      ).length,
+    [data],
+  );
+
   const filtered = useMemo(() => {
     if (!data?.listings.length) {
       return [];
     }
 
     const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return data.listings;
-    }
 
     return data.listings.filter((listing) => {
+      if (salesFilter === "no_sales_30d") {
+        if (
+          listing.transactionsLast30Days == null ||
+          listing.transactionsLast30Days > 0
+        ) {
+          return false;
+        }
+      } else if (salesFilter === "has_sales_30d") {
+        if (
+          listing.transactionsLast30Days == null ||
+          listing.transactionsLast30Days <= 0
+        ) {
+          return false;
+        }
+      }
+
+      if (!needle) {
+        return true;
+      }
+
       const haystack = [
         listing.title,
         listing.sku,
@@ -274,7 +305,7 @@ export function ActiveEbayListingsPanel() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [data, query]);
+  }, [data, query, salesFilter]);
 
   const missingSkuCount = useMemo(
     () => (data?.listings ?? []).filter(activeListingNeedsSku).length,
@@ -739,7 +770,7 @@ export function ActiveEbayListingsPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="surface-card">
           <CardHeader className="pb-2">
             <CardDescription>Active listings</CardDescription>
@@ -749,6 +780,27 @@ export function ActiveEbayListingsPanel() {
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Live on {data.marketplaceId}
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            "surface-card cursor-pointer transition-colors",
+            salesFilter === "no_sales_30d" && "ring-2 ring-primary/40",
+          )}
+          onClick={() =>
+            setSalesFilter((current) =>
+              current === "no_sales_30d" ? "all" : "no_sales_30d",
+            )
+          }
+        >
+          <CardHeader className="pb-2">
+            <CardDescription>No sales (30 days)</CardDescription>
+            <CardTitle className="text-2xl tabular-nums">
+              {noSales30dCount.toLocaleString("en-GB")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Click to filter listings to edit for more sales
           </CardContent>
         </Card>
         <Card className="surface-card">
@@ -825,6 +877,13 @@ export function ActiveEbayListingsPanel() {
         </div>
       ) : null}
 
+      {data.salesWarning ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          {data.salesWarning} Reconnect eBay in Settings if Analytics scope is
+          missing.
+        </div>
+      ) : null}
+
       <Card className="surface-card overflow-hidden">
         <CardHeader className="border-b border-border/50 bg-muted/20">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -848,6 +907,21 @@ export function ActiveEbayListingsPanel() {
                   className="pl-9"
                 />
               </div>
+              <label htmlFor="ebay-sales-filter" className="sr-only">
+                Sales filter
+              </label>
+              <select
+                id="ebay-sales-filter"
+                value={salesFilter}
+                onChange={(event) =>
+                  setSalesFilter(event.target.value as SalesFilter)
+                }
+                className="h-9 rounded-lg border border-input bg-background px-3 text-sm shadow-xs"
+              >
+                <option value="all">All listings</option>
+                <option value="no_sales_30d">No sales in 30 days</option>
+                <option value="has_sales_30d">Has sales in 30 days</option>
+              </select>
               <div className="space-y-1">
                 <label htmlFor="ebay-sku-prefix" className="sr-only">
                   SKU prefix
@@ -1031,7 +1105,16 @@ export function ActiveEbayListingsPanel() {
                   </p>
                 </>
               ) : (
-                <p>No listings match “{query.trim()}”.</p>
+                <p>
+                  No listings match
+                  {query.trim() ? ` “${query.trim()}”` : ""}
+                  {salesFilter === "no_sales_30d"
+                    ? " with no sales in the last 30 days"
+                    : salesFilter === "has_sales_30d"
+                      ? " with sales in the last 30 days"
+                      : ""}
+                  .
+                </p>
               )}
             </div>
           ) : (
@@ -1056,14 +1139,15 @@ export function ActiveEbayListingsPanel() {
                       />
                     </TableHead>
                     <TableHead className="w-16" />
-                    <TableHead className="w-[22%]">Listing</TableHead>
-                    <TableHead className="w-[12%]">SKU</TableHead>
-                    <TableHead className="w-[10%]">Listing ID</TableHead>
-                    <TableHead className="w-[8%] text-right">Price</TableHead>
-                    <TableHead className="w-[8%] text-right">Est. profit</TableHead>
-                    <TableHead className="w-[8%] text-right">Promo %</TableHead>
-                    <TableHead className="w-[6%] text-right">Qty</TableHead>
-                    <TableHead className="w-[8%]">Status</TableHead>
+                    <TableHead className="w-[20%]">Listing</TableHead>
+                    <TableHead className="w-[11%]">SKU</TableHead>
+                    <TableHead className="w-[9%]">Listing ID</TableHead>
+                    <TableHead className="w-[7%] text-right">Price</TableHead>
+                    <TableHead className="w-[7%] text-right">Est. profit</TableHead>
+                    <TableHead className="w-[7%] text-right">Promo %</TableHead>
+                    <TableHead className="w-[7%] text-right">Sales 30d</TableHead>
+                    <TableHead className="w-[5%] text-right">Qty</TableHead>
+                    <TableHead className="w-[7%]">Status</TableHead>
                     <TableHead className="w-[10%] pr-6 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1286,6 +1370,20 @@ export function ActiveEbayListingsPanel() {
                             <p className="text-xs text-muted-foreground">Est. only</p>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums align-top">
+                        {listing.transactionsLast30Days == null ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : listing.transactionsLast30Days <= 0 ? (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/40 text-amber-800 dark:text-amber-300"
+                          >
+                            0
+                          </Badge>
+                        ) : (
+                          listing.transactionsLast30Days.toLocaleString("en-GB")
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums align-top">
                         {listing.quantity != null
