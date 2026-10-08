@@ -301,6 +301,64 @@ export type Database = {
         >;
         Relationships: [];
       };
+      quickbooks_oauth: {
+        Row: {
+          id: string;
+          realm_id: string;
+          refresh_token: string;
+          access_token: string | null;
+          access_expires_at: string | null;
+          company_name: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          realm_id: string;
+          refresh_token: string;
+          access_token?: string | null;
+          access_expires_at?: string | null;
+          company_name?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["quickbooks_oauth"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      quickbooks_transactions: {
+        Row: {
+          id: string;
+          realm_id: string;
+          txn_key: string;
+          txn_date: string;
+          txn_type: string | null;
+          doc_number: string | null;
+          name: string | null;
+          memo: string | null;
+          account_name: string | null;
+          split_account: string | null;
+          amount: number;
+          synced_at: string;
+        };
+        Insert: {
+          id: string;
+          realm_id: string;
+          txn_key: string;
+          txn_date: string;
+          txn_type?: string | null;
+          doc_number?: string | null;
+          name?: string | null;
+          memo?: string | null;
+          account_name?: string | null;
+          split_account?: string | null;
+          amount: number;
+          synced_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["quickbooks_transactions"]["Insert"]
+        >;
+        Relationships: [];
+      };
       ebay_oauth: {
         Row: {
           id: string;

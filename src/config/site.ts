@@ -21,6 +21,7 @@ export const navItems = [
   { title: "Bag labels", href: "/product-labels", icon: "printer" as const, group: "main" as const },
   { title: "Stock labels", href: "/stock-labels", icon: "barcode" as const, group: "main" as const },
   { title: "Stock control", href: "/stock", icon: "scan-barcode" as const, group: "main" as const },
+  { title: "Accounting", href: "/accounting", icon: "landmark" as const, group: "main" as const },
   { title: "eBay calculator", href: "/ebay-calculator", icon: "calculator" as const, group: "tools" as const },
   { title: "Amazon calculator", href: "/amazon-calculator", icon: "store" as const, group: "tools" as const },
   { title: "Settings", href: "/settings", icon: "settings" as const, group: "tools" as const },
