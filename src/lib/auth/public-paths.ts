@@ -1,6 +1,7 @@
 /** Routes that do not require a logged-in Supabase session. */
 export const PUBLIC_PATH_PREFIXES = [
   "/login",
+  "/eula",
   "/auth/callback",
   "/auth/confirm",
   "/auth/complete",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, TrendingUp } from "lucide-react";
 
@@ -206,6 +207,11 @@ export function LoginForm() {
         </form>
         <p className="mt-4 text-center text-xs text-muted-foreground">
           Users are created in Supabase Auth — there is no public sign-up page.
+        </p>
+        <p className="mt-3 text-center text-xs">
+          <Link href="/eula" className="text-primary hover:underline">
+            End-user license agreement
+          </Link>
         </p>
       </CardContent>
     </Card>
