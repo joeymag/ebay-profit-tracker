@@ -131,7 +131,10 @@ export default function EulaPage() {
           .
         </p>
 
-        <p>
+        <p className="flex gap-4">
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy policy
+          </Link>
           <Link href="/login" className="text-primary hover:underline">
             Back to sign in
           </Link>

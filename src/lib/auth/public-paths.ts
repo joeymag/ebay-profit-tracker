@@ -2,6 +2,7 @@
 export const PUBLIC_PATH_PREFIXES = [
   "/login",
   "/eula",
+  "/privacy",
   "/auth/callback",
   "/auth/confirm",
   "/auth/complete",

@@ -212,6 +212,10 @@ export function LoginForm() {
           <Link href="/eula" className="text-primary hover:underline">
             End-user license agreement
           </Link>
+          <span className="text-muted-foreground"> · </span>
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy policy
+          </Link>
         </p>
       </CardContent>
     </Card>
