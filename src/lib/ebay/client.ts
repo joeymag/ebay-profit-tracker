@@ -72,6 +72,22 @@ export type EbayTransactionsResponse = {
   next?: string;
 };
 
+export type EbayMoneyAmount = {
+  value?: string;
+  currency?: string;
+};
+
+export type EbaySellerFundsSummary = {
+  totalFunds?: EbayMoneyAmount;
+  processingFunds?: EbayMoneyAmount;
+  availableFunds?: EbayMoneyAmount;
+  fundsOnHold?: EbayMoneyAmount;
+};
+
+export async function getEbaySellerFundsSummary(): Promise<EbaySellerFundsSummary> {
+  return ebayFinancesFetch<EbaySellerFundsSummary>("/seller_funds_summary");
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

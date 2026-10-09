@@ -8,7 +8,7 @@ export default function AccountingPage() {
     <>
       <DashboardHeader
         title="Accounting"
-        description="QuickBooks transactions from your connected company"
+        description="eBay balance and QuickBooks transactions from your connected company"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>

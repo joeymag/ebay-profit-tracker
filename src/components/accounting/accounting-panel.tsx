@@ -36,6 +36,20 @@ type Status = {
   companyName: string | null;
 };
 
+type EbayFunds = {
+  amount: number | null;
+  currency: string;
+};
+
+type EbayBalance = {
+  ok: true;
+  currency: string;
+  available: EbayFunds;
+  processing: EbayFunds;
+  onHold: EbayFunds;
+  total: EbayFunds;
+};
+
 type Transaction = {
   id: string;
   txn_date: string;
@@ -59,6 +73,32 @@ export function AccountingPanel() {
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ebayBalance, setEbayBalance] = useState<EbayBalance | null>(null);
+  const [ebayBalanceError, setEbayBalanceError] = useState<string | null>(null);
+  const [ebayBalanceLoading, setEbayBalanceLoading] = useState(true);
+
+  const loadEbayBalance = useCallback(async () => {
+    setEbayBalanceLoading(true);
+    setEbayBalanceError(null);
+    try {
+      const response = await fetch("/api/ebay/balance");
+      const payload = (await response.json()) as EbayBalance & {
+        ok: boolean;
+        error?: string;
+      };
+      if (!payload.ok) {
+        setEbayBalance(null);
+        setEbayBalanceError(payload.error ?? "Could not load the eBay balance.");
+        return;
+      }
+      setEbayBalance(payload);
+    } catch {
+      setEbayBalance(null);
+      setEbayBalanceError("Could not load the eBay balance.");
+    } finally {
+      setEbayBalanceLoading(false);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +106,7 @@ export function AccountingPanel() {
       const [statusRes, txnRes] = await Promise.all([
         fetch("/api/quickbooks/status"),
         fetch("/api/quickbooks/transactions?days=90"),
+        loadEbayBalance(),
       ]);
       const statusPayload = (await statusRes.json()) as Status;
       const txnPayload = (await txnRes.json()) as {
@@ -83,7 +124,7 @@ export function AccountingPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadEbayBalance]);
 
   useEffect(() => {
     void load();
@@ -186,6 +227,87 @@ export function AccountingPanel() {
           {error}
         </div>
       ) : null}
+
+      <Card className="surface-card">
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>eBay balance</CardTitle>
+              <CardDescription>
+                Available funds in your eBay seller account right now.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void loadEbayBalance()}
+              disabled={ebayBalanceLoading}
+            >
+              {ebayBalanceLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {ebayBalanceError ? (
+            <p className="text-sm text-muted-foreground">{ebayBalanceError}</p>
+          ) : ebayBalance ? (
+            <div className="grid gap-4 sm:grid-cols-4">
+              <div>
+                <p className="text-sm text-muted-foreground">Available</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {ebayBalance.available.amount != null
+                    ? formatMoney(
+                        ebayBalance.available.amount,
+                        ebayBalance.available.currency,
+                      )
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Processing</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {ebayBalance.processing.amount != null
+                    ? formatMoney(
+                        ebayBalance.processing.amount,
+                        ebayBalance.processing.currency,
+                      )
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">On hold</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {ebayBalance.onHold.amount != null
+                    ? formatMoney(
+                        ebayBalance.onHold.amount,
+                        ebayBalance.onHold.currency,
+                      )
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Total</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {ebayBalance.total.amount != null
+                    ? formatMoney(
+                        ebayBalance.total.amount,
+                        ebayBalance.total.currency,
+                      )
+                    : "—"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading eBay balance…</p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="surface-card">
         <CardHeader>
