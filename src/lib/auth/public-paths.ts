@@ -12,6 +12,7 @@ export const PUBLIC_PATH_PREFIXES = [
 export const PUBLIC_API_PATH_PREFIXES = [
   "/api/cron/",
   "/api/ebay/oauth/callback",
+  "/api/quickbooks/oauth/callback",
 ] as const;
 
 export function isPublicPath(pathname: string): boolean {
