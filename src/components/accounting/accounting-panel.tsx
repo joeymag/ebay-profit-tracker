@@ -50,6 +50,15 @@ type EbayBalance = {
   total: EbayFunds;
 };
 
+type AmazonBalance = {
+  ok: true;
+  currency: string;
+  balance: number;
+  payingOut: number;
+  lastPayout: number | null;
+  lastPayoutDate: string | null;
+};
+
 type Transaction = {
   id: string;
   txn_date: string;
@@ -76,6 +85,11 @@ export function AccountingPanel() {
   const [ebayBalance, setEbayBalance] = useState<EbayBalance | null>(null);
   const [ebayBalanceError, setEbayBalanceError] = useState<string | null>(null);
   const [ebayBalanceLoading, setEbayBalanceLoading] = useState(true);
+  const [amazonBalance, setAmazonBalance] = useState<AmazonBalance | null>(null);
+  const [amazonBalanceError, setAmazonBalanceError] = useState<string | null>(
+    null,
+  );
+  const [amazonBalanceLoading, setAmazonBalanceLoading] = useState(true);
 
   const loadEbayBalance = useCallback(async () => {
     setEbayBalanceLoading(true);
@@ -100,6 +114,31 @@ export function AccountingPanel() {
     }
   }, []);
 
+  const loadAmazonBalance = useCallback(async () => {
+    setAmazonBalanceLoading(true);
+    setAmazonBalanceError(null);
+    try {
+      const response = await fetch("/api/amazon/balance");
+      const payload = (await response.json()) as AmazonBalance & {
+        ok: boolean;
+        error?: string;
+      };
+      if (!payload.ok) {
+        setAmazonBalance(null);
+        setAmazonBalanceError(
+          payload.error ?? "Could not load the Amazon balance.",
+        );
+        return;
+      }
+      setAmazonBalance(payload);
+    } catch {
+      setAmazonBalance(null);
+      setAmazonBalanceError("Could not load the Amazon balance.");
+    } finally {
+      setAmazonBalanceLoading(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -107,6 +146,7 @@ export function AccountingPanel() {
         fetch("/api/quickbooks/status"),
         fetch("/api/quickbooks/transactions?days=90"),
         loadEbayBalance(),
+        loadAmazonBalance(),
       ]);
       const statusPayload = (await statusRes.json()) as Status;
       const txnPayload = (await txnRes.json()) as {
@@ -124,7 +164,7 @@ export function AccountingPanel() {
     } finally {
       setLoading(false);
     }
-  }, [loadEbayBalance]);
+  }, [loadEbayBalance, loadAmazonBalance]);
 
   useEffect(() => {
     void load();
@@ -305,6 +345,77 @@ export function AccountingPanel() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Loading eBay balance…</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="surface-card">
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Amazon balance</CardTitle>
+              <CardDescription>
+                Open settlement still in your Amazon seller account, plus any
+                payout already on its way to the bank.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void loadAmazonBalance()}
+              disabled={amazonBalanceLoading}
+            >
+              {amazonBalanceLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {amazonBalanceError ? (
+            <p className="text-sm text-muted-foreground">{amazonBalanceError}</p>
+          ) : amazonBalance ? (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Current balance</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {formatMoney(amazonBalance.balance, amazonBalance.currency)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Paying out</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {formatMoney(amazonBalance.payingOut, amazonBalance.currency)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Last payout</p>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {amazonBalance.lastPayout != null
+                    ? formatMoney(
+                        amazonBalance.lastPayout,
+                        amazonBalance.currency,
+                      )
+                    : "—"}
+                </p>
+                {amazonBalance.lastPayoutDate ? (
+                  <p className="text-xs text-muted-foreground">
+                    {new Date(amazonBalance.lastPayoutDate).toLocaleDateString(
+                      "en-GB",
+                      { day: "numeric", month: "short", year: "numeric" },
+                    )}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Loading Amazon balance…
+            </p>
           )}
         </CardContent>
       </Card>
