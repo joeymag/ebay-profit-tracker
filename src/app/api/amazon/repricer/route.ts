@@ -30,13 +30,15 @@ export async function GET() {
       fetchAmazonListings({ fast: true }),
       listRepriceRules(),
     ]);
-    const ruleBySku = new Map(rules.map((rule) => [rule.sku, rule]));
+    const ruleBySku = new Map(
+      rules.map((rule) => [rule.sku.trim(), rule]),
+    );
 
     // Return listings + rules immediately. Competitive Buy Box data is loaded
     // in smaller batches via /api/amazon/repricer/competitive so this stays
     // under Vercel function timeouts.
     const rows = listings.map((listing) => {
-      const rule = ruleBySku.get(listing.sku) ?? null;
+      const rule = ruleBySku.get(listing.sku.trim()) ?? null;
       const { suggestedPrice, reason } = computeSuggestedPrice({
         currentPrice: listing.price,
         competitive: null,

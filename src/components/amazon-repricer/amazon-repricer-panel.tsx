@@ -81,6 +81,20 @@ type DraftRule = {
   undercutAmount: string;
 };
 
+function newerRule(
+  current: AmazonRepriceRule | null,
+  incoming: AmazonRepriceRule | null,
+): AmazonRepriceRule | null {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const currentAt = Date.parse(current.updatedAt);
+  const incomingAt = Date.parse(incoming.updatedAt);
+  if (Number.isFinite(currentAt) && Number.isFinite(incomingAt)) {
+    return currentAt > incomingAt ? current : incoming;
+  }
+  return incoming;
+}
+
 function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
   return {
     enabled: rule?.enabled ?? true,
@@ -90,6 +104,16 @@ function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
     undercutAmount:
       rule?.undercutAmount != null ? String(rule.undercutAmount) : "0.01",
   };
+}
+
+function parsePriceInput(value: string): number | null {
+  const cleaned = value.trim().replace(/£/g, "").replace(/,/g, "");
+  if (cleaned === "") return null;
+  const amount = Number(cleaned);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`“${value.trim()}” is not a valid price.`);
+  }
+  return amount;
 }
 
 type CompetitiveBatchResponse =
@@ -123,6 +147,10 @@ export function AmazonRepricerPanel() {
   const [page, setPage] = useState(1);
   const [showHistory, setShowHistory] = useState(false);
   const enrichAbortRef = useRef<AbortController | null>(null);
+  const rowsRef = useRef(rows);
+  const draftsRef = useRef(drafts);
+  rowsRef.current = rows;
+  draftsRef.current = drafts;
 
   const loadHistory = useCallback(async () => {
     try {
@@ -198,7 +226,7 @@ export function AmazonRepricerPanel() {
                 competitive: suggestion.competitive,
                 suggestedPrice: suggestion.suggestedPrice,
                 reason: suggestion.reason,
-                rule: suggestion.rule ?? row.rule,
+                rule: newerRule(row.rule, suggestion.rule),
               };
             }),
           );
@@ -241,10 +269,31 @@ export function AmazonRepricerPanel() {
         setErrorCode(json.code);
         return;
       }
-      setRows(json.rows);
-      setDrafts(
+      const previousBySku = new Map(
+        rowsRef.current.map((row) => [row.sku, row]),
+      );
+      const merged = json.rows.map((row) => {
+        const existing = previousBySku.get(row.sku);
+        return {
+          ...row,
+          rule: newerRule(existing?.rule ?? null, row.rule),
+        };
+      });
+      setRows(merged);
+      setDrafts((prev) =>
         Object.fromEntries(
-          json.rows.map((row) => [row.sku, draftFromRule(row.rule)]),
+          merged.map((row) => {
+            const local = prev[row.sku];
+            const serverHasPrices =
+              row.rule?.minPrice != null || row.rule?.maxPrice != null;
+            const localHasPrices =
+              local != null &&
+              (local.minPrice.trim() !== "" || local.maxPrice.trim() !== "");
+            if (!serverHasPrices && localHasPrices) {
+              return [row.sku, local];
+            }
+            return [row.sku, draftFromRule(row.rule)];
+          }),
         ),
       );
       setLoading(false);
@@ -311,7 +360,19 @@ export function AmazonRepricerPanel() {
   }
 
   async function saveRule(sku: string) {
-    const draft = drafts[sku] ?? draftFromRule(null);
+    const row = rowsRef.current.find((item) => item.sku === sku);
+    const draft = draftsRef.current[sku] ?? draftFromRule(row?.rule ?? null);
+    let minPrice: number | null;
+    let maxPrice: number | null;
+    let undercutAmount: number;
+    try {
+      minPrice = parsePriceInput(draft.minPrice);
+      maxPrice = parsePriceInput(draft.maxPrice);
+      undercutAmount = parsePriceInput(draft.undercutAmount) ?? 0.01;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Invalid price.");
+      return;
+    }
     setBusySku(sku);
     setMessage(null);
     try {
@@ -322,10 +383,9 @@ export function AmazonRepricerPanel() {
           sku,
           enabled: draft.enabled,
           strategy: draft.strategy,
-          minPrice: draft.minPrice === "" ? null : Number(draft.minPrice),
-          maxPrice: draft.maxPrice === "" ? null : Number(draft.maxPrice),
-          undercutAmount:
-            draft.undercutAmount === "" ? 0.01 : Number(draft.undercutAmount),
+          minPrice,
+          maxPrice,
+          undercutAmount,
         }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
@@ -333,7 +393,40 @@ export function AmazonRepricerPanel() {
         setMessage(json.error || "Failed to save rule.");
         return;
       }
-      setMessage(`Saved rule for ${sku}. Refresh to recalculate suggestions.`);
+      const saved = (
+        json as {
+          ok: boolean;
+          error?: string;
+          rule?: {
+            enabled: boolean;
+            strategy: RepriceStrategy;
+            minPrice: number | null;
+            maxPrice: number | null;
+            undercutAmount: number;
+            updatedAt: string;
+          };
+        }
+      ).rule;
+      if (saved) {
+        const nextRule = {
+          ...saved,
+          sku,
+          minPrice: saved.minPrice ?? minPrice,
+          maxPrice: saved.maxPrice ?? maxPrice,
+        };
+        setDrafts((prev) => ({
+          ...prev,
+          [sku]: draftFromRule(nextRule),
+        }));
+        setRows((prev) =>
+          prev.map((row) =>
+            row.sku === sku ? { ...row, rule: nextRule } : row,
+          ),
+        );
+      }
+      const minLabel = minPrice != null ? formatMoney(minPrice) : "none";
+      const maxLabel = maxPrice != null ? formatMoney(maxPrice) : "none";
+      setMessage(`Saved ${sku}. Min ${minLabel}, max ${maxLabel}.`);
     } finally {
       setBusySku(null);
     }
@@ -796,6 +889,18 @@ export function AmazonRepricerPanel() {
                         }
                       />
                     </div>
+                    {row.rule?.minPrice != null || row.rule?.maxPrice != null ? (
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        Saved{" "}
+                        {row.rule?.minPrice != null
+                          ? formatMoney(row.rule.minPrice)
+                          : "—"}
+                        {" – "}
+                        {row.rule?.maxPrice != null
+                          ? formatMoney(row.rule.maxPrice)
+                          : "—"}
+                      </p>
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="space-y-1">

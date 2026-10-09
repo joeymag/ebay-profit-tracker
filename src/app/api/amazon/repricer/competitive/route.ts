@@ -78,11 +78,11 @@ export async function POST(request: Request) {
       }),
     ]);
     const ruleBySku = new Map<string, AmazonRepriceRule>(
-      rules.map((rule) => [rule.sku, rule]),
+      rules.map((rule) => [rule.sku.trim(), rule]),
     );
 
     const suggestions = skus.map((sku) => {
-      const rule = ruleBySku.get(sku) ?? null;
+      const rule = ruleBySku.get(sku.trim()) ?? null;
       const competitive = competitiveBySku.get(sku) ?? null;
       const currentPrice = priceBySku.has(sku) ? priceBySku.get(sku)! : null;
       const { suggestedPrice, reason } = computeSuggestedPrice({
