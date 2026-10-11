@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getShopifyConfig } from "@/lib/shopify/config";
+import { dispatchAfterShopifyLabel } from "@/lib/orders/sync-dispatch";
 import {
   getShopifyShippingLabelPurchaseStatus,
   purchaseShopifyShippingLabel,
@@ -93,6 +94,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     let postageCost: number | null = null;
     let latestLabelCost: number | null = null;
+    let dispatchNote: string | null = null;
     if (status.status === "PURCHASED") {
       const synced = await syncPostageCostAfterLabelPurchase(
         shopifyId,
@@ -100,6 +102,18 @@ export async function POST(request: Request, context: RouteContext) {
       );
       postageCost = synced.total;
       latestLabelCost = synced.latest;
+      const tracking = status.labels.find((label) => label.trackingNumber)?.trackingNumber;
+      if (tracking) {
+        const dispatched = await dispatchAfterShopifyLabel({
+          shopifyOrderId: shopifyId,
+          trackingNumber: tracking,
+          trackingUrl: status.labels.find((label) => label.trackingNumber === tracking)
+            ?.trackingUrl,
+        });
+        dispatchNote = dispatched.error
+          ? ` Label bought, but dispatch failed: ${dispatched.error}`
+          : " Order marked dispatched.";
+      }
     }
 
     if (status.status === "PURCHASE_FAILED") {
@@ -125,9 +139,11 @@ export async function POST(request: Request, context: RouteContext) {
       errors: status.errors,
       message:
         status.status === "PURCHASED"
-          ? latestLabelCost != null
-            ? `Shipping label purchased for £${latestLabelCost.toFixed(2)}.`
-            : "Shipping label purchased."
+          ? `${
+              latestLabelCost != null
+                ? `Shipping label purchased for £${latestLabelCost.toFixed(2)}.`
+                : "Shipping label purchased."
+            }${dispatchNote ?? ""}`
           : "Label purchase started. Refresh in a moment if the PDF is not ready yet.",
     });
   } catch (error) {

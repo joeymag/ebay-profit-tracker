@@ -5,6 +5,7 @@ import {
   runOrderSync,
   type OrderSyncMode,
 } from "@/lib/shopify/run-order-sync";
+import { importMarketplaceOrders } from "@/lib/shopify/import-marketplace-orders";
 import { getShopifyConfig } from "@/lib/shopify/config";
 
 /** Vercel Pro allows up to 300s; quick sync should finish well under that. */
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
   if (mode === "full") {
     after(async () => {
       try {
+        await importMarketplaceOrders({ days: 3 });
         const result = await runOrderSync({
           mode: "full",
           incremental: false,
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    const importedFromMarkets = await importMarketplaceOrders({ days: 3 });
     // Quick sync: only orders changed since last sync (same as auto-sync).
     const result = await runOrderSync({
       mode: "quick",
@@ -88,6 +91,10 @@ export async function POST(request: Request) {
       removedCancelled: result.removedCancelled,
       updatedSince: result.updatedSince,
       hint: result.hint,
+      marketplaceCreated: importedFromMarkets.created,
+      marketplaceSkipped: importedFromMarkets.skipped,
+      marketplaceErrors: importedFromMarkets.errors.slice(0, 3),
+      unmatchedSkus: importedFromMarkets.unmatchedSkus.slice(0, 8),
     });
   } catch (error) {
     if (isShopifyApiSyncError(error)) {

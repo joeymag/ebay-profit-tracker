@@ -19,6 +19,9 @@ type SyncResult =
       trackingFound?: number;
       syncedAt: string | null;
       hint?: string;
+      marketplaceCreated?: number;
+      marketplaceErrors?: string[];
+      unmatchedSkus?: string[];
     }
   | { ok: false; error: string; hint?: string };
 
@@ -62,6 +65,17 @@ export function SyncOrdersButton({
         return;
       }
 
+      const createdNote =
+        data.marketplaceCreated && data.marketplaceCreated > 0
+          ? ` Created ${data.marketplaceCreated} Shopify order${data.marketplaceCreated === 1 ? "" : "s"} from eBay or Amazon.`
+          : "";
+      const unmatchedNote =
+        data.unmatchedSkus && data.unmatchedSkus.length > 0
+          ? ` SKUs not found in Shopify: ${data.unmatchedSkus.join(", ")}.`
+          : "";
+      const marketError = data.marketplaceErrors?.[0]
+        ? ` ${data.marketplaceErrors[0]}`
+        : "";
       setMessage(
         data.status === "started"
           ? data.hint ||
@@ -71,8 +85,8 @@ export function SyncOrdersButton({
                 data.postageLabelsFound
                   ? ` · ${data.postageLabelsFound} with postage`
                   : ""
-              }).`
-            : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.`,
+              }).${createdNote}${unmatchedNote}${marketError}`
+            : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.${createdNote}${unmatchedNote}${marketError}`,
       );
       if (data.hint) {
         setMessage((prev) => (prev ? `${prev} ${data.hint}` : data.hint ?? null));
