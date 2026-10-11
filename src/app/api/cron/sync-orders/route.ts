@@ -34,6 +34,8 @@ async function runAutoSync(): Promise<void> {
       JSON.stringify({
         created: imported.created,
         skipped: imported.skipped,
+        addressesUpdated: imported.addressesUpdated,
+        cancelled: imported.cancelled,
         errors: imported.errors.slice(0, 3),
       }),
     );

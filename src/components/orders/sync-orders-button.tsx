@@ -20,6 +20,8 @@ type SyncResult =
       syncedAt: string | null;
       hint?: string;
       marketplaceCreated?: number;
+      marketplaceAddressesUpdated?: number;
+      marketplaceCancelled?: number;
       marketplaceErrors?: string[];
       unmatchedSkus?: string[];
     }
@@ -73,6 +75,14 @@ export function SyncOrdersButton({
         data.unmatchedSkus && data.unmatchedSkus.length > 0
           ? ` SKUs not found in Shopify: ${data.unmatchedSkus.join(", ")}.`
           : "";
+      const addressNote =
+        data.marketplaceAddressesUpdated && data.marketplaceAddressesUpdated > 0
+          ? ` Added the Amazon address to ${data.marketplaceAddressesUpdated} Shopify order${data.marketplaceAddressesUpdated === 1 ? "" : "s"}.`
+          : "";
+      const cancelNote =
+        data.marketplaceCancelled && data.marketplaceCancelled > 0
+          ? ` Cancelled ${data.marketplaceCancelled} Shopify order${data.marketplaceCancelled === 1 ? "" : "s"} that were cancelled on eBay or Amazon.`
+          : "";
       const marketError = data.marketplaceErrors?.[0]
         ? ` ${data.marketplaceErrors[0]}`
         : "";
@@ -85,8 +95,8 @@ export function SyncOrdersButton({
                 data.postageLabelsFound
                   ? ` · ${data.postageLabelsFound} with postage`
                   : ""
-              }).${createdNote}${unmatchedNote}${marketError}`
-            : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.${createdNote}${unmatchedNote}${marketError}`,
+              }).${createdNote}${addressNote}${cancelNote}${unmatchedNote}${marketError}`
+            : `Imported ${data.imported} orders · ${data.trackingFound ?? 0} with tracking · ${data.postageLabelsFound ?? 0} with postage.${createdNote}${addressNote}${cancelNote}${unmatchedNote}${marketError}`,
       );
       if (data.hint) {
         setMessage((prev) => (prev ? `${prev} ${data.hint}` : data.hint ?? null));

@@ -1,5 +1,9 @@
 import { amazonFetch } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import {
+  AmazonAddressAccessError,
+  fetchAmazonShippingAddresses,
+} from "@/lib/amazon/order-address";
 import type { MarketplaceSale } from "@/lib/marketplace-orders/types";
 
 type AmazonMoney = { CurrencyCode?: string; Amount?: string };
@@ -36,7 +40,40 @@ function amount(value: AmazonMoney | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export async function fetchRecentAmazonSales(days: number): Promise<MarketplaceSale[]> {
+export async function fetchRecentAmazonCancelledIds(days: number): Promise<string[]> {
+  const { marketplaceId } = getAmazonConfig();
+  const updatedAfter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const ids: string[] = [];
+  let nextToken: string | undefined;
+
+  for (let page = 0; page < 2; page += 1) {
+    const data = await amazonFetch<{
+      payload?: { Orders?: AmazonOrder[]; NextToken?: string };
+    }>({
+      path: "/orders/v0/orders",
+      query: {
+        MarketplaceIds: marketplaceId,
+        LastUpdatedAfter: updatedAfter,
+        OrderStatuses: "Canceled",
+        MaxResultsPerPage: "50",
+        NextToken: nextToken,
+      },
+    });
+    for (const order of data.payload?.Orders ?? []) {
+      const orderId = order.AmazonOrderId?.trim();
+      if (orderId) ids.push(orderId);
+    }
+    nextToken = data.payload?.NextToken;
+    if (!nextToken) break;
+  }
+
+  return ids;
+}
+
+export async function fetchRecentAmazonSales(days: number): Promise<{
+  sales: MarketplaceSale[];
+  addressError: string | null;
+}> {
   const { marketplaceId } = getAmazonConfig();
   const createdAfter = new Date(
     Date.now() - days * 24 * 60 * 60 * 1000,
@@ -118,5 +155,25 @@ export async function fetchRecentAmazonSales(days: number): Promise<MarketplaceS
     });
   }
 
-  return sales;
+  let addressError: string | null = null;
+  try {
+    const addresses = await fetchAmazonShippingAddresses(
+      sales.map((sale) => sale.orderId),
+    );
+    for (const sale of sales) {
+      const address = addresses.get(sale.orderId);
+      if (address) sale.address = address;
+    }
+    if (sales.length > 0 && sales.every((sale) => !sale.address?.address1)) {
+      addressError = new AmazonAddressAccessError().message;
+    }
+  } catch (error) {
+    if (error instanceof AmazonAddressAccessError) {
+      addressError = error.message;
+    } else {
+      throw error;
+    }
+  }
+
+  return { sales, addressError };
 }

@@ -18,13 +18,15 @@ type AmazonFetchOptions = {
   path: string;
   query?: Record<string, string | undefined>;
   body?: unknown;
+  /** Restricted Data Token, when the call needs buyer address data. */
+  accessToken?: string;
 };
 
 export async function amazonFetch<T = unknown>(
   options: AmazonFetchOptions,
 ): Promise<T> {
   const config = getAmazonConfig();
-  const accessToken = await getAmazonAccessToken();
+  const accessToken = options.accessToken ?? (await getAmazonAccessToken());
 
   const url = new URL(options.path, config.apiBaseUrl);
   if (options.query) {

@@ -128,6 +128,32 @@ function toSale(order: EbayOrder): MarketplaceSale | null {
   };
 }
 
+export async function fetchRecentEbayCancelledIds(days: number): Promise<string[]> {
+  getEbayConfig();
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const filter = `lastmodifieddate:[${start.toISOString()}..${end.toISOString()}]`;
+  const ids: string[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < 2; page += 1) {
+    const { data } = await ebayFulfillmentFetch<EbayOrdersResponse>(
+      `/order?filter=${encodeURIComponent(filter)}&limit=50&offset=${offset}`,
+    );
+    const batch = data.orders ?? [];
+    for (const order of batch) {
+      const orderId = order.orderId?.trim();
+      if (orderId && order.cancelStatus?.cancelState === "CANCELED") {
+        ids.push(orderId);
+      }
+    }
+    if (batch.length < 50) break;
+    offset += 50;
+  }
+
+  return ids;
+}
+
 export async function fetchRecentEbaySales(days: number): Promise<MarketplaceSale[]> {
   getEbayConfig();
   const end = new Date();

@@ -93,6 +93,8 @@ export async function POST(request: Request) {
       hint: result.hint,
       marketplaceCreated: importedFromMarkets.created,
       marketplaceSkipped: importedFromMarkets.skipped,
+      marketplaceAddressesUpdated: importedFromMarkets.addressesUpdated,
+      marketplaceCancelled: importedFromMarkets.cancelled,
       marketplaceErrors: importedFromMarkets.errors.slice(0, 3),
       unmatchedSkus: importedFromMarkets.unmatchedSkus.slice(0, 8),
     });

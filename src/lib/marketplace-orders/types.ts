@@ -16,6 +16,14 @@ export type MarketplaceAddress = {
   phone: string | null;
 };
 
+export function marketplaceOrderTag(
+  channel: "eBay" | "Amazon",
+  orderId: string,
+): string {
+  const prefix = channel === "eBay" ? "ebay-order" : "amazon-order";
+  return `${prefix}-${orderId}`.slice(0, 40);
+}
+
 export type MarketplaceSale = {
   channel: "eBay" | "Amazon";
   orderId: string;

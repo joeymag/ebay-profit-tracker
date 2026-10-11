@@ -1,11 +1,22 @@
-import { fetchRecentAmazonSales } from "@/lib/amazon/recent-orders";
+import {
+  fetchRecentAmazonCancelledIds,
+  fetchRecentAmazonSales,
+} from "@/lib/amazon/recent-orders";
 import { AmazonApiError } from "@/lib/amazon/client";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
-import { fetchRecentEbaySales } from "@/lib/ebay/recent-orders";
+import {
+  fetchRecentEbayCancelledIds,
+  fetchRecentEbaySales,
+} from "@/lib/ebay/recent-orders";
 import { EbayApiError } from "@/lib/ebay/errors";
 import { ebayOrderIdLookupVariants } from "@/lib/ebay/order-id";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
-import type { MarketplaceSale } from "@/lib/marketplace-orders/types";
+import {
+  marketplaceOrderTag,
+  type MarketplaceSale,
+} from "@/lib/marketplace-orders/types";
+import { cancelShopifyMarketplaceOrder } from "@/lib/shopify/cancel-marketplace-order";
+import { fillShopifyOrderAddress } from "@/lib/shopify/fill-order-address";
 import { shopifyAdminGraphql } from "@/lib/shopify/graphql";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
@@ -16,6 +27,8 @@ export type MarketplaceImportResult = {
   ebayCreated: number;
   amazonCreated: number;
   unmatchedSkus: string[];
+  addressesUpdated: number;
+  cancelled: number;
   errors: string[];
 };
 
@@ -25,13 +38,10 @@ const EMPTY: MarketplaceImportResult = {
   ebayCreated: 0,
   amazonCreated: 0,
   unmatchedSkus: [],
+  addressesUpdated: 0,
+  cancelled: 0,
   errors: [],
 };
-
-function orderTag(sale: MarketplaceSale): string {
-  const prefix = sale.channel === "eBay" ? "ebay-order" : "amazon-order";
-  return `${prefix}-${sale.orderId}`.slice(0, 40);
-}
 
 function splitName(name: string | null): { firstName: string; lastName: string } {
   const parts = name?.trim().split(/\s+/).filter(Boolean) ?? [];
@@ -77,7 +87,7 @@ async function alreadyInShopify(sale: MarketplaceSale): Promise<boolean> {
         }
       }
     `,
-    { query: `tag:${orderTag(sale)}` },
+    { query: `tag:"${marketplaceOrderTag(sale.channel, sale.orderId).replace(/"/g, '\\"')}"` },
   );
   return data.orders.edges.length > 0;
 }
@@ -178,7 +188,7 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
         processedAt: sale.createdAt,
         ...(sale.email ? { email: sale.email } : {}),
         ...(address?.phone ? { phone: address.phone } : {}),
-        tags: [sale.channel, orderTag(sale)],
+        tags: [sale.channel, marketplaceOrderTag(sale.channel, sale.orderId)],
         note: `Imported from ${sale.channel} order ${sale.orderId}`,
         customAttributes: [{ key: attributeName, value: sale.orderId }],
         taxesIncluded: true,
@@ -218,7 +228,11 @@ export async function importMarketplaceOrders(options?: {
   days?: number;
 }): Promise<MarketplaceImportResult> {
   const days = Math.min(7, Math.max(1, options?.days ?? 3));
-  const result: MarketplaceImportResult = { ...EMPTY, unmatchedSkus: [] };
+  const result: MarketplaceImportResult = {
+    ...EMPTY,
+    unmatchedSkus: [],
+    errors: [],
+  };
   const sales: MarketplaceSale[] = [];
 
   if (await getStoredEbayRefreshToken()) {
@@ -237,7 +251,9 @@ export async function importMarketplaceOrders(options?: {
 
   if (await getStoredAmazonRefreshToken()) {
     try {
-      sales.push(...(await fetchRecentAmazonSales(days)));
+      const amazon = await fetchRecentAmazonSales(days);
+      sales.push(...amazon.sales);
+      if (amazon.addressError) result.errors.push(amazon.addressError);
     } catch (error) {
       const message =
         error instanceof AmazonApiError
@@ -274,6 +290,71 @@ export async function importMarketplaceOrders(options?: {
     }
   }
 
+  let addressFills = 0;
+  for (const sale of sales) {
+    if (sale.channel !== "Amazon" || addressFills >= 20) continue;
+    if (!sale.address?.address1) continue;
+    try {
+      if (await fillShopifyOrderAddress(sale)) {
+        addressFills += 1;
+        result.addressesUpdated += 1;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Address update failed.";
+      result.errors.push(`Amazon ${sale.orderId}: ${message}`);
+    }
+  }
+
+  const cancelDays = 14;
+  if (await getStoredEbayRefreshToken()) {
+    try {
+      const cancelledIds = await fetchRecentEbayCancelledIds(cancelDays);
+      await cancelImportedOrders("eBay", cancelledIds, result);
+    } catch (error) {
+      const message =
+        error instanceof EbayApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Could not load cancelled eBay orders.";
+      result.errors.push(message);
+    }
+  }
+
+  if (await getStoredAmazonRefreshToken()) {
+    try {
+      const cancelledIds = await fetchRecentAmazonCancelledIds(cancelDays);
+      await cancelImportedOrders("Amazon", cancelledIds, result);
+    } catch (error) {
+      const message =
+        error instanceof AmazonApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Could not load cancelled Amazon orders.";
+      result.errors.push(message);
+    }
+  }
+
   result.unmatchedSkus = [...new Set(result.unmatchedSkus)];
   return result;
+}
+
+async function cancelImportedOrders(
+  channel: "eBay" | "Amazon",
+  orderIds: string[],
+  result: MarketplaceImportResult,
+) {
+  let attempted = 0;
+  for (const orderId of orderIds) {
+    if (attempted >= 15) break;
+    attempted += 1;
+    try {
+      const outcome = await cancelShopifyMarketplaceOrder(channel, orderId);
+      if (outcome === "cancelled") result.cancelled += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Cancel failed.";
+      result.errors.push(`${channel} ${orderId}: ${message}`);
+    }
+  }
 }
