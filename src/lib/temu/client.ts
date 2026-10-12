@@ -17,6 +17,28 @@ export type TemuTokenInfo = {
   expiredTime: number | null;
 };
 
+/** Send the signed Temu call through the London server when that proxy is configured. */
+async function postTemu(region: TemuCredentials["region"], body: string): Promise<Response> {
+  const proxy = process.env.TEMU_PROXY_URL?.replace(/\/$/, "");
+  const secret = process.env.TEMU_PROXY_SECRET?.trim();
+  if (proxy && secret) {
+    return fetch(`${proxy}/temu`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${secret}`,
+        "x-temu-target": temuRouterUrl(region),
+      },
+      body,
+    });
+  }
+  return fetch(temuRouterUrl(region), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+}
+
 export async function getTemuAccessTokenInfo(
   credentials: TemuCredentials,
 ): Promise<TemuTokenInfo> {
@@ -30,11 +52,7 @@ export async function getTemuAccessTokenInfo(
   };
   params.sign = signTemuRequest(params, credentials.appSecret);
 
-  const response = await fetch(temuRouterUrl(credentials.region), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(params),
-  });
+  const response = await postTemu(credentials.region, JSON.stringify(params));
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Temu request failed (${response.status}).`);
