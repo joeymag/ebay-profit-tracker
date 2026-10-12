@@ -53,6 +53,13 @@ type EbayOrdersResponse = {
   next?: string;
 };
 
+function recentRange(days: number): { start: string; end: string } {
+  // eBay rejects the filter when the end time is even a few seconds ahead of its clock.
+  const end = new Date(Date.now() - 2 * 60 * 1000);
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 function money(amount: EbayAmount | undefined): number {
   const value = Number(amount?.value);
   return Number.isFinite(value) ? value : 0;
@@ -130,9 +137,8 @@ function toSale(order: EbayOrder): MarketplaceSale | null {
 
 export async function fetchRecentEbayCancelledIds(days: number): Promise<string[]> {
   getEbayConfig();
-  const end = new Date();
-  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-  const filter = `lastmodifieddate:[${start.toISOString()}..${end.toISOString()}]`;
+  const { start, end } = recentRange(days);
+  const filter = `lastmodifieddate:[${start}..${end}]`;
   const ids: string[] = [];
   let offset = 0;
 
@@ -156,9 +162,8 @@ export async function fetchRecentEbayCancelledIds(days: number): Promise<string[
 
 export async function fetchRecentEbaySales(days: number): Promise<MarketplaceSale[]> {
   getEbayConfig();
-  const end = new Date();
-  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-  const filter = `creationdate:[${start.toISOString()}..${end.toISOString()}]`;
+  const { start, end } = recentRange(days);
+  const filter = `creationdate:[${start}..${end}]`;
   const sales: MarketplaceSale[] = [];
   let offset = 0;
 
