@@ -411,6 +411,22 @@ export type Database = {
         >;
         Relationships: [];
       };
+      ebay_description_template: {
+        Row: {
+          id: string;
+          html: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          html: string;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ebay_description_template"]["Insert"]
+        >;
+        Relationships: [];
+      };
       inventory_masters: {
         Row: {
           sku: string;

@@ -33,6 +33,7 @@ export type EbayListingVariation = {
 export type EbayListingDetails = {
   listingId: string;
   title: string | null;
+  description: string | null;
   sku: string | null;
   status: string | null;
   format: string | null;
@@ -69,6 +70,7 @@ export type ReviseEbayListingInput = {
   format: string | null;
   currency: string;
   title?: string | null;
+  description?: string | null;
   variations: EbayVariationEdit[];
 };
 
@@ -686,6 +688,7 @@ export async function fetchEbayListingDetails(
   return {
     listingId: extractXmlTag(itemXml, "ItemID") ?? trimmedId,
     title: extractXmlTag(itemXml, "Title"),
+    description: extractItemDescription(itemXml),
     sku: itemSku,
     status: extractXmlTag(itemXml, "ListingStatus"),
     format: extractXmlTag(itemXml, "ListingType"),
@@ -708,6 +711,22 @@ export async function fetchEbayListingDetails(
     variationsWarning: reconciled.warning,
     fetchedAt: new Date().toISOString(),
   };
+}
+
+function extractItemDescription(itemXml: string): string | null {
+  const withoutVariations = itemXml.replace(
+    /<Variations\b[^>]*>[\s\S]*<\/Variations>/i,
+    "",
+  );
+  const raw = extractXmlTag(withoutVariations, "Description");
+  if (!raw) return null;
+  const cdata = raw.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
+  return (cdata?.[1] ?? raw).trim() || null;
+}
+
+function descriptionXml(description: string): string {
+  const safe = description.replaceAll("]]>", "]]]]><![CDATA[>");
+  return `<Description><![CDATA[${safe}]]></Description>`;
 }
 
 function variationSpecificsXml(pairs: EbayVariationSpecific[]): string {
@@ -757,14 +776,19 @@ export async function reviseEbayListingSkuAndPrice(
 
   const title =
     input.title != null && input.title.trim() ? input.title.trim() : null;
+  const description =
+    input.description != null && input.description.trim()
+      ? input.description.trim()
+      : null;
 
-  if (!input.variations.length && !title) {
-    throw new Error("Provide a title and/or at least one variation update.");
+  if (!input.variations.length && !title && !description) {
+    throw new Error("Provide a title, description, and/or at least one variation update.");
   }
 
   const currency = (input.currency || "GBP").trim().toUpperCase();
   const callName = reviseCallName(input.format);
   const titleXml = title ? `<Title>${escapeXml(title)}</Title>` : "";
+  const descriptionBlock = description ? descriptionXml(description) : "";
 
   let itemBody: string;
 
@@ -799,6 +823,7 @@ export async function reviseEbayListingSkuAndPrice(
   <Item>
     <ItemID>${escapeXml(listingId)}</ItemID>
     ${titleXml}
+    ${descriptionBlock}
     <Variations>
       ${variationXml}
     </Variations>
@@ -818,6 +843,7 @@ export async function reviseEbayListingSkuAndPrice(
   <Item>
     <ItemID>${escapeXml(listingId)}</ItemID>
     ${titleXml}
+    ${descriptionBlock}
     ${skuXml}
     ${priceXml}
   </Item>`;
@@ -826,6 +852,7 @@ export async function reviseEbayListingSkuAndPrice(
   <Item>
     <ItemID>${escapeXml(listingId)}</ItemID>
     ${titleXml}
+    ${descriptionBlock}
   </Item>`;
   }
 
@@ -853,7 +880,7 @@ export async function reviseEbayListingSkuAndPrice(
 
   return {
     listingId,
-    updatedCount: input.variations.length + (title ? 1 : 0),
+    updatedCount: input.variations.length + (title ? 1 : 0) + (description ? 1 : 0),
     ack,
     warnings,
   };

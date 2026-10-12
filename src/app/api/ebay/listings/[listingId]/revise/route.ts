@@ -19,6 +19,7 @@ type ReviseBody = {
   format?: string | null;
   currency?: string;
   title?: string | null;
+  description?: string | null;
   variations?: EbayVariationEdit[];
 };
 
@@ -64,10 +65,18 @@ export async function POST(request: Request, context: RouteContext) {
 
   const variations = Array.isArray(body.variations) ? body.variations : [];
   const title = body.title?.trim() || null;
+  const description = body.description?.trim() || null;
 
-  if (!variations.length && !title) {
+  if (!variations.length && !title && !description) {
     return NextResponse.json(
-      { ok: false, error: "Provide a title and/or at least one variation update." },
+      { ok: false, error: "Provide a title, description, and/or at least one variation update." },
+      { status: 400 },
+    );
+  }
+
+  if (description && description.length > 500_000) {
+    return NextResponse.json(
+      { ok: false, error: "Description is too long for eBay." },
       { status: 400 },
     );
   }
@@ -86,6 +95,7 @@ export async function POST(request: Request, context: RouteContext) {
       format: body.format ?? null,
       currency: body.currency?.trim() || "GBP",
       title,
+      description,
       variations,
     });
 

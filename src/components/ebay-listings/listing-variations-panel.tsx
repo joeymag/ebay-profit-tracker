@@ -29,6 +29,7 @@ import type {
   EbayListingVariation,
   EbayVariationEdit,
 } from "@/lib/ebay/listing-details";
+import { applyDescriptionTemplate } from "@/lib/ebay/apply-description-template";
 import { variationRowNeedsSku } from "@/lib/ebay/listing-sku-status";
 import {
   calculateEbayItemProfit,
@@ -184,6 +185,9 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   const [listing, setListing] = useState<EbayListingDetails | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
   const [titleDraft, setTitleDraft] = useState("");
+  const [descriptionDraft, setDescriptionDraft] = useState("");
+  const [templateDraft, setTemplateDraft] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const [error, setError] = useState<Extract<DetailsResponse, { ok: false }> | null>(
     null,
   );
@@ -228,6 +232,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       if (!payload.ok) {
         setListing(null);
         setTitleDraft("");
+        setDescriptionDraft("");
         setDrafts([]);
         setSelectedIndexes(new Set());
         setError(payload);
@@ -236,6 +241,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
 
       setListing(payload.listing);
       setTitleDraft(payload.listing.title ?? "");
+      setDescriptionDraft(payload.listing.description ?? "");
       setDrafts(draftsFromVariations(payload.listing.variations));
       setSelectedIndexes(
         new Set(payload.listing.variations.map((_, index) => index)),
@@ -243,6 +249,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     } catch {
       setListing(null);
       setTitleDraft("");
+      setDescriptionDraft("");
       setDrafts([]);
       setSelectedIndexes(new Set());
       setError({
@@ -270,6 +277,27 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
 
     return titleDraft.trim() !== (listing.title ?? "").trim();
   }, [listing, titleDraft]);
+
+  const descriptionDirty = useMemo(() => {
+    if (!listing) {
+      return false;
+    }
+    return descriptionDraft.trim() !== (listing.description ?? "").trim();
+  }, [listing, descriptionDraft]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/ebay/description-template");
+        const payload = (await response.json()) as { ok: boolean; html?: string };
+        if (payload.ok && payload.html) {
+          setTemplateDraft(payload.html);
+        }
+      } catch {
+        // The listing can still be edited if the template cannot be loaded.
+      }
+    })();
+  }, []);
 
   const dirtyIndexes = useMemo(() => {
     const indexes: number[] = [];
@@ -731,8 +759,36 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     }
   }
 
+  async function saveTemplate() {
+    const html = templateDraft.trim();
+    if (!html) {
+      setSaveError("Template cannot be empty.");
+      return;
+    }
+    setSavingTemplate(true);
+    setSaveError(null);
+    setSaveMessage(null);
+    try {
+      const response = await fetch("/api/ebay/description-template", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html }),
+      });
+      const payload = (await response.json()) as { ok: boolean; error?: string };
+      if (!payload.ok) {
+        setSaveError(payload.error ?? "Could not save the template.");
+        return;
+      }
+      setSaveMessage("Description template saved. Insert it on any listing.");
+    } catch {
+      setSaveError("Could not save the description template.");
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
   async function pushToEbay() {
-    if (!listing || (dirtyIndexes.length === 0 && !titleDirty)) {
+    if (!listing || (dirtyIndexes.length === 0 && !titleDirty && !descriptionDirty)) {
       return;
     }
 
@@ -743,6 +799,10 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
     }
     if (titleDirty && trimmedTitle.length > 80) {
       setSaveError("Title must be 80 characters or fewer.");
+      return;
+    }
+    if (descriptionDirty && !descriptionDraft.trim()) {
+      setSaveError("Description cannot be empty.");
       return;
     }
 
@@ -788,6 +848,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             format: listing.format,
             currency: listing.currency ?? "GBP",
             title: titleDirty ? trimmedTitle : undefined,
+            description: descriptionDirty ? descriptionDraft.trim() : undefined,
             variations: updates,
           }),
         },
@@ -808,9 +869,12 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
       if (titleDirty) {
         parts.push("title");
       }
-      if (payload.updatedCount > (titleDirty ? 1 : 0)) {
+      if (descriptionDirty) {
+        parts.push("description");
+      }
+      if (updates.length > 0) {
         parts.push(
-          `${payload.updatedCount - (titleDirty ? 1 : 0)} variation update${payload.updatedCount - (titleDirty ? 1 : 0) === 1 ? "" : "s"}`,
+          `${updates.length} variation update${updates.length === 1 ? "" : "s"}`,
         );
       }
 
@@ -1055,7 +1119,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             saving ||
             savingCosts ||
             generatingSkus ||
-            (dirtyIndexes.length === 0 && !titleDirty)
+            (dirtyIndexes.length === 0 && !titleDirty && !descriptionDirty)
           }
         >
           {saving ? (
@@ -1067,8 +1131,8 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
             <>
               <Upload className="size-4" />
               Push{" "}
-              {dirtyIndexes.length + (titleDirty ? 1 : 0) || ""} change
-              {dirtyIndexes.length + (titleDirty ? 1 : 0) === 1 ? "" : "s"} to
+              {dirtyIndexes.length + (titleDirty ? 1 : 0) + (descriptionDirty ? 1 : 0) || ""} change
+              {dirtyIndexes.length + (titleDirty ? 1 : 0) + (descriptionDirty ? 1 : 0) === 1 ? "" : "s"} to
               eBay
             </>
           )}
@@ -1120,6 +1184,86 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   {titleDirty ? " · unsaved title change" : ""}
                 </p>
               </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="listing-description-draft"
+                  className="text-sm font-medium text-muted-foreground"
+                >
+                  Description
+                </label>
+                <textarea
+                  id="listing-description-draft"
+                  value={descriptionDraft}
+                  onChange={(event) => {
+                    setDescriptionDraft(event.target.value);
+                    setSaveMessage(null);
+                    setSaveError(null);
+                  }}
+                  rows={10}
+                  disabled={saving || savingCosts}
+                  className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                />
+                <p className="text-xs text-muted-foreground">
+                  HTML is allowed. Push to eBay saves this description on the listing.
+                  {descriptionDirty ? " Unsaved description change." : ""}
+                </p>
+                <div className="space-y-1.5 rounded-lg border border-border/70 bg-muted/20 p-3">
+                  <label
+                    htmlFor="listing-description-template"
+                    className="text-sm font-medium"
+                  >
+                    Description template
+                  </label>
+                  <textarea
+                    id="listing-description-template"
+                    value={templateDraft}
+                    onChange={(event) => setTemplateDraft(event.target.value)}
+                    rows={6}
+                    disabled={savingTemplate}
+                    className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use {"{{title}}"} for the listing title and {"{{body}}"} for the description already in the box.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={saving || savingTemplate || !templateDraft.trim()}
+                      onClick={() => {
+                        setDescriptionDraft(
+                          applyDescriptionTemplate(
+                            templateDraft,
+                            titleDraft.trim(),
+                            descriptionDraft.trim(),
+                          ),
+                        );
+                        setSaveMessage(null);
+                        setSaveError(null);
+                      }}
+                    >
+                      Insert template
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={savingTemplate || !templateDraft.trim()}
+                      onClick={() => void saveTemplate()}
+                    >
+                      {savingTemplate ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          Saving template…
+                        </>
+                      ) : (
+                        "Save template"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
               <CardDescription className="flex flex-wrap items-center gap-2">
                 <span className="font-mono">{listing.listingId}</span>
                 {listing.isMultiVariation ? (
@@ -1150,6 +1294,9 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                 ) : null}
                 {titleDirty ? (
                   <Badge variant="destructive">Title unsaved</Badge>
+                ) : null}
+                {descriptionDirty ? (
+                  <Badge variant="destructive">Description unsaved</Badge>
                 ) : null}
                 {dirtyCostIndexes.length > 0 ? (
                   <Badge variant="secondary">
