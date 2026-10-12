@@ -20,20 +20,21 @@ export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
 #ebay-description .btn-ghost { background: transparent; color: #F47A12; border: 1px solid #F47A12; }
 #ebay-description .note { background: #f8fafc; border: 1px solid #e5e7eb; border-left: 4px solid #F47A12; border-radius: 12px; padding: 14px 16px; }
 #ebay-description .note strong { display: block; margin-bottom: 4px; color: #111827; }
-#ebay-description #footer { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
-#ebay-description #footer .logo { max-width: 180px; width: 100%; height: auto; }
+#ebay-description .foot { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+#ebay-description .foot img { max-width: 180px; width: 100%; height: auto; }
 #ebay-description .muted { color: #6b7280; font-size: 14px; margin: 0; }
 @media (max-width: 768px) {
   #ebay-description .span5, #ebay-description .span7, #ebay-description .span4 { flex: 0 0 100%; max-width: 100%; }
+  #ebay-description td.span5, #ebay-description td.span7 { display: block; width: 100% !important; padding: 0 0 12px !important; }
   #ebay-description h2 { font-size: 22px; }
   #ebay-description .block { padding: 16px; border-radius: 14px; }
-  #ebay-description #footer { justify-content: center; text-align: center; }
+  #ebay-description .foot { justify-content: center; text-align: center; }
 }
 </style>
 <div id="ebay-description">
   <div class="container">
     <div class="brand">
-      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" />
+      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" style="max-width:280px;width:100%;height:auto;display:block;margin:0 auto 8px;" />
       <p>Tools and fixings for trade professionals</p>
       <a class="btn btn-ghost" href="https://tstrade.co.uk/pages/contact">Contact us</a>
       <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all">Shop</a>
@@ -42,28 +43,28 @@ export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
   <div class="container">
     <div class="block">
       <h2>{{title}}</h2>
-      <div class="row">
-        <div class="span5"><div class="photo">{{image}}</div></div>
-        <div class="span7"><div style="overflow-wrap:anywhere;"><!--ts-body-start-->{{body}}<!--ts-body-end--></div></div>
-      </div>
+      <table role="presentation" style="width:100%;border-collapse:collapse;"><tr>
+        <td class="span5" style="width:42%;vertical-align:top;padding-right:16px;"><div class="photo">{{image}}</div></td>
+        <td class="span7" style="width:58%;vertical-align:top;"><div style="overflow-wrap:anywhere;"><!--ts-body-start-->{{body}}<!--ts-body-end--></div></td>
+      </tr></table>
     </div>
   </div>
   <div class="container">
     <div class="block">
       <div class="row">
-        <div class="span4"><div class="note"><strong>Trade quality</strong>Products chosen for site and workshop use.</div></div>
-        <div class="span4"><div class="note"><strong>UK dispatch</strong>Sent from our UK warehouse.</div></div>
-        <div class="span4"><div class="note"><strong>Before you buy</strong>Check the size, quantity, and finish.</div></div>
+        <div class="span4"><div class="note" style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #F47A12;border-radius:12px;padding:14px 16px;"><strong style="display:block;margin:0 0 4px;color:#111827;">Trade quality</strong>Products chosen for site and workshop use.</div></div>
+        <div class="span4"><div class="note" style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #F47A12;border-radius:12px;padding:14px 16px;"><strong style="display:block;margin:0 0 4px;color:#111827;">UK dispatch</strong>Sent from our UK warehouse.</div></div>
+        <div class="span4"><div class="note" style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #F47A12;border-radius:12px;padding:14px 16px;"><strong style="display:block;margin:0 0 4px;color:#111827;">Before you buy</strong>Check the size, quantity, and finish.</div></div>
       </div>
     </div>
   </div>
   <div class="container">
-    <div class="block" id="footer">
-      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" />
-      <p class="muted">Dispatched from the UK. The same stock is on tstrade.co.uk.</p>
+    <div class="block foot" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;">
+      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" style="max-width:180px;width:100%;height:auto;display:block;" />
+      <p class="muted" style="color:#6b7280;font-size:14px;margin:0;">Dispatched from the UK. The same stock is on tstrade.co.uk.</p>
       <div>
-        <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all">Shop</a>
-        <a class="btn btn-ghost" href="https://tstrade.co.uk/pages/contact">Contact us</a>
+        <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all" style="display:inline-block;margin:4px;padding:12px 18px;border-radius:12px;font-weight:700;font-size:15px;text-decoration:none;background:#F47A12;color:#111111;">Shop</a>
+        <a class="btn btn-ghost" href="https://tstrade.co.uk/pages/contact" style="display:inline-block;margin:4px;padding:12px 18px;border-radius:12px;font-weight:700;font-size:15px;text-decoration:none;background:transparent;color:#F47A12;border:1px solid #F47A12;">Contact us</a>
       </div>
     </div>
   </div>
@@ -91,41 +92,77 @@ function imageHtml(imageUrl: string | null | undefined): string {
   return `<img src="${escapeHtml(src)}" alt="Product" style="width:100%;max-width:260px;height:auto;display:block;margin:0 auto;border:0;" />`;
 }
 
+const BOILERPLATE = [
+  /^tools and fixings for trade professionals\.?$/i,
+  /^ts trade\s*[—–-]?\s*uk seller, dispatched from the uk\.?$/i,
+  /^dispatched from the uk\. the same stock is on tstrade\.co\.uk\.?$/i,
+  /^products chosen for site and workshop use\.?$/i,
+  /^sent from our uk warehouse\.?$/i,
+  /^check the size, quantity, and finish\.?$/i,
+  /^check the size, quantity, and finish in the title before you buy\.?$/i,
+  /^(trade quality|uk dispatch|before you buy)$/i,
+  /^(shop|contact us)$/i,
+];
+
+function isBoilerplate(text: string): boolean {
+  const value = text.trim();
+  if (!value) return false;
+  return BOILERPLATE.some((pattern) => pattern.test(value));
+}
+
+function tagTolerant(sentence: string): RegExp {
+  const parts = sentence
+    .split(/\s+/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(parts.join("(?:\\s|&nbsp;|<[^>]+>)*"), "gi");
+}
+
 /** Keep the product text when the template is inserted again. */
 export function cleanDescriptionBody(body: string, title: string): string {
   let html = body.trim();
-  const marked = html.match(/<!--ts-body-start-->([\s\S]*?)<!--ts-body-end-->/i);
-  if (marked?.[1]) {
+  for (let pass = 0; pass < 4; pass += 1) {
+    const marked = html.match(/<!--ts-body-start-->([\s\S]*?)<!--ts-body-end-->/i);
+    if (!marked?.[1]) break;
     html = marked[1].trim();
   }
-  const wrapped = marked ? null : html.match(
-    /overflow-wrap:anywhere;">([\s\S]*?)<\/div>\s*<\/td>\s*<\/tr>\s*<\/table>[\s\S]*?<div style="padding:8px 16px 16px;">/i,
-  ) ?? html.match(
-    /overflow-wrap:anywhere;">([\s\S]*?)<\/div>\s*<div style="padding:8px 16px 16px;">/i,
+  const wrapped = html.match(
+    /overflow-wrap:anywhere;">([\s\S]*?)<\/div>\s*<\/td>\s*<\/tr>\s*<\/table>/i,
   );
-  if (wrapped?.[1]) {
+  if (wrapped?.[1] && !html.includes("<!--ts-body-start-->")) {
     html = wrapped[1].trim();
   }
 
-  const titleText = title.trim();
-  html = html.replace(/<h[1-3][^>]*>[\s\S]*?<\/h[1-3]>/gi, (heading) => {
-    if (!titleText) return heading;
-    return plainText(heading).toLowerCase() === titleText.toLowerCase() ? "" : heading;
-  });
-
   html = html
-    .replace(/TS Trade\s*[—–-]\s*UK seller, dispatched from the UK\.?/gi, "")
-    .replace(/Check the size, quantity, and finish in the title before you buy\.?/gi, "")
-    .replace(/<hr[^>]*>/gi, "")
-    .replace(/<(p|div)[^>]*>\s*<\/\1>/gi, "")
-    .trim();
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<img[^>]*tstrade-logo[^>]*>/gi, "")
+    .replace(/<\/?div[^>]*>/gi, "")
+    .replace(tagTolerant("TS Trade — UK seller, dispatched from the UK."), "")
+    .replace(tagTolerant("Dispatched from the UK. The same stock is on tstrade.co.uk."), "")
+    .replace(tagTolerant("Check the size, quantity, and finish in the title before you buy."), "")
+    .replace(tagTolerant("Products chosen for site and workshop use."), "")
+    .replace(tagTolerant("Sent from our UK warehouse."), "")
+    .replace(tagTolerant("Tools and fixings for trade professionals"), "")
+    .replace(/<hr[^>]*>/gi, "");
+
+  const titleText = title.trim().toLowerCase();
+  html = html.replace(
+    /<(h[1-6]|p|li|strong|b|font|span)[^>]*>[\s\S]*?<\/\1>/gi,
+    (element) => {
+      const text = plainText(element).toLowerCase();
+      if (!text) return "";
+      if (titleText && text === titleText) return "";
+      if (isBoilerplate(text)) return "";
+      return element;
+    },
+  );
 
   if (titleText) {
-    const escaped = titleText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = title.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     html = html
       .replace(
         new RegExp(
-          `^(?:<(?:p|div|strong|b)[^>]*>\\s*)*${escaped}\\s*(?:</(?:p|div|strong|b)>\\s*)*`,
+          `^(?:<(?:p|strong|b|font|span|br)[^>]*>\\s*)*${escaped}\\s*(?:</(?:p|strong|b|font|span)>\\s*)*`,
           "i",
         ),
         "",
@@ -133,7 +170,7 @@ export function cleanDescriptionBody(body: string, title: string): string {
       .trim();
   }
 
-  return html;
+  return html.replace(/<(p|span|strong|b|font)[^>]*>\s*<\/\1>/gi, "").trim();
 }
 
 export function applyDescriptionTemplate(

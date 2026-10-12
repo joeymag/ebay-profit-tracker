@@ -23,20 +23,21 @@ values (
 #ebay-description .btn-ghost { background: transparent; color: #F47A12; border: 1px solid #F47A12; }
 #ebay-description .note { background: #f8fafc; border: 1px solid #e5e7eb; border-left: 4px solid #F47A12; border-radius: 12px; padding: 14px 16px; }
 #ebay-description .note strong { display: block; margin-bottom: 4px; color: #111827; }
-#ebay-description #footer { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
-#ebay-description #footer .logo { max-width: 180px; width: 100%; height: auto; }
+#ebay-description .foot { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+#ebay-description .foot img { max-width: 180px; width: 100%; height: auto; }
 #ebay-description .muted { color: #6b7280; font-size: 14px; margin: 0; }
 @media (max-width: 768px) {
   #ebay-description .span5, #ebay-description .span7, #ebay-description .span4 { flex: 0 0 100%; max-width: 100%; }
+  #ebay-description td.span5, #ebay-description td.span7 { display: block; width: 100% !important; padding: 0 0 12px !important; }
   #ebay-description h2 { font-size: 22px; }
   #ebay-description .block { padding: 16px; border-radius: 14px; }
-  #ebay-description #footer { justify-content: center; text-align: center; }
+  #ebay-description .foot { justify-content: center; text-align: center; }
 }
 </style>
 <div id="ebay-description">
   <div class="container">
     <div class="brand">
-      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" />
+      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" style="max-width:280px;width:100%;height:auto;display:block;margin:0 auto 8px;" />
       <p>Tools and fixings for trade professionals</p>
       <a class="btn btn-ghost" href="https://tstrade.co.uk/pages/contact">Contact us</a>
       <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all">Shop</a>
@@ -45,28 +46,28 @@ values (
   <div class="container">
     <div class="block">
       <h2>{{title}}</h2>
-      <div class="row">
-        <div class="span5"><div class="photo">{{image}}</div></div>
-        <div class="span7"><div style="overflow-wrap:anywhere;"><!--ts-body-start-->{{body}}<!--ts-body-end--></div></div>
-      </div>
+      <table role="presentation" style="width:100%;border-collapse:collapse;"><tr>
+        <td class="span5" style="width:42%;vertical-align:top;padding-right:16px;"><div class="photo">{{image}}</div></td>
+        <td class="span7" style="width:58%;vertical-align:top;"><div style="overflow-wrap:anywhere;"><!--ts-body-start-->{{body}}<!--ts-body-end--></div></td>
+      </tr></table>
     </div>
   </div>
   <div class="container">
     <div class="block">
       <div class="row">
-        <div class="span4"><div class="note"><strong>Trade quality</strong>Products chosen for site and workshop use.</div></div>
-        <div class="span4"><div class="note"><strong>UK dispatch</strong>Sent from our UK warehouse.</div></div>
-        <div class="span4"><div class="note"><strong>Before you buy</strong>Check the size, quantity, and finish.</div></div>
+        <div class="span4"><div class="note" style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #F47A12;border-radius:12px;padding:14px 16px;"><strong style="display:block;margin:0 0 4px;color:#111827;">Trade quality</strong>Products chosen for site and workshop use.</div></div>
+        <div class="span4"><div class="note" style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #F47A12;border-radius:12px;padding:14px 16px;"><strong style="display:block;margin:0 0 4px;color:#111827;">UK dispatch</strong>Sent from our UK warehouse.</div></div>
+        <div class="span4"><div class="note" style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #F47A12;border-radius:12px;padding:14px 16px;"><strong style="display:block;margin:0 0 4px;color:#111827;">Before you buy</strong>Check the size, quantity, and finish.</div></div>
       </div>
     </div>
   </div>
   <div class="container">
-    <div class="block" id="footer">
-      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" />
-      <p class="muted">Dispatched from the UK. The same stock is on tstrade.co.uk.</p>
+    <div class="block foot" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;">
+      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" style="max-width:180px;width:100%;height:auto;display:block;" />
+      <p class="muted" style="color:#6b7280;font-size:14px;margin:0;">Dispatched from the UK. The same stock is on tstrade.co.uk.</p>
       <div>
-        <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all">Shop</a>
-        <a class="btn btn-ghost" href="https://tstrade.co.uk/pages/contact">Contact us</a>
+        <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all" style="display:inline-block;margin:4px;padding:12px 18px;border-radius:12px;font-weight:700;font-size:15px;text-decoration:none;background:#F47A12;color:#111111;">Shop</a>
+        <a class="btn btn-ghost" href="https://tstrade.co.uk/pages/contact" style="display:inline-block;margin:4px;padding:12px 18px;border-radius:12px;font-weight:700;font-size:15px;text-decoration:none;background:transparent;color:#F47A12;border:1px solid #F47A12;">Contact us</a>
       </div>
     </div>
   </div>
