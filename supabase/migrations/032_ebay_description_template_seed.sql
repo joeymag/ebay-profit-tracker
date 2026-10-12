@@ -7,7 +7,6 @@ values (
   </div>
   <div style="background:#111111;color:#ffffff;text-align:center;padding:8px 16px 18px;font-size:14px;line-height:1.4;">Tools and fixings for trade</div>
   <div style="padding:18px 16px 8px;">
-    <h2 style="margin:0 0 12px;font-size:20px;line-height:1.35;font-weight:bold;color:#111111;">{{title}}</h2>
     <div style="font-size:15px;line-height:1.55;color:#2b2b2b;word-wrap:break-word;overflow-wrap:anywhere;">{{body}}</div>
   </div>
   <div style="padding:8px 16px 16px;">
