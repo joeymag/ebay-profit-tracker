@@ -89,7 +89,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     // Recalc can be slow/fail on large order tables — never block the cost save.
     let ordersUpdated = 0;
     let ordersRecalcWarning: string | null = null;
-    if (body.unitCost !== undefined && !body.skipOrderRecalc) {
+    if ((body.unitCost !== undefined || body.defaultPostage !== undefined) && !body.skipOrderRecalc) {
       try {
         ordersUpdated = await recalculateAllOrderProductCosts();
       } catch (recalcError) {

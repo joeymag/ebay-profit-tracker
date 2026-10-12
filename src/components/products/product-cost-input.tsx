@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
@@ -10,9 +10,18 @@ import { cn } from "@/lib/utils";
 type ProductCostInputProps = {
   sku: string;
   initialCost: number | null;
+  title?: string | null;
+  field?: "unitCost" | "defaultPostage";
+  onSaved?: (amount: number | null) => void;
 };
 
-export function ProductCostInput({ sku, initialCost }: ProductCostInputProps) {
+export function ProductCostInput({
+  sku,
+  initialCost,
+  title,
+  field = "unitCost",
+  onSaved,
+}: ProductCostInputProps) {
   const router = useRouter();
   const [value, setValue] = useState(
     initialCost != null ? String(initialCost) : "",
@@ -21,12 +30,16 @@ export function ProductCostInput({ sku, initialCost }: ProductCostInputProps) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setValue(initialCost != null ? String(initialCost) : "");
+  }, [initialCost, sku]);
+
   async function saveCost() {
     const trimmed = value.trim();
     const unitCost = trimmed === "" ? null : Number.parseFloat(trimmed);
 
     if (trimmed !== "" && (!Number.isFinite(unitCost) || unitCost! < 0)) {
-      setError("Enter a valid cost");
+      setError(field === "defaultPostage" ? "Enter a valid postage" : "Enter a valid cost");
       return;
     }
 
@@ -42,7 +55,10 @@ export function ProductCostInput({ sku, initialCost }: ProductCostInputProps) {
       const res = await fetch(`/api/products/${encodeURIComponent(sku)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unitCost }),
+        body: JSON.stringify({
+          [field]: unitCost,
+          title: title ?? undefined,
+        }),
       });
       const data = await res.json();
 
@@ -52,7 +68,8 @@ export function ProductCostInput({ sku, initialCost }: ProductCostInputProps) {
       }
 
       setSaved(true);
-      router.refresh();
+      onSaved?.(unitCost);
+      if (!onSaved) router.refresh();
       setTimeout(() => setSaved(false), 2000);
     } catch {
       setError("Could not save");

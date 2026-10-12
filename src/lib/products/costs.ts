@@ -1,3 +1,4 @@
+import { getSalesChannel } from "@/lib/orders/channel";
 import type { ProductCatalog } from "@/lib/products/types";
 import {
   normalizeSku,
@@ -30,6 +31,47 @@ export function buildProductCatalog(
     }
   }
   return catalog;
+}
+
+export function buildPostageCatalog(
+  products: { sku: string; defaultPostage?: number | null; temuSku?: string | null }[],
+): Map<string, number> {
+  const catalog = new Map<string, number>();
+  for (const product of products) {
+    if (product.defaultPostage == null) continue;
+    const key = normalizeSku(product.sku);
+    if (key) catalog.set(key, product.defaultPostage);
+    if (product.temuSku) {
+      const temuKey = normalizeSku(product.temuSku);
+      if (temuKey) catalog.set(temuKey, product.defaultPostage);
+      const legacyKey = normalizeSku(catalogSkuForTemu(product.temuSku));
+      if (legacyKey) catalog.set(legacyKey, product.defaultPostage);
+    }
+  }
+  return catalog;
+}
+
+/** Postage for an Amazon order that does not already have one saved. */
+export function postageFromCatalog(
+  order: Pick<StoredOrder, "tags" | "shippingLabelCost" | "lineItems">,
+  postageBySku: Map<string, number>,
+): number | null {
+  if (order.shippingLabelCost != null) return order.shippingLabelCost;
+  if (getSalesChannel(order.tags) !== "Amazon" || order.lineItems.length === 0) {
+    return null;
+  }
+
+  let total = 0;
+  for (const item of order.lineItems) {
+    const key = resolveLineItemSkuKey(item.sku, item.title);
+    const temuKey = item.temuSku?.trim() ? normalizeSku(item.temuSku) : null;
+    const postage =
+      (key ? postageBySku.get(key) : undefined) ??
+      (temuKey ? postageBySku.get(temuKey) : undefined);
+    if (postage == null) return null;
+    total += postage;
+  }
+  return total;
 }
 
 export function getLineItemUnitCost(
@@ -83,6 +125,7 @@ export function computeOrderProductCost(
 export function applyCatalogToOrder(
   order: StoredOrder,
   catalog: ProductCatalog,
+  postageBySku?: Map<string, number>,
 ): StoredOrder {
   const lineItems = order.lineItems.map((item) => ({
     ...item,
@@ -105,12 +148,16 @@ export function applyCatalogToOrder(
     ...order,
     lineItems,
     productCost,
+    shippingLabelCost: postageBySku
+      ? postageFromCatalog(order, postageBySku)
+      : order.shippingLabelCost,
   };
 }
 
 export function applyCatalogToOrders(
   orders: StoredOrder[],
   catalog: ProductCatalog,
+  postageBySku?: Map<string, number>,
 ): StoredOrder[] {
-  return orders.map((order) => applyCatalogToOrder(order, catalog));
+  return orders.map((order) => applyCatalogToOrder(order, catalog, postageBySku));
 }

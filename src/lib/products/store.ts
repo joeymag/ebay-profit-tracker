@@ -44,7 +44,12 @@ export async function getProducts(): Promise<Product[]> {
 }
 
 export async function getProductCatalog(): Promise<
-  { sku: string; unitCost: number | null }[]
+  {
+    sku: string;
+    unitCost: number | null;
+    defaultPostage?: number | null;
+    temuSku?: string | null;
+  }[]
 > {
   if (isSupabaseConfigured()) {
     return getProductCatalogFromSupabase();
@@ -53,6 +58,7 @@ export async function getProductCatalog(): Promise<
   return products.map((p) => ({
     sku: p.sku,
     unitCost: p.unitCost,
+    defaultPostage: p.defaultPostage,
     temuSku: p.temuSku,
   }));
 }

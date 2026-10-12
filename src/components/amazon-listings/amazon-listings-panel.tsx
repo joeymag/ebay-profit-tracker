@@ -24,15 +24,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AmazonListing } from "@/lib/amazon/listings";
+import { ProductCostInput } from "@/components/products/product-cost-input";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+type ListingRow = AmazonListing & {
+  unitCost?: number | null;
+  defaultPostage?: number | null;
+};
 
 type ListingsResponse =
   | {
       ok: true;
       marketplaceId: string;
       count: number;
-      listings: AmazonListing[];
+      listings: ListingRow[];
       fetchedAt: string;
       cached: boolean;
       env?: string;
@@ -189,6 +195,8 @@ export function AmazonListingsPanel() {
                 <TableHead>SKU</TableHead>
                 <TableHead>ASIN</TableHead>
                 <TableHead className="text-right">Price</TableHead>
+                <TableHead>Cost of goods</TableHead>
+                <TableHead>Postage</TableHead>
                 <TableHead className="text-right">Qty</TableHead>
                 <TableHead>Channel</TableHead>
                 <TableHead className="w-20" />
@@ -225,6 +233,55 @@ export function AmazonListingsPanel() {
                   <TableCell className="text-right tabular-nums">
                     {row.price != null ? formatMoney(row.price) : "—"}
                   </TableCell>
+                  <TableCell>
+                    {row.sku ? (
+                      <ProductCostInput
+                        sku={row.sku}
+                        initialCost={row.unitCost ?? null}
+                        onSaved={(unitCost) => {
+                          setData((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  listings: current.listings.map((listing) =>
+                                    listing.sku === row.sku
+                                      ? { ...listing, unitCost }
+                                      : listing,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                      />
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {row.sku ? (
+                      <ProductCostInput
+                        sku={row.sku}
+                        field="defaultPostage"
+                        initialCost={row.defaultPostage ?? null}
+                        onSaved={(defaultPostage) => {
+                          setData((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  listings: current.listings.map((listing) =>
+                                    listing.sku === row.sku
+                                      ? { ...listing, defaultPostage }
+                                      : listing,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                      />
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {row.quantity != null ? row.quantity : "—"}
                   </TableCell>
@@ -258,8 +315,8 @@ export function AmazonListingsPanel() {
       {data?.fetchedAt ? (
         <p className="text-xs text-muted-foreground">
           Last fetched {new Date(data.fetchedAt).toLocaleString()}
-          {data.cached ? " (from cache)" : ""}. Open listings report from Amazon
-          Seller Central data for the configured marketplace.
+          {data.cached ? " (from cache)" : ""}. Cost of goods and postage are
+          saved on the SKU and fill in on matching Amazon orders.
         </p>
       ) : null}
     </div>

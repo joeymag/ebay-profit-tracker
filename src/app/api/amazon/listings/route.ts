@@ -4,6 +4,7 @@ import { AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
 import { fetchAmazonListings } from "@/lib/amazon/listings";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
+import { getSkuCostSnapshots } from "@/lib/products/listing-costs";
 
 export const maxDuration = 120;
 
@@ -43,13 +44,33 @@ export async function GET(request: Request) {
       forceRefresh,
       fast: !forceRefresh,
     });
+    let listings = result.listings.map((listing) => ({
+      ...listing,
+      unitCost: null as number | null,
+      defaultPostage: null as number | null,
+    }));
+    try {
+      const costs = await getSkuCostSnapshots(
+        listings.map((listing) => listing.sku),
+        { inferPostageFromOrders: false },
+      );
+      listings = listings.map((listing) => ({
+        ...listing,
+        unitCost: listing.sku ? (costs.get(listing.sku)?.unitCost ?? null) : null,
+        defaultPostage: listing.sku
+          ? (costs.get(listing.sku)?.defaultPostage ?? null)
+          : null,
+      }));
+    } catch {
+      // Listings still load if the cost catalog is unavailable.
+    }
     return NextResponse.json({
       ok: true,
       env: config.env,
       region: config.region,
       marketplaceId: result.marketplaceId,
-      count: result.listings.length,
-      listings: result.listings,
+      count: listings.length,
+      listings,
       fetchedAt: result.fetchedAt,
       cached: result.cached,
     });

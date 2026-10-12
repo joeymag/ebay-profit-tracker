@@ -31,6 +31,7 @@ function snapshotFromRow(row: {
 /** Load unit cost + default postage for listing SKUs from the products catalog. */
 export async function getSkuCostSnapshots(
   skus: Array<string | null | undefined>,
+  options?: { inferPostageFromOrders?: boolean },
 ): Promise<Map<string, SkuCostSnapshot>> {
   const result = new Map<string, SkuCostSnapshot>();
   const unique = [
@@ -77,7 +78,7 @@ export async function getSkuCostSnapshots(
   const missingPostage = unique.filter(
     (sku) => result.get(sku)?.defaultPostage == null,
   );
-  if (!missingPostage.length) {
+  if (!missingPostage.length || options?.inferPostageFromOrders === false) {
     return result;
   }
 

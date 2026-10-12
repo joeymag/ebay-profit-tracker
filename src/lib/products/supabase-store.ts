@@ -69,7 +69,10 @@ async function fetchAllProducts(): Promise<ProductRow[]> {
   return rows;
 }
 
-type ProductCatalogRow = Pick<ProductRow, "sku" | "unit_cost" | "temu_sku">;
+type ProductCatalogRow = Pick<
+  ProductRow,
+  "sku" | "unit_cost" | "default_postage" | "temu_sku"
+>;
 
 async function fetchProductCatalogRows(): Promise<ProductCatalogRow[]> {
   const supabase = createSupabaseAdmin();
@@ -79,7 +82,7 @@ async function fetchProductCatalogRows(): Promise<ProductCatalogRow[]> {
   while (true) {
     const { data, error } = await supabase
       .from("products")
-      .select("sku, unit_cost, temu_sku")
+      .select("sku, unit_cost, default_postage, temu_sku")
       .range(offset, offset + PRODUCTS_PAGE_SIZE - 1);
 
     if (error) {
@@ -165,13 +168,15 @@ export async function getProductsFromSupabase(): Promise<Product[]> {
 }
 
 export async function getProductCatalogFromSupabase(): Promise<
-  { sku: string; unitCost: number | null }[]
+  { sku: string; unitCost: number | null; defaultPostage: number | null; temuSku: string | null }[]
 > {
   const rows = await fetchProductCatalogRows();
 
   return rows.map((row) => ({
     sku: row.sku,
     unitCost: row.unit_cost != null ? Number(row.unit_cost) : null,
+    defaultPostage:
+      row.default_postage != null ? Number(row.default_postage) : null,
     temuSku: row.temu_sku,
   }));
 }

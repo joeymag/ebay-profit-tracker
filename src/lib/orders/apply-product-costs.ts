@@ -5,6 +5,7 @@ import { shippingAddressFromFields } from "@/lib/orders/shipping-address";
 import {
   applyCatalogToOrder,
   applyCatalogToOrders,
+  buildPostageCatalog,
   buildProductCatalog,
 } from "@/lib/products/costs";
 import { fetchAllLineItemsFromSupabase } from "@/lib/orders/fetch-line-items";
@@ -18,7 +19,8 @@ export async function applyProductCostsToOrders(
 ): Promise<StoredOrder[]> {
   const catalogRows = await getProductCatalog();
   const catalog = buildProductCatalog(catalogRows);
-  return applyCatalogToOrders(orders, catalog).map(withComputedFinancials);
+  const postage = buildPostageCatalog(catalogRows);
+  return applyCatalogToOrders(orders, catalog, postage).map(withComputedFinancials);
 }
 
 export async function applyProductCostsToOrder(
@@ -26,7 +28,8 @@ export async function applyProductCostsToOrder(
 ): Promise<StoredOrder> {
   const catalogRows = await getProductCatalog();
   const catalog = buildProductCatalog(catalogRows);
-  return withComputedFinancials(applyCatalogToOrder(order, catalog));
+  const postage = buildPostageCatalog(catalogRows);
+  return withComputedFinancials(applyCatalogToOrder(order, catalog, postage));
 }
 
 /** Persist recalculated product_cost / cost / profit for all orders (Supabase only). */
@@ -73,10 +76,13 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
 
   const catalogRows = await getProductCatalog();
   const catalog = buildProductCatalog(catalogRows);
+  const postage = buildPostageCatalog(catalogRows);
 
   const updates: {
     shopify_id: number;
     product_cost: number | null;
+    shipping_label_cost: number | null;
+    fillPostage: boolean;
     cost: number | null;
     profit: number | null;
   }[] = [];
@@ -155,12 +161,15 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
         })),
       },
       catalog,
+      postage,
     );
 
     const computed = withComputedFinancials(productCost);
     updates.push({
       shopify_id: row.shopify_id,
       product_cost: computed.productCost,
+      shipping_label_cost: computed.shippingLabelCost,
+      fillPostage: row.shipping_label_cost == null && computed.shippingLabelCost != null,
       cost: computed.cost,
       profit: computed.profit,
     });
@@ -172,6 +181,7 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
       const source = orderRows?.find((o) => o.shopify_id === row.shopify_id);
       const updatePayload: {
         product_cost?: number | null;
+        shipping_label_cost?: number | null;
         cost: number | null;
         profit: number | null;
       } = {
@@ -181,6 +191,9 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
 
       if (!source?.product_cost_manual) {
         updatePayload.product_cost = row.product_cost;
+      }
+      if (row.fillPostage) {
+        updatePayload.shipping_label_cost = row.shipping_label_cost;
       }
 
       const { error } = await supabase
