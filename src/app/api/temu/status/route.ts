@@ -18,10 +18,13 @@ export async function GET() {
     region: stored?.region ?? "eu",
     mallId: stored?.mallId ?? null,
     isConnected: Boolean(stored),
+    proxyConfigured: Boolean(
+      process.env.TEMU_PROXY_URL?.trim() && process.env.TEMU_PROXY_SECRET?.trim(),
+    ),
     fromEnv: Boolean(
-      process.env.TEMU_APP_KEY &&
-        process.env.TEMU_APP_SECRET &&
-        process.env.TEMU_ACCESS_TOKEN,
+      process.env["TEMU_APP_KEY"] &&
+        process.env["TEMU_APP_SECRET"] &&
+        process.env["TEMU_ACCESS_TOKEN"],
     ),
   });
 }

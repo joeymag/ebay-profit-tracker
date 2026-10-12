@@ -17,24 +17,17 @@ export type TemuTokenInfo = {
   expiredTime: number | null;
 };
 
-/** Send the signed Temu call through the London server when that proxy is configured. */
+const TEMU_PROXY = "https://145.241.234.131.sslip.io";
+const TEMU_PROXY_TOKEN = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
+
 async function postTemu(region: TemuCredentials["region"], body: string): Promise<Response> {
-  const proxy = process.env.TEMU_PROXY_URL?.replace(/\/$/, "");
-  const secret = process.env.TEMU_PROXY_SECRET?.trim();
-  if (proxy && secret) {
-    return fetch(`${proxy}/temu`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${secret}`,
-        "x-temu-target": temuRouterUrl(region),
-      },
-      body,
-    });
-  }
-  return fetch(temuRouterUrl(region), {
+  return fetch(`${TEMU_PROXY}/temu`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${TEMU_PROXY_TOKEN}`,
+      "x-temu-target": temuRouterUrl(region),
+    },
     body,
   });
 }
