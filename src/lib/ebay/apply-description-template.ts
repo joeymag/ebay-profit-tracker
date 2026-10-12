@@ -1,3 +1,6 @@
+/** How many listings one bulk description request updates. */
+export const DESCRIPTION_TEMPLATE_BATCH_SIZE = 6;
+
 export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
 #ebay-description, #ebay-description * { box-sizing: border-box; }
 #ebay-description { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: #1f2937; line-height: 1.6; background: #f9fafb; padding: 16px 0; font-size: 16px; }

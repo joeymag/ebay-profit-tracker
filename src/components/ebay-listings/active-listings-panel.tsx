@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, Loader2, Percent, Search, Sparkles } from "lucide-react";
+import { Check, ExternalLink, LayoutTemplate, Loader2, Percent, Search, Sparkles } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ActiveEbayListing } from "@/lib/ebay/active-listings";
+import { DESCRIPTION_TEMPLATE_BATCH_SIZE } from "@/lib/ebay/apply-description-template";
 import { applyPricePercentChange } from "@/lib/ebay/price-percent";
 import { activeListingNeedsSku } from "@/lib/ebay/listing-sku-status";
 import { formatMoney } from "@/lib/format";
@@ -64,6 +65,21 @@ type GenerateSkuResponse =
         listingId: string;
         ok: boolean;
         skus?: Array<{ specifics: string; sku: string }>;
+        error?: string;
+      }>;
+    }
+  | { ok: false; error: string };
+
+type BulkDescriptionResponse =
+  | {
+      ok: true;
+      successCount: number;
+      skippedCount: number;
+      failureCount: number;
+      results: Array<{
+        listingId: string;
+        ok: boolean;
+        skipped?: boolean;
         error?: string;
       }>;
     }
@@ -199,6 +215,10 @@ export function ActiveEbayListingsPanel() {
   const [priceUpdating, setPriceUpdating] = useState(false);
   const [priceMessage, setPriceMessage] = useState<string | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
+  const [templateUpdating, setTemplateUpdating] = useState(false);
+  const [templateProgress, setTemplateProgress] = useState<string | null>(null);
+  const [templateMessage, setTemplateMessage] = useState<string | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const [sellingFeePercent, setSellingFeePercent] = useState(
     DEFAULT_SELLING_FEE_PERCENT,
   );
@@ -332,7 +352,11 @@ export function ActiveEbayListingsPanel() {
   );
 
   const bulkBusy =
-    bulkGenerating || generatingKeys.size > 0 || priceUpdating || savingPromoKeys.size > 0;
+    bulkGenerating ||
+    generatingKeys.size > 0 ||
+    priceUpdating ||
+    templateUpdating ||
+    savingPromoKeys.size > 0;
 
   const sellingFeePercentValue =
     parsePercentInput(sellingFeePercent) ??
@@ -730,6 +754,79 @@ export function ActiveEbayListingsPanel() {
     }
   }
 
+  async function applyTemplateToAll() {
+    const listingIds = (data?.listings ?? [])
+      .map((listing) => listing.listingId?.trim() ?? "")
+      .filter(Boolean);
+    if (!listingIds.length) {
+      setTemplateError("No active listings to update.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Apply the description template to all ${listingIds.length} active listings on eBay? Each listing keeps its own product text and photo.`,
+    );
+    if (!confirmed) return;
+
+    setTemplateUpdating(true);
+    setTemplateError(null);
+    setTemplateMessage(null);
+
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    const failureNotes: string[] = [];
+
+    try {
+      for (let index = 0; index < listingIds.length; index += DESCRIPTION_TEMPLATE_BATCH_SIZE) {
+        const batch = listingIds.slice(index, index + DESCRIPTION_TEMPLATE_BATCH_SIZE);
+        setTemplateProgress(
+          `Applying template… ${Math.min(index + batch.length, listingIds.length)} of ${listingIds.length}`,
+        );
+        const response = await fetch("/api/ebay/listings/bulk-description", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ listingIds: batch }),
+        });
+        const payload = (await response.json()) as BulkDescriptionResponse;
+        if (!payload.ok) {
+          failed += batch.length;
+          failureNotes.push(payload.error);
+          continue;
+        }
+        updated += payload.successCount;
+        skipped += payload.skippedCount;
+        failed += payload.failureCount;
+        for (const result of payload.results) {
+          if (!result.ok && result.error && failureNotes.length < 3) {
+            failureNotes.push(`${result.listingId}: ${result.error}`);
+          }
+        }
+      }
+
+      if (updated === 0 && skipped === 0) {
+        setTemplateError(
+          failureNotes.join(" · ") || "Could not update any descriptions.",
+        );
+        return;
+      }
+
+      let message = `Updated ${updated} listing${updated === 1 ? "" : "s"}.`;
+      if (skipped > 0) {
+        message += ` ${skipped} already used this template.`;
+      }
+      if (failed > 0) {
+        message += ` ${failed} failed${failureNotes.length ? `: ${failureNotes.join(" · ")}` : "."}`;
+      }
+      setTemplateMessage(message);
+    } catch {
+      setTemplateError("Could not reach the description template endpoint.");
+    } finally {
+      setTemplateProgress(null);
+      setTemplateUpdating(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -853,6 +950,24 @@ export function ActiveEbayListingsPanel() {
       {priceError ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {priceError}
+        </div>
+      ) : null}
+
+      {templateProgress ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-4 py-3 text-sm">
+          <Loader2 className="size-4 animate-spin" />
+          {templateProgress}
+        </div>
+      ) : null}
+      {templateMessage ? (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <p>{templateMessage}</p>
+        </div>
+      ) : null}
+      {templateError ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {templateError}
         </div>
       ) : null}
 
@@ -995,6 +1110,26 @@ export function ActiveEbayListingsPanel() {
                     {selectedWithListingId.length > 0
                       ? ` (${selectedWithListingId.length})`
                       : ""}
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => void applyTemplateToAll()}
+                disabled={bulkBusy || data.listings.length === 0}
+              >
+                {templateUpdating ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Applying template…
+                  </>
+                ) : (
+                  <>
+                    <LayoutTemplate className="size-4" />
+                    Apply template to all
+                    {data.listings.length > 0 ? ` (${data.listings.length})` : ""}
                   </>
                 )}
               </Button>
@@ -1434,9 +1569,10 @@ export function ActiveEbayListingsPanel() {
         Loads Seller Hub listings via the Trading API and Promoted Listings ad
         rates via the Marketing API (same eBay login as fee sync). Select
         listings and use Apply price to change all variation prices by a
-        percentage, edit promo % to update profit estimates (and push to eBay
-        when promoted), Generate SKU to assign seller SKUs, or click a listing
-        to edit individually.
+        percentage, Apply template to all to put the description template on
+        every active listing, edit promo % to update profit estimates (and push
+        to eBay when promoted), Generate SKU to assign seller SKUs, or click a
+        listing to edit individually.
       </p>
     </div>
   );
