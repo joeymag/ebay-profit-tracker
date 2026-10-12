@@ -55,7 +55,7 @@ export async function markEbayOrderShipped(input: {
           method: "POST",
           body: JSON.stringify({
             lineItems,
-            shippedDate: new Date().toISOString(),
+            shippedDate: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
             shippingCarrierCode: ebayCarrierCode(input.carrier),
             trackingNumber: input.trackingNumber,
           }),

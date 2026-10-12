@@ -7,7 +7,7 @@ import { fulfillShopifyOrderWithTracking } from "@/lib/shopify/fulfill-order";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
-const MAX_ORDERS = 20;
+const MAX_ORDERS = 80;
 
 type DispatchRow = {
   shopify_id: number;
@@ -100,7 +100,8 @@ export async function dispatchShopifyFromEbayPostage(): Promise<{
     )
     .gte("created_at", since)
     .not("ebay_order_id", "is", null)
-    .limit(80);
+    .order("created_at", { ascending: true })
+    .limit(MAX_ORDERS);
 
   if (error || !data) {
     return { fulfilled: 0, errors: [error?.message || "Could not load orders."] };
@@ -151,7 +152,8 @@ export async function pushShopifyTrackingToMarketplaces(): Promise<{
     )
     .gte("created_at", since)
     .eq("fulfillment_status", "fulfilled")
-    .limit(80);
+    .order("created_at", { ascending: true })
+    .limit(MAX_ORDERS);
 
   if (error || !data) {
     return { shipped: 0, errors: [error?.message || "Could not load orders."] };
