@@ -1223,7 +1223,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                     className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                   />
                   <p className="text-xs text-muted-foreground">
-                    {"{{body}}"} is the product text and {"{{image}}"} is the listing photo. The title stays in the eBay title.
+                    {"{{title}}"} is the listing title, {"{{image}}"} is the photo, and {"{{body}}"} is the product text.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
