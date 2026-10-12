@@ -219,6 +219,28 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["amazon_oauth"]["Insert"]>;
         Relationships: [];
       };
+      temu_oauth: {
+        Row: {
+          id: string;
+          app_key: string;
+          app_secret: string;
+          access_token: string;
+          region: string;
+          mall_id: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          app_key: string;
+          app_secret: string;
+          access_token: string;
+          region?: string;
+          mall_id?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["temu_oauth"]["Insert"]>;
+        Relationships: [];
+      };
       amazon_listings_cache: {
         Row: {
           marketplace_id: string;

@@ -4,6 +4,7 @@ import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { DatabaseStatus } from "@/components/settings/database-status";
 import { AutoSyncStatusCard } from "@/components/orders/auto-sync-status-card";
 import { AmazonConnectionCard } from "@/components/settings/amazon-connection-card";
+import { TemuConnectionCard } from "@/components/settings/temu-connection-card";
 import { EbayConnectionCard } from "@/components/settings/ebay-connection-card";
 import { EbayFeesSyncButton } from "@/components/settings/ebay-fees-sync-button";
 import { EbaySigningKeySetup } from "@/components/settings/ebay-signing-key-setup";
@@ -30,7 +31,7 @@ export default async function SettingsPage() {
     <>
       <DashboardHeader
         title="Settings"
-        description="Shopify, eBay, Amazon, SMS, and database"
+        description="Shopify, eBay, Amazon, Temu, SMS, and database"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <Card className="surface-card">
@@ -167,6 +168,19 @@ export default async function SettingsPage() {
           </CardHeader>
           <CardContent>
             <AmazonConnectionCard />
+          </CardContent>
+        </Card>
+
+        <Card className="surface-card">
+          <CardHeader>
+            <CardTitle>Temu Open API</CardTitle>
+            <CardDescription>
+              Paste the app key, app secret, and access token from the Temu
+              Partner Platform. Leave the region on EU for the UK shop.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TemuConnectionCard />
           </CardContent>
         </Card>
 
