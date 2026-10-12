@@ -57,6 +57,24 @@ function countryCode(value: string | null): string | null {
   return /^[A-Z]{2}$/.test(code) ? code : null;
 }
 
+/** Shopify rejects the whole order when the phone is not a valid international number. */
+function shopifyPhone(value: string | null | undefined, country: string | null): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  let digits = raw.replace(/[^\d+]/g, "");
+  if (digits.startsWith("00")) digits = `+${digits.slice(2)}`;
+  if (!digits.startsWith("+") && digits.startsWith("0") && country === "GB") {
+    digits = `+44${digits.slice(1)}`;
+  }
+  if (!digits.startsWith("+") && country === "GB" && digits.startsWith("44")) {
+    digits = `+${digits}`;
+  }
+  if (!digits.startsWith("+")) return null;
+  const national = digits.slice(1);
+  if (!/^\d{8,15}$/.test(national)) return null;
+  return `+${national}`;
+}
+
 async function alreadyInDatabase(sale: MarketplaceSale): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
   const supabase = createSupabaseAdmin();
@@ -145,6 +163,7 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
   const address = sale.address;
   const country = countryCode(address?.countryCode ?? null);
   const { firstName, lastName } = splitName(address?.name ?? null);
+  const phone = shopifyPhone(address?.phone ?? null, country);
   const mailing =
     address?.address1 && address.city && address.zip && country
       ? {
@@ -156,38 +175,18 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
           province: address.province,
           zip: address.zip,
           countryCode: country,
-          phone: address.phone,
+          ...(phone ? { phone } : {}),
         }
       : null;
 
   const attributeName =
     sale.channel === "eBay" ? "eBay Order Id" : "Amazon Order Id";
 
-  const data = await shopifyAdminGraphql<{
-    orderCreate: {
-      userErrors: Array<{ message: string }>;
-      order: { id: string } | null;
-    };
-  }>(
-    `#graphql
-      mutation CreateMarketplaceOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
-        orderCreate(order: $order, options: $options) {
-          userErrors { field message }
-          order { id }
-        }
-      }
-    `,
-    {
-      options: {
-        inventoryBehaviour: "DECREMENT_IGNORING_POLICY",
-        sendReceipt: false,
-        sendFulfillmentReceipt: false,
-      },
-      order: {
+  const orderInput = {
         currency: sale.currency.toUpperCase(),
         processedAt: sale.createdAt,
         ...(sale.email ? { email: sale.email } : {}),
-        ...(address?.phone ? { phone: address.phone } : {}),
+        ...(phone ? { phone } : {}),
         tags: [sale.channel, marketplaceOrderTag(sale.channel, sale.orderId)],
         note: `Imported from ${sale.channel} order ${sale.orderId}`,
         customAttributes: [{ key: attributeName, value: sale.orderId }],
@@ -213,9 +212,52 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
             amountSet: money(total, sale.currency),
           },
         ],
+      };
+
+  const mutation = `#graphql
+      mutation CreateMarketplaceOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+        orderCreate(order: $order, options: $options) {
+          userErrors { field message }
+          order { id }
+        }
+      }
+    `;
+  const options = {
+    inventoryBehaviour: "DECREMENT_IGNORING_POLICY" as const,
+    sendReceipt: false,
+    sendFulfillmentReceipt: false,
+  };
+
+  let data = await shopifyAdminGraphql<{
+    orderCreate: {
+      userErrors: Array<{ message: string }>;
+      order: { id: string } | null;
+    };
+  }>(mutation, { options, order: orderInput });
+
+  if (
+    data.orderCreate.userErrors.some((error) => /phone/i.test(error.message))
+  ) {
+    const { phone: _ignored, shippingAddress, billingAddress, ...rest } = orderInput;
+    const withoutPhone = (address?: { phone?: string | null }) => {
+      if (!address) return undefined;
+      const { phone: _addressPhone, ...fields } = address;
+      return fields;
+    };
+    data = await shopifyAdminGraphql<{
+      orderCreate: {
+        userErrors: Array<{ message: string }>;
+        order: { id: string } | null;
+      };
+    }>(mutation, {
+      options,
+      order: {
+        ...rest,
+        ...(shippingAddress ? { shippingAddress: withoutPhone(shippingAddress) } : {}),
+        ...(billingAddress ? { billingAddress: withoutPhone(billingAddress) } : {}),
       },
-    },
-  );
+    });
+  }
 
   const errors = data.orderCreate.userErrors.map((error) => error.message);
   if (errors.length > 0 || !data.orderCreate.order) {
