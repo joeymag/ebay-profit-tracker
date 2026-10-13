@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getShopifyConfig } from "@/lib/shopify/config";
 import { dispatchAfterShopifyLabel } from "@/lib/orders/sync-dispatch";
 import {
+  getShopifyShippingLabelById,
   getShopifyShippingLabelPurchaseStatus,
   purchaseShopifyShippingLabel,
   syncPostageCostAfterLabelPurchase,
@@ -102,17 +103,26 @@ export async function POST(request: Request, context: RouteContext) {
       );
       postageCost = synced.total;
       latestLabelCost = synced.latest;
-      const tracking = status.labels.find((label) => label.trackingNumber)?.trackingNumber;
+      let label = status.labels.find((item) => item.trackingNumber) ?? status.labels[0];
+      for (let attempt = 0; attempt < 4 && !label?.trackingNumber && label?.id; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        label = await getShopifyShippingLabelById(label.id);
+      }
+      const tracking = label?.trackingNumber?.trim();
       if (tracking) {
         const dispatched = await dispatchAfterShopifyLabel({
           shopifyOrderId: shopifyId,
           trackingNumber: tracking,
-          trackingUrl: status.labels.find((label) => label.trackingNumber === tracking)
-            ?.trackingUrl,
+          trackingUrl: label?.trackingUrl,
         });
         dispatchNote = dispatched.error
-          ? ` Label bought, but dispatch failed: ${dispatched.error}`
-          : " Order marked dispatched.";
+          ? ` Label bought, but eBay was not marked dispatched: ${dispatched.error}`
+          : dispatched.marketplace
+            ? " Order marked dispatched."
+            : " Label bought. eBay was not updated.";
+      } else {
+        dispatchNote =
+          " Label bought. Tracking was not ready, so eBay was not marked yet.";
       }
     }
 

@@ -4,6 +4,7 @@ import { markEbayOrderShipped } from "@/lib/ebay/mark-shipped";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
 import { getStoredOrderByShopifyId } from "@/lib/orders/store";
 import { fulfillShopifyOrderWithTracking } from "@/lib/shopify/fulfill-order";
+import { getShopifyShippingLabelById } from "@/lib/shopify/shipping-label-purchase";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
@@ -16,11 +17,42 @@ type DispatchRow = {
   tracking_numbers: string[] | null;
   tracking_url: string | null;
   shipping_carrier: string | null;
+  shipping_label_gid: string | null;
   fulfillment_status: string | null;
 };
 
 function isFulfilled(status: string | null): boolean {
   return status?.trim().toLowerCase() === "fulfilled";
+}
+
+async function rememberLabelTracking(input: {
+  shopifyOrderId: number;
+  trackingNumber: string;
+  trackingUrl?: string | null;
+  carrier?: string | null;
+}): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  const supabase = createSupabaseAdmin();
+  const { data } = await supabase
+    .from("orders")
+    .select("tracking_numbers, tracking_url, shipping_carrier")
+    .eq("shopify_id", input.shopifyOrderId)
+    .maybeSingle();
+  if (!data) return;
+
+  const existing = (data.tracking_numbers ?? []).filter((number) => number.trim());
+  const trackingNumbers = existing.includes(input.trackingNumber)
+    ? existing
+    : [...existing, input.trackingNumber];
+
+  await supabase
+    .from("orders")
+    .update({
+      tracking_numbers: trackingNumbers,
+      tracking_url: input.trackingUrl || data.tracking_url,
+      shipping_carrier: input.carrier || data.shipping_carrier,
+    })
+    .eq("shopify_id", input.shopifyOrderId);
 }
 
 export async function dispatchAfterShopifyLabel(input: {
@@ -39,12 +71,14 @@ export async function dispatchAfterShopifyLabel(input: {
       notifyCustomer: false,
     });
   } catch (error) {
-    return {
-      shopify: "failed",
-      marketplace: null,
-      error: error instanceof Error ? error.message : "Could not dispatch Shopify.",
-    };
+    shopify = "failed";
+    console.error(
+      "[dispatch] Shopify fulfill failed, still marking the marketplace:",
+      error instanceof Error ? error.message : error,
+    );
   }
+
+  await rememberLabelTracking(input);
 
   const order = await getStoredOrderByShopifyId(input.shopifyOrderId);
   if (!order) {
@@ -148,11 +182,11 @@ export async function pushShopifyTrackingToMarketplaces(): Promise<{
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "shopify_id, ebay_order_id, amazon_order_id, tracking_numbers, tracking_url, shipping_carrier, fulfillment_status",
+      "shopify_id, ebay_order_id, amazon_order_id, tracking_numbers, tracking_url, shipping_carrier, shipping_label_gid, fulfillment_status",
     )
     .gte("created_at", since)
-    .eq("fulfillment_status", "fulfilled")
-    .order("created_at", { ascending: true })
+    .or("fulfillment_status.eq.fulfilled,shipping_label_gid.not.is.null")
+    .order("created_at", { ascending: false })
     .limit(MAX_ORDERS);
 
   if (error || !data) {
@@ -165,7 +199,24 @@ export async function pushShopifyTrackingToMarketplaces(): Promise<{
   const errors: string[] = [];
 
   for (const row of (data as DispatchRow[]).slice(0, MAX_ORDERS)) {
-    const trackingNumber = row.tracking_numbers?.find((number) => number.trim());
+    let trackingNumber = row.tracking_numbers?.find((number) => number.trim());
+    if (!trackingNumber && row.shipping_label_gid) {
+      try {
+        const label = await getShopifyShippingLabelById(row.shipping_label_gid);
+        trackingNumber = label.trackingNumber?.trim() || undefined;
+        if (trackingNumber) {
+          await rememberLabelTracking({
+            shopifyOrderId: row.shopify_id,
+            trackingNumber,
+            trackingUrl: label.trackingUrl,
+          });
+        }
+      } catch (error) {
+        errors.push(
+          error instanceof Error ? error.message : "Could not read the Shopify label.",
+        );
+      }
+    }
     if (!trackingNumber) continue;
     try {
       if (row.ebay_order_id && ebayConnected) {
