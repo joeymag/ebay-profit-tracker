@@ -1,4 +1,4 @@
-import { inflateRawSync } from "node:zlib";
+import { gunzipSync, inflateRawSync } from "node:zlib";
 
 import type { AccountPayment } from "@/lib/accounting/payments";
 import { TemuApiError, temuCall, temuCallValues } from "@/lib/temu/client";
@@ -20,8 +20,38 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function unzip(buffer: Buffer): Map<string, string> {
-  const files = new Map<string, string>();
+function unzip(buffer: Buffer): Map<string, Buffer> {
+  const files = new Map<string, Buffer>();
+  let eocd = -1;
+  for (let index = buffer.length - 22; index >= Math.max(0, buffer.length - 22 - 65536); index -= 1) {
+    if (buffer.readUInt32LE(index) === 0x06054b50) {
+      eocd = index;
+      break;
+    }
+  }
+  if (eocd >= 0) {
+    let offset = buffer.readUInt32LE(eocd + 16);
+    const count = buffer.readUInt16LE(eocd + 10);
+    for (let entry = 0; entry < count && offset + 46 <= buffer.length; entry += 1) {
+      if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+      const method = buffer.readUInt16LE(offset + 10);
+      const compressedSize = buffer.readUInt32LE(offset + 20);
+      const nameLength = buffer.readUInt16LE(offset + 28);
+      const extraLength = buffer.readUInt16LE(offset + 30);
+      const commentLength = buffer.readUInt16LE(offset + 32);
+      const localOffset = buffer.readUInt32LE(offset + 42);
+      const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+      if (localOffset + 30 <= buffer.length) {
+        const localNameLength = buffer.readUInt16LE(localOffset + 26);
+        const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+        const start = localOffset + 30 + localNameLength + localExtraLength;
+        const compressed = buffer.subarray(start, start + compressedSize);
+        files.set(name, method === 8 ? inflateRawSync(compressed) : compressed);
+      }
+      offset += 46 + nameLength + extraLength + commentLength;
+    }
+    if (files.size > 0) return files;
+  }
   let offset = 0;
   while (offset + 30 < buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
     const method = buffer.readUInt16LE(offset + 8);
@@ -31,8 +61,7 @@ function unzip(buffer: Buffer): Map<string, string> {
     const name = buffer.subarray(offset + 30, offset + 30 + nameLength).toString("utf8");
     const start = offset + 30 + nameLength + extraLength;
     const compressed = buffer.subarray(start, start + compressedSize);
-    const data = method === 8 ? inflateRawSync(compressed) : compressed;
-    files.set(name, data.toString("utf8"));
+    files.set(name, method === 8 ? inflateRawSync(compressed) : compressed);
     offset = start + compressedSize;
   }
   return files;
@@ -54,15 +83,14 @@ function columnIndex(cellRef: string): number {
   return index - 1;
 }
 
-function readXlsxRows(buffer: Buffer): string[][] {
-  const files = unzip(buffer);
-  const shared = files.get("xl/sharedStrings.xml") ?? "";
+function readXlsxRows(files: Map<string, Buffer>): string[][] {
+  const shared = files.get("xl/sharedStrings.xml")?.toString("utf8") ?? "";
   const strings = [...shared.matchAll(/<si>([\s\S]*?)<\/si>/g)].map((match) =>
     xmlText(match[1] ?? ""),
   );
   const sheet =
-    files.get("xl/worksheets/sheet1.xml") ??
-    [...files.entries()].find(([name]) => name.startsWith("xl/worksheets/sheet"))?.[1] ??
+    files.get("xl/worksheets/sheet1.xml")?.toString("utf8") ??
+    [...files.entries()].find(([name]) => name.startsWith("xl/worksheets/sheet"))?.[1]?.toString("utf8") ??
     "";
   const rows: string[][] = [];
   for (const row of sheet.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
@@ -81,7 +109,26 @@ function readXlsxRows(buffer: Buffer): string[][] {
   return rows;
 }
 
-function splitCsv(line: string): string[] {
+function decodeText(buffer: Buffer): string {
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString("utf16le");
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    const swapped = Buffer.alloc(buffer.length - 2);
+    for (let index = 2; index + 1 < buffer.length; index += 2) {
+      swapped[index - 2] = buffer[index + 1] ?? 0;
+      swapped[index - 1] = buffer[index] ?? 0;
+    }
+    return swapped.toString("utf16le");
+  }
+  const sample = buffer.subarray(0, Math.min(buffer.length, 200));
+  let zeros = 0;
+  for (const byte of sample) if (byte === 0) zeros += 1;
+  if (sample.length > 0 && zeros > sample.length / 4) return buffer.toString("utf16le");
+  return buffer.toString("utf8");
+}
+
+function splitCsv(line: string, delimiter: string): string[] {
   const cells: string[] = [];
   let current = "";
   let quoted = false;
@@ -96,7 +143,7 @@ function splitCsv(line: string): string[] {
       }
       continue;
     }
-    if (char === "," && !quoted) {
+    if (char === delimiter && !quoted) {
       cells.push(current.trim());
       current = "";
       continue;
@@ -108,28 +155,42 @@ function splitCsv(line: string): string[] {
 }
 
 function readCsvRows(text: string): string[][] {
-  return text
+  const lines = text
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
-    .filter((line) => line.trim())
-    .map(splitCsv);
+    .filter((line) => line.trim());
+  const first = lines[0] ?? "";
+  const commas = first.split(",").length;
+  const semicolons = first.split(";").length;
+  const tabs = first.split("\t").length;
+  const delimiter = tabs >= commas && tabs >= semicolons && tabs > 1 ? "\t" : semicolons > commas ? ";" : ",";
+  return lines.map((line) => splitCsv(line, delimiter));
 }
 
-function readRows(buffer: Buffer, fileName: string): string[][] {
-  const name = fileName.toLowerCase();
-  if (name.endsWith(".xlsx") || (buffer[0] === 0x50 && buffer[1] === 0x4b)) {
-    return readXlsxRows(buffer);
-  }
-  return readCsvRows(buffer.toString("utf8"));
+function readRows(buffer: Buffer, fileName: string): { rows: string[][]; entries: string[] } {
+  let body = buffer;
+  if (body.length >= 2 && body[0] === 0x1f && body[1] === 0x8b) body = gunzipSync(body);
+  const zipped = fileName.toLowerCase().endsWith(".xlsx") || (body[0] === 0x50 && body[1] === 0x4b);
+  if (!zipped) return { rows: readCsvRows(decodeText(body)), entries: [] };
+  const files = unzip(body);
+  const entries = [...files.keys()];
+  const sheetRows = readXlsxRows(files);
+  if (sheetRows.length > 0) return { rows: sheetRows, entries };
+  const csvRows = [...files.entries()]
+    .filter(([name]) => /\.(csv|txt)$/i.test(name))
+    .flatMap(([, data]) => readCsvRows(decodeText(data)));
+  return { rows: csvRows, entries };
 }
 
-function headerIndex(headers: string[], labels: string[]): number {
+function headerIndex(headers: string[], labels: string[], skip = -1): number {
   const normalized = headers.map((header) => header.trim().toLowerCase());
   for (const label of labels) {
-    const exact = normalized.indexOf(label);
+    const exact = normalized.findIndex((header, index) => index !== skip && header === label);
     if (exact >= 0) return exact;
   }
-  return normalized.findIndex((header) => labels.some((label) => header.includes(label)));
+  return normalized.findIndex(
+    (header, index) => index !== skip && labels.some((label) => header.includes(label)),
+  );
 }
 
 function parseMoney(value: string | undefined): number | null {
@@ -158,20 +219,28 @@ function parseDate(value: string): string {
   return new Date(Date.UTC(year, month - 1, day)).toISOString();
 }
 
+function isHeader(row: string[]): boolean {
+  const joined = row.join(" ").toLowerCase();
+  const hasType = /transaction|transaktion|type|交易/.test(joined);
+  const hasOrder = /order|bestell|订单|batch/.test(joined);
+  const hasMoney = /total|amount|charge|fee|收入|金额/.test(joined);
+  const hasDate = /date|time|datum|账务时间/.test(joined);
+  return (hasType && hasOrder) || (hasDate && hasMoney && row.length >= 4);
+}
+
 function paymentsFromRows(rows: string[][]): AccountPayment[] {
-  const headerRow = rows.findIndex((row) => {
-    const joined = row.join(" ").toLowerCase();
-    return joined.includes("transaction") && joined.includes("order");
-  });
+  let headerRow = rows.findIndex(isHeader);
+  if (headerRow < 0 && (rows[0]?.length ?? 0) >= 4) headerRow = 0;
   if (headerRow < 0) return [];
   const headers = rows[headerRow] ?? [];
-  const dateIndex = headerIndex(headers, ["date"]);
-  const typeIndex = headerIndex(headers, ["transaction type"]);
-  const orderIndex = headerIndex(headers, ["order id", "order number"]);
-  const batchIndex = headerIndex(headers, ["batch id"]);
-  const productIndex = headerIndex(headers, ["total product charges", "product charges"]);
-  const othersIndex = headerIndex(headers, ["others"]);
-  const totalIndex = headerIndex(headers, ["total amount", "total"]);
+  const dateIndex = headerIndex(headers, ["date/time", "date", "账务时间", "datum"]);
+  const typeIndex = headerIndex(headers, ["transaction type", "transaktionsart", "交易类型", "type"]);
+  const orderIndex = headerIndex(headers, ["order id", "related order id", "order number", "订单编号", "order"]);
+  const batchIndex = headerIndex(headers, ["batch id", "batch"]);
+  const productIndex = headerIndex(headers, ["total product charges", "product charges", "retail price", "交易收入"]);
+  const othersIndex = headerIndex(headers, ["others", "service fee"]);
+  const totalIndex = headerIndex(headers, ["total amount", "总金额", "total"], productIndex);
+  const currencyIndex = headerIndex(headers, ["currency", "币种"]);
 
   return rows.slice(headerRow + 1).flatMap((row, index) => {
     const type = row[typeIndex]?.trim();
@@ -187,7 +256,7 @@ function paymentsFromRows(rows: string[][]): AccountPayment[] {
         reference: reference && reference !== "-" ? reference : null,
         description: type || "Payment",
         amount,
-        currency: "GBP",
+        currency: row[currencyIndex]?.trim() || "GBP",
         batchId: row[batchIndex]?.trim() && row[batchIndex]?.trim() !== "-" ? row[batchIndex].trim() : null,
         productCharges: parseMoney(row[productIndex]),
         otherAmount: parseMoney(row[othersIndex]),
@@ -238,7 +307,7 @@ async function downloadReport(
   fileName: string,
   credentials: TemuCredentials,
   expiresAt?: number,
-): Promise<AccountPayment[]> {
+): Promise<{ payments: AccountPayment[]; note: string | null }> {
   const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
   const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
   const response = await fetch(`${proxy}/temu-file`, {
@@ -264,7 +333,17 @@ async function downloadReport(
     );
   }
   const buffer = Buffer.from(await response.arrayBuffer());
-  return paymentsFromRows(readRows(buffer, fileName));
+  const parsed = readRows(buffer, fileName);
+  const payments = paymentsFromRows(parsed.rows);
+  if (payments.length > 0) return { payments, note: null };
+  const headers = (parsed.rows.find(isHeader) ?? parsed.rows[0] ?? [])
+    .map((cell) => cell.replace(/[0-9£$€,._-]/g, "").trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  return {
+    payments,
+    note: `${buffer.length} bytes, columns ${parsed.rows[0]?.length ?? 0}, files ${parsed.entries.slice(0, 6).join(", ") || "none"}, headers ${headers.join(" | ") || "none"}.`,
+  };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -419,6 +498,7 @@ export async function listTemuAccountPayments(days = 30): Promise<{
 
   const payments: AccountPayment[] = [];
   let warning: string | null = null;
+  let emptyNote: string | null = null;
 
   for (let attempt = 0; attempt < 12 && pending.length > 0; attempt += 1) {
     if (attempt > 0) await wait(2000);
@@ -435,14 +515,15 @@ export async function listTemuAccountPayments(days = 30): Promise<{
           stillPending.push(job);
           continue;
         }
-        const rows = await downloadReport(
+        const report = await downloadReport(
           task.fileUrl.trim(),
           task.fileName?.trim() || "",
           credentials,
           task.expiresAt,
         );
+        if (report.payments.length === 0 && !emptyNote) emptyNote = report.note;
         payments.push(
-          ...rows.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
+          ...report.payments.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
         );
         continue;
       }
@@ -464,7 +545,7 @@ export async function listTemuAccountPayments(days = 30): Promise<{
     payments,
     warning:
       payments.length === 0
-        ? warning || "The Temu report downloaded, but it had no payment rows."
+        ? warning || emptyNote || "The Temu report downloaded, but it had no payment rows."
         : warning,
   };
 }
