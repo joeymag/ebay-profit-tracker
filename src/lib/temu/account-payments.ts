@@ -12,6 +12,7 @@ type BillTask = {
   fileUrl?: string;
   fileName?: string;
   errorMessage?: string;
+  expiresAt?: number;
   errorCode?: string;
 };
 
@@ -210,6 +211,14 @@ function responseDetail(body: string): string {
   return text.slice(0, 400) || "empty response";
 }
 
+function linkExpiry(expiresAt?: number): string {
+  if (!expiresAt) return "expiry not sent";
+  const ms = expiresAt < 1_000_000_000_000 ? expiresAt * 1000 : expiresAt;
+  const seconds = Math.round((ms - Date.now()) / 1000);
+  const when = new Date(ms).toISOString();
+  return seconds >= 0 ? `expires ${when} (in ${seconds}s)` : `expired ${when} (${-seconds}s ago)`;
+}
+
 function fileAuthHeaders(credentials: TemuCredentials): Record<string, string> {
   const fields: Record<string, string> = {
     app_key: credentials.appKey,
@@ -224,6 +233,7 @@ async function downloadReport(
   fileUrl: string,
   fileName: string,
   credentials: TemuCredentials,
+  expiresAt?: number,
 ): Promise<AccountPayment[]> {
   const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
   const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
@@ -246,7 +256,7 @@ async function downloadReport(
       body: detail,
     });
     throw new Error(
-      `Temu payment report download failed (${response.status}) from ${shape}. ${detail}`,
+      `Temu payment report download failed (${response.status}) from ${shape}. ${linkExpiry(expiresAt)}. ${detail}`,
     );
   }
   const buffer = Buffer.from(await response.arrayBuffer());
@@ -425,6 +435,7 @@ export async function listTemuAccountPayments(days = 30): Promise<{
           task.fileUrl.trim(),
           task.fileName?.trim() || "",
           credentials,
+          task.expiresAt,
         );
         payments.push(
           ...rows.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
