@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { loadMarketplacePayments } from "@/lib/accounting/payment-store";
 import { listEbayAccountPayments } from "@/lib/ebay/account-payments";
 import { EbayApiError } from "@/lib/ebay/client";
 import { getEbayConfig } from "@/lib/ebay/config";
@@ -8,27 +9,23 @@ import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
 
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(request: Request) {
+  const refresh = new URL(request.url).searchParams.get("refresh") === "1";
   const config = getEbayConfig();
-  if (!config.isConfigured) {
-    return NextResponse.json(
-      { ok: false, error: "eBay is not configured." },
-      { status: 400 },
-    );
-  }
-  if (!(await getStoredEbayRefreshToken())) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "eBay is not connected. Authorize in Settings first.",
-      },
-      { status: 400 },
-    );
-  }
 
   try {
-    const payments = await listEbayAccountPayments(30);
-    return NextResponse.json({ ok: true, payments });
+    const result = await loadMarketplacePayments({
+      channel: "ebay",
+      refresh,
+      loadFresh: async () => {
+        if (!config.isConfigured) throw new Error("eBay is not configured.");
+        if (!(await getStoredEbayRefreshToken())) {
+          throw new Error("eBay is not connected. Authorize in Settings first.");
+        }
+        return { payments: await listEbayAccountPayments(30), warning: null };
+      },
+    });
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof EbaySigningKeyMissingError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
@@ -39,6 +36,7 @@ export async function GET() {
         : error instanceof Error
           ? error.message
           : "Could not load eBay payments.";
-    return NextResponse.json({ ok: false, error: message }, { status: 502 });
+    const status = /not connected|not configured/i.test(message) ? 400 : 502;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

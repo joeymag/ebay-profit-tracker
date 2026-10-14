@@ -65,27 +65,33 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refresh = false) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/${channel}/payments`);
+      const response = await fetch(
+        `/api/${channel}/payments${refresh ? "?refresh=1" : ""}`,
+      );
       const payload = (await response.json()) as {
         ok: boolean;
         payments?: AccountPayment[];
         warning?: string | null;
+        syncedAt?: string | null;
         error?: string;
       };
       if (!payload.ok) {
         setPayments([]);
         setWarning(null);
+        setSyncedAt(null);
         setError(payload.error ?? "Could not load payments.");
         return;
       }
       setPayments(payload.payments ?? []);
       setWarning(payload.warning ?? null);
+      setSyncedAt(payload.syncedAt ?? null);
     } catch {
       setPayments([]);
       setError("Could not load payments.");
@@ -95,7 +101,7 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
   }, [channel]);
 
   useEffect(() => {
-    void load();
+    void load(false);
   }, [load]);
 
   const filtered = useMemo(() => {
@@ -122,6 +128,14 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
               {filtered.length > 0
                 ? ` ${filtered.length.toLocaleString("en-GB")} shown · ${formatMoney(total, currency)}`
                 : ""}
+              {syncedAt
+                ? ` Saved ${new Date(syncedAt).toLocaleString("en-GB", {
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}.`
+                : ""}
             </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -135,7 +149,7 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void load()}
+              onClick={() => void load(true)}
               disabled={loading}
             >
               {loading ? (

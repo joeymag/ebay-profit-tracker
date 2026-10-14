@@ -381,6 +381,42 @@ export type Database = {
         >;
         Relationships: [];
       };
+      marketplace_payments: {
+        Row: {
+          channel: string;
+          external_id: string;
+          paid_at: string | null;
+          txn_type: string | null;
+          status: string | null;
+          reference: string | null;
+          description: string | null;
+          batch_id: string | null;
+          product_charges: number | null;
+          other_amount: number | null;
+          amount: number | null;
+          currency: string;
+          synced_at: string;
+        };
+        Insert: {
+          channel: string;
+          external_id: string;
+          paid_at?: string | null;
+          txn_type?: string | null;
+          status?: string | null;
+          reference?: string | null;
+          description?: string | null;
+          batch_id?: string | null;
+          product_charges?: number | null;
+          other_amount?: number | null;
+          amount?: number | null;
+          currency?: string;
+          synced_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["marketplace_payments"]["Insert"]
+        >;
+        Relationships: [];
+      };
       ebay_oauth: {
         Row: {
           id: string;
