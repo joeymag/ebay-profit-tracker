@@ -50,14 +50,6 @@ type EbayBalance = {
   total: EbayFunds;
 };
 
-type TemuBalance = {
-  ok: true;
-  currency: string;
-  available: EbayFunds;
-  onHold: EbayFunds;
-  total: EbayFunds;
-};
-
 type AmazonBalance = {
   ok: true;
   currency: string;
@@ -98,9 +90,6 @@ export function AccountingPanel() {
     null,
   );
   const [amazonBalanceLoading, setAmazonBalanceLoading] = useState(true);
-  const [temuBalance, setTemuBalance] = useState<TemuBalance | null>(null);
-  const [temuBalanceError, setTemuBalanceError] = useState<string | null>(null);
-  const [temuBalanceLoading, setTemuBalanceLoading] = useState(true);
 
   const loadEbayBalance = useCallback(async () => {
     setEbayBalanceLoading(true);
@@ -150,29 +139,6 @@ export function AccountingPanel() {
     }
   }, []);
 
-  const loadTemuBalance = useCallback(async () => {
-    setTemuBalanceLoading(true);
-    setTemuBalanceError(null);
-    try {
-      const response = await fetch("/api/temu/balance");
-      const payload = (await response.json()) as TemuBalance & {
-        ok: boolean;
-        error?: string;
-      };
-      if (!payload.ok) {
-        setTemuBalance(null);
-        setTemuBalanceError(payload.error ?? "Could not load the Temu balance.");
-        return;
-      }
-      setTemuBalance(payload);
-    } catch {
-      setTemuBalance(null);
-      setTemuBalanceError("Could not load the Temu balance.");
-    } finally {
-      setTemuBalanceLoading(false);
-    }
-  }, []);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -181,7 +147,6 @@ export function AccountingPanel() {
         fetch("/api/quickbooks/transactions?days=90"),
         loadEbayBalance(),
         loadAmazonBalance(),
-        loadTemuBalance(),
       ]);
       const statusPayload = (await statusRes.json()) as Status;
       const txnPayload = (await txnRes.json()) as {
@@ -199,7 +164,7 @@ export function AccountingPanel() {
     } finally {
       setLoading(false);
     }
-  }, [loadAmazonBalance, loadEbayBalance, loadTemuBalance]);
+  }, [loadAmazonBalance, loadEbayBalance]);
 
   useEffect(() => {
     void load();
@@ -457,69 +422,12 @@ export function AccountingPanel() {
 
       <Card className="surface-card">
         <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>Temu balance</CardTitle>
-              <CardDescription>
-                Sales proceeds sitting in your Temu seller account right now.
-              </CardDescription>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void loadTemuBalance()}
-              disabled={temuBalanceLoading}
-            >
-              {temuBalanceLoading ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-              Refresh
-            </Button>
-          </div>
+          <CardTitle>Temu balance</CardTitle>
+          <CardDescription>
+            Temu does not publish the seller account balance through its API.
+            Sales proceeds are still saved on each imported order.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          {temuBalanceError ? (
-            <p className="text-sm text-muted-foreground">{temuBalanceError}</p>
-          ) : temuBalance ? (
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div>
-                <p className="text-sm text-muted-foreground">Available</p>
-                <p className="text-2xl font-semibold tabular-nums">
-                  {temuBalance.available.amount != null
-                    ? formatMoney(
-                        temuBalance.available.amount,
-                        temuBalance.available.currency,
-                      )
-                    : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">On hold</p>
-                <p className="text-2xl font-semibold tabular-nums">
-                  {temuBalance.onHold.amount != null
-                    ? formatMoney(
-                        temuBalance.onHold.amount,
-                        temuBalance.onHold.currency,
-                      )
-                    : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total</p>
-                <p className="text-2xl font-semibold tabular-nums">
-                  {temuBalance.total.amount != null
-                    ? formatMoney(temuBalance.total.amount, temuBalance.total.currency)
-                    : "—"}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Loading Temu balance…</p>
-          )}
-        </CardContent>
       </Card>
 
       <Card className="surface-card">

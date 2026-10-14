@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { TemuApiError } from "@/lib/temu/client";
-import { getTemuBalance } from "@/lib/temu/balance";
+import { TEMU_BALANCE_UNAVAILABLE } from "@/lib/temu/balance";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
 export async function GET() {
@@ -17,17 +16,9 @@ export async function GET() {
     );
   }
 
-  try {
-    const summary = await getTemuBalance(credentials);
-    return NextResponse.json({ ok: true, ...summary });
-  } catch (error) {
-    const message =
-      error instanceof TemuApiError
-        ? error.message
-        : error instanceof Error
-          ? error.message
-          : "Could not load the Temu balance.";
-    const status = error instanceof TemuApiError ? 502 : 500;
-    return NextResponse.json({ ok: false, error: message }, { status });
-  }
+  return NextResponse.json({
+    ok: false,
+    code: "UNAVAILABLE",
+    error: TEMU_BALANCE_UNAVAILABLE,
+  });
 }
