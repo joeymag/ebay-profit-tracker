@@ -82,6 +82,9 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
         syncedAt?: string | null;
         error?: string;
       };
+      if (channel === "temu") {
+        console.error("Temu payments response", payload.error ?? payload.warning ?? payload);
+      }
       if (!payload.ok) {
         setPayments([]);
         setWarning(null);

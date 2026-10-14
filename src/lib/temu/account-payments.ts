@@ -277,7 +277,7 @@ function fileShape(fileUrl: string): string {
 
 function responseDetail(body: string): string {
   const text = body.replace(/\s+/g, " ").trim();
-  return text.slice(0, 700) || "empty response";
+  return text.slice(0, 4000) || "empty response";
 }
 
 function linkExpiry(expiresAt?: number): string {
