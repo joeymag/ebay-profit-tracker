@@ -7,4 +7,7 @@ export type AccountPayment = {
   description: string;
   amount: number | null;
   currency: string;
+  batchId?: string | null;
+  productCharges?: number | null;
+  otherAmount?: number | null;
 };

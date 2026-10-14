@@ -38,8 +38,7 @@ const COPY: Record<Channel, { title: string; description: string }> = {
   },
   temu: {
     title: "Temu payments",
-    description:
-      "Recent Temu orders and the sales proceeds on each one, from the last 30 days.",
+    description: "Order payments, refunds, and shipping label purchases from the Temu payments report.",
   },
 };
 
@@ -53,6 +52,11 @@ function formatWhen(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function moneyCell(amount: number | null | undefined, currency: string) {
+  if (amount == null) return "—";
+  return formatMoney(amount, currency);
 }
 
 export function AccountPaymentsTable({ channel }: { channel: Channel }) {
@@ -98,7 +102,7 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
     const needle = query.trim().toLowerCase();
     if (!needle) return payments;
     return payments.filter((payment) =>
-      [payment.type, payment.status, payment.reference, payment.description]
+      [payment.type, payment.status, payment.reference, payment.description, payment.batchId]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle)),
     );
@@ -124,7 +128,7 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search order, type, description"
+              placeholder={channel === "temu" ? "Search order, type, batch" : "Search order, type, description"}
               className="w-64"
             />
             <Button
@@ -155,7 +159,7 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
         ) : loading && payments.length === 0 ? (
           <p className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            Loading payments…
+            {channel === "temu" ? "Loading the Temu payments report…" : "Loading payments…"}
           </p>
         ) : filtered.length === 0 ? (
           <p className="p-6 text-sm text-muted-foreground">
@@ -167,39 +171,96 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Order</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+                  {channel === "temu" ? (
+                    <>
+                      <TableHead>Transaction type</TableHead>
+                      <TableHead>Order ID</TableHead>
+                      <TableHead>Batch ID</TableHead>
+                      <TableHead className="text-right">Total product charges</TableHead>
+                      <TableHead className="text-right">Others</TableHead>
+                      <TableHead className="text-right">Total amount</TableHead>
+                    </>
+                  ) : (
+                    <>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Order</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                    </>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map((payment) => (
                   <TableRow key={payment.id}>
                     <TableCell className="whitespace-nowrap">
-                      {formatWhen(payment.date)}
+                      {channel === "temu"
+                        ? new Date(payment.date).toLocaleDateString("en-GB", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })
+                        : formatWhen(payment.date)}
                     </TableCell>
-                    <TableCell>{payment.status}</TableCell>
-                    <TableCell>{payment.type}</TableCell>
-                    <TableCell className="whitespace-nowrap font-mono text-xs">
-                      {payment.reference ?? "—"}
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate">
-                      {payment.description}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        "text-right tabular-nums",
-                        (payment.amount ?? 0) < 0
-                          ? "text-red-700 dark:text-red-300"
-                          : "text-emerald-700 dark:text-emerald-300",
-                      )}
-                    >
-                      {payment.amount == null
-                        ? "—"
-                        : formatMoney(payment.amount, payment.currency)}
-                    </TableCell>
+                    {channel === "temu" ? (
+                      <>
+                        <TableCell>{payment.type}</TableCell>
+                        <TableCell className="whitespace-nowrap font-mono text-xs">
+                          {payment.reference ?? "—"}
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate font-mono text-xs">
+                          {payment.batchId ?? "—"}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "text-right tabular-nums",
+                            (payment.productCharges ?? 0) < 0 && "text-red-700 dark:text-red-300",
+                          )}
+                        >
+                          {moneyCell(payment.productCharges, payment.currency)}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "text-right tabular-nums",
+                            (payment.otherAmount ?? 0) < 0 && "text-red-700 dark:text-red-300",
+                          )}
+                        >
+                          {moneyCell(payment.otherAmount, payment.currency)}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "text-right tabular-nums",
+                            (payment.amount ?? 0) < 0
+                              ? "text-red-700 dark:text-red-300"
+                              : "text-emerald-700 dark:text-emerald-300",
+                          )}
+                        >
+                          {moneyCell(payment.amount, payment.currency)}
+                        </TableCell>
+                      </>
+                    ) : (
+                      <>
+                        <TableCell>{payment.status}</TableCell>
+                        <TableCell>{payment.type}</TableCell>
+                        <TableCell className="whitespace-nowrap font-mono text-xs">
+                          {payment.reference ?? "—"}
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate">
+                          {payment.description}
+                        </TableCell>
+                        <TableCell
+                          className={cn(
+                            "text-right tabular-nums",
+                            (payment.amount ?? 0) < 0
+                              ? "text-red-700 dark:text-red-300"
+                              : "text-emerald-700 dark:text-emerald-300",
+                          )}
+                        >
+                          {moneyCell(payment.amount, payment.currency)}
+                        </TableCell>
+                      </>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

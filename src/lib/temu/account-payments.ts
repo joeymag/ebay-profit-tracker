@@ -1,152 +1,205 @@
+import { inflateRawSync } from "node:zlib";
+
 import type { AccountPayment } from "@/lib/accounting/payments";
-import { temuCall, temuCallFlat, TemuApiError } from "@/lib/temu/client";
-import type { TemuCredentials } from "@/lib/temu/config";
+import { temuCall } from "@/lib/temu/client";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
-type TemuOrderList = {
-  pageItems?: Array<{
-    parentOrderMap?: {
-      parentOrderSn?: string;
-      parentOrderStatus?: number;
-      parentOrderTime?: number;
-    };
-    orderList?: Array<{ goodsName?: string; originalGoodsName?: string }>;
-  }>;
+type BillTask = {
+  taskId?: string;
+  status?: string;
+  fileUrl?: string;
+  fileName?: string;
+  errorMessage?: string;
+  errorCode?: string;
 };
 
-const STATUS_LABEL: Record<number, string> = {
-  1: "Pending",
-  2: "Unshipped",
-  3: "Cancelled",
-  4: "Shipped",
-  41: "Partially shipped",
-  5: "Delivered",
-  51: "Partially delivered",
-};
-
-const SETTLEMENT_KEYS = [
-  "estimatedSettlementTotal",
-  "estimatedRevenue",
-  "basePriceDiscountedTotal",
-  "basePriceTotal",
-];
-
-type Money = { amount: number; currency: string };
-type AmountStyle = "nested" | "flat";
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function readMoney(value: unknown): Money | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return { amount: Number.isInteger(value) ? value / 100 : value, currency: "GBP" };
+function unzip(buffer: Buffer): Map<string, string> {
+  const files = new Map<string, string>();
+  let offset = 0;
+  while (offset + 30 < buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
+    const method = buffer.readUInt16LE(offset + 8);
+    const compressedSize = buffer.readUInt32LE(offset + 18);
+    const nameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const name = buffer.subarray(offset + 30, offset + 30 + nameLength).toString("utf8");
+    const start = offset + 30 + nameLength + extraLength;
+    const compressed = buffer.subarray(start, start + compressedSize);
+    const data = method === 8 ? inflateRawSync(compressed) : compressed;
+    files.set(name, data.toString("utf8"));
+    offset = start + compressedSize;
   }
-  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
-    const raw = Number(value);
-    return { amount: Number.isInteger(raw) ? raw / 100 : raw, currency: "GBP" };
-  }
-  const record = asRecord(value);
-  if (!record) return null;
-  const nested = record.amount ?? record.value ?? record.price ?? record.centAmount;
-  if (nested && typeof nested === "object") return readMoney(nested);
-  const raw = Number(nested);
-  if (!Number.isFinite(raw)) return null;
-  const currency = String(
-    record.currency ?? record.currencyCode ?? record.currencyType ?? "GBP",
-  ).trim();
-  return {
-    amount: Number.isInteger(raw) ? raw / 100 : raw,
-    currency: currency || "GBP",
-  };
+  return files;
 }
 
-function findSettlement(value: unknown): Money | null {
-  const queue: unknown[] = [value];
-  let zero: Money | null = null;
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current || typeof current !== "object") continue;
-    if (Array.isArray(current)) {
-      queue.push(...current);
+function xmlText(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+}
+
+function columnIndex(cellRef: string): number {
+  const letters = cellRef.replace(/[0-9]/g, "");
+  let index = 0;
+  for (const letter of letters) index = index * 26 + (letter.charCodeAt(0) - 64);
+  return index - 1;
+}
+
+function readXlsxRows(buffer: Buffer): string[][] {
+  const files = unzip(buffer);
+  const shared = files.get("xl/sharedStrings.xml") ?? "";
+  const strings = [...shared.matchAll(/<si>([\s\S]*?)<\/si>/g)].map((match) =>
+    xmlText(match[1] ?? ""),
+  );
+  const sheet =
+    files.get("xl/worksheets/sheet1.xml") ??
+    [...files.entries()].find(([name]) => name.startsWith("xl/worksheets/sheet"))?.[1] ??
+    "";
+  const rows: string[][] = [];
+  for (const row of sheet.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+    const cells: string[] = [];
+    for (const cell of (row[1] ?? "").matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const ref = cell[1]?.match(/\br="([A-Z]+)\d+"/)?.[1] ?? "";
+      const type = cell[1]?.match(/\bt="([^"]+)"/)?.[1] ?? "";
+      const value = cell[2]?.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? "";
+      const index = columnIndex(ref);
+      const text =
+        type === "s" ? (strings[Number(value)] ?? "") : type === "inlineStr" ? xmlText(cell[2] ?? "") : value;
+      cells[index] = text;
+    }
+    rows.push(cells.map((cell) => cell ?? ""));
+  }
+  return rows;
+}
+
+function splitCsv(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
       continue;
     }
-    const record = current as Record<string, unknown>;
-    for (const key of SETTLEMENT_KEYS) {
-      if (!(key in record)) continue;
-      const money = readMoney(record[key]);
-      if (!money) continue;
-      if (money.amount !== 0) return money;
-      zero ??= money;
+    if (char === "," && !quoted) {
+      cells.push(current.trim());
+      current = "";
+      continue;
     }
-    queue.push(...Object.values(record));
+    current += char;
   }
-  return zero;
+  cells.push(current.trim());
+  return cells;
 }
 
-function orderDate(value: number | undefined): string | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  const ms = value > 1_000_000_000_000 ? value : value * 1000;
-  const date = new Date(ms);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+function readCsvRows(text: string): string[][] {
+  return text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map(splitCsv);
 }
 
-async function listOrders(credentials: TemuCredentials, days: number) {
-  const end = Math.floor(Date.now() / 1000);
-  const start = end - days * 24 * 60 * 60;
-  const items: NonNullable<TemuOrderList["pageItems"]> = [];
-  for (let page = 1; page <= 2; page += 1) {
-    const result = await temuCall<TemuOrderList>(credentials, "bg.order.list.v2.get", {
-      updateAtStart: start,
-      updateAtEnd: end,
-      pageNumber: page,
-      pageSize: 50,
-    });
-    const batch = result.pageItems ?? [];
-    items.push(...batch);
-    if (batch.length < 50) break;
+function readRows(buffer: Buffer, fileName: string): string[][] {
+  const name = fileName.toLowerCase();
+  if (name.endsWith(".xlsx") || (buffer[0] === 0x50 && buffer[1] === 0x4b)) {
+    return readXlsxRows(buffer);
   }
-  return items;
+  return readCsvRows(buffer.toString("utf8"));
 }
 
-const AMOUNT_TYPES = ["temu.order.amount.v2.query", "bg.order.amount.query"];
-
-async function queryAmount(
-  credentials: TemuCredentials,
-  type: string,
-  orderId: string,
-  style: AmountStyle,
-): Promise<Money | null> {
-  const result =
-    style === "flat"
-      ? await temuCallFlat<unknown>(credentials, type, { parentOrderSn: orderId })
-      : await temuCall<unknown>(credentials, type, { parentOrderSn: orderId });
-  return findSettlement(result);
-}
-
-async function loadSalesProceeds(
-  credentials: TemuCredentials,
-  orderId: string,
-  chosen: { type: string; style: AmountStyle } | null,
-): Promise<{ money: Money | null; error: string | null; chosen: { type: string; style: AmountStyle } | null }> {
-  const attempts = chosen
-    ? [chosen]
-    : AMOUNT_TYPES.flatMap((type) => [
-        { type, style: "nested" as const },
-        { type, style: "flat" as const },
-      ]);
-
-  let error: string | null = null;
-  for (const attempt of attempts) {
-    try {
-      const money = await queryAmount(credentials, attempt.type, orderId, attempt.style);
-      if (money) return { money, error: null, chosen: attempt };
-    } catch (caught) {
-      error = caught instanceof TemuApiError || caught instanceof Error ? caught.message : "Temu rejected the amount request.";
-    }
+function headerIndex(headers: string[], labels: string[]): number {
+  const normalized = headers.map((header) => header.trim().toLowerCase());
+  for (const label of labels) {
+    const exact = normalized.indexOf(label);
+    if (exact >= 0) return exact;
   }
-  return { money: null, error, chosen };
+  return normalized.findIndex((header) => labels.some((label) => header.includes(label)));
+}
+
+function parseMoney(value: string | undefined): number | null {
+  if (!value?.trim() || value.trim() === "-" || value.trim() === "—") return null;
+  const negative = /^\(.*\)$/.test(value.trim()) || value.includes("-");
+  const amount = Number(value.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(amount)) return null;
+  return negative ? -amount : amount;
+}
+
+function parseDate(value: string): string {
+  const serial = Number(value);
+  if (Number.isFinite(serial) && serial > 20000 && serial < 80000 && !value.includes("/")) {
+    return new Date(Date.UTC(1899, 11, 30) + serial * 86400000).toISOString();
+  }
+  const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) {
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : value;
+  }
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const year = Number(match[3]);
+  const month = second > 12 ? first : first > 12 ? second : first;
+  const day = second > 12 ? second : first > 12 ? first : second;
+  return new Date(Date.UTC(year, month - 1, day)).toISOString();
+}
+
+function paymentsFromRows(rows: string[][]): AccountPayment[] {
+  const headerRow = rows.findIndex((row) => {
+    const joined = row.join(" ").toLowerCase();
+    return joined.includes("transaction") && joined.includes("order");
+  });
+  if (headerRow < 0) return [];
+  const headers = rows[headerRow] ?? [];
+  const dateIndex = headerIndex(headers, ["date"]);
+  const typeIndex = headerIndex(headers, ["transaction type"]);
+  const orderIndex = headerIndex(headers, ["order id", "order number"]);
+  const batchIndex = headerIndex(headers, ["batch id"]);
+  const productIndex = headerIndex(headers, ["total product charges", "product charges"]);
+  const othersIndex = headerIndex(headers, ["others"]);
+  const totalIndex = headerIndex(headers, ["total amount", "total"]);
+
+  return rows.slice(headerRow + 1).flatMap((row, index) => {
+    const type = row[typeIndex]?.trim();
+    const reference = row[orderIndex]?.trim();
+    if (!type && !reference) return [];
+    const amount = parseMoney(row[totalIndex]);
+    return [
+      {
+        id: `${reference || "row"}-${index}`,
+        date: parseDate(row[dateIndex] ?? ""),
+        type: type || "Payment",
+        status: "Posted",
+        reference: reference && reference !== "-" ? reference : null,
+        description: type || "Payment",
+        amount,
+        currency: "GBP",
+        batchId: row[batchIndex]?.trim() && row[batchIndex]?.trim() !== "-" ? row[batchIndex].trim() : null,
+        productCharges: parseMoney(row[productIndex]),
+        otherAmount: parseMoney(row[othersIndex]),
+      },
+    ];
+  });
+}
+
+async function downloadReport(fileUrl: string, fileName: string): Promise<AccountPayment[]> {
+  const response = await fetch(fileUrl);
+  if (!response.ok) {
+    throw new Error(`Temu payment report download failed (${response.status}).`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return paymentsFromRows(readRows(buffer, fileName));
 }
 
 export async function listTemuAccountPayments(days = 30): Promise<{
@@ -156,66 +209,42 @@ export async function listTemuAccountPayments(days = 30): Promise<{
   const credentials = await getStoredTemuCredentials();
   if (!credentials) return { payments: [], warning: null };
 
-  const orders = (await listOrders(credentials, days)).slice(0, 25);
-  const payments: AccountPayment[] = [];
-  let chosen: { type: string; style: AmountStyle } | null = null;
-  let warning: string | null = null;
-
-  for (const item of orders) {
-    const parent = item.parentOrderMap;
-    const orderId = parent?.parentOrderSn?.trim();
-    const date = orderDate(parent?.parentOrderTime);
-    if (!orderId || !date) continue;
-    const status = parent?.parentOrderStatus;
-    const loaded = await loadSalesProceeds(credentials, orderId, chosen);
-    if (loaded.chosen && loaded.money) chosen = loaded.chosen;
-    if (!loaded.money && loaded.error && !warning) warning = loaded.error;
-    const description =
-      item.orderList
-        ?.map((line) => line.goodsName?.trim() || line.originalGoodsName?.trim())
-        .filter(Boolean)
-        .join(", ") || "Temu order";
-    payments.push({
-      id: orderId,
-      date,
-      type: status === 3 ? "Cancelled order" : "Order",
-      status: STATUS_LABEL[status ?? -1] ?? "Order",
-      reference: orderId,
-      description,
-      amount: loaded.money?.amount ?? null,
-      currency: loaded.money?.currency ?? "GBP",
-    });
-    if (!chosen && payments.length >= 2) break;
+  const end = Date.now();
+  const start = end - days * 24 * 60 * 60 * 1000;
+  const created = await temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.create", {
+    fileType: "PAYMENT_REPORT",
+    startTime: start,
+    endTime: end,
+  });
+  const taskId = created.taskId?.trim();
+  if (!taskId) {
+    return { payments: [], warning: "Temu did not start a payment report." };
   }
 
-  if (!chosen && orders.length > payments.length) {
-    for (const item of orders.slice(payments.length)) {
-      const parent = item.parentOrderMap;
-      const orderId = parent?.parentOrderSn?.trim();
-      const date = orderDate(parent?.parentOrderTime);
-      if (!orderId || !date) continue;
-      const status = parent?.parentOrderStatus;
-      payments.push({
-        id: orderId,
-        date,
-        type: status === 3 ? "Cancelled order" : "Order",
-        status: STATUS_LABEL[status ?? -1] ?? "Order",
-        reference: orderId,
-        description:
-          item.orderList
-            ?.map((line) => line.goodsName?.trim() || line.originalGoodsName?.trim())
-            .filter(Boolean)
-            .join(", ") || "Temu order",
-        amount: null,
-        currency: "GBP",
-      });
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (attempt > 0) await wait(2000);
+    const task = await temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.get", {
+      taskId,
+    });
+    if (task.fileUrl?.trim()) {
+      const payments = await downloadReport(task.fileUrl.trim(), task.fileName?.trim() || "");
+      payments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
+      return {
+        payments,
+        warning: payments.length === 0 ? "The Temu report downloaded, but it had no payment rows." : null,
+      };
+    }
+    const status = task.status?.trim() ?? "";
+    if (/fail|error|cancel/i.test(status) || task.errorMessage?.trim()) {
+      return {
+        payments: [],
+        warning: task.errorMessage?.trim() || `Temu payment report ${status || "failed"}.`,
+      };
     }
   }
 
-  payments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
-  const anyAmount = payments.some((payment) => payment.amount != null);
   return {
-    payments,
-    warning: anyAmount ? null : warning,
+    payments: [],
+    warning: "Temu is still preparing the payment report. Refresh in a moment.",
   };
 }
