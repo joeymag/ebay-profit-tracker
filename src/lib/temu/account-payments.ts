@@ -412,6 +412,15 @@ export async function listTemuAccountPayments(days = 30): Promise<{
     for (const job of pending) {
       const task = await readBillTask(credentials, job.taskId, job.style);
       if (task.fileUrl?.trim()) {
+        const status = task.status?.trim() ?? "";
+        if (status && !/success|finish|done|complete/i.test(status)) {
+          if (/fail|error|cancel|time_out|timeout/i.test(status) || task.errorMessage?.trim()) {
+            warning = task.errorMessage?.trim() || `Temu payment report ${status}.`;
+            continue;
+          }
+          stillPending.push(job);
+          continue;
+        }
         const rows = await downloadReport(
           task.fileUrl.trim(),
           task.fileName?.trim() || "",
