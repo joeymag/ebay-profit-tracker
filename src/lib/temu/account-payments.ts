@@ -3,7 +3,7 @@ import { temuCall, TemuApiError } from "@/lib/temu/client";
 import type { TemuCredentials } from "@/lib/temu/config";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
-type TemuMoney = { amount?: number; currency?: string };
+type TemuMoney = { amount?: number | string; currency?: string };
 
 type TemuOrderList = {
   pageItems?: Array<{
@@ -16,13 +16,14 @@ type TemuOrderList = {
   }>;
 };
 
-type TemuAmount = {
+type AmountQuery = {
   parentOrderMap?: {
-    salesProceeds?: {
-      basePriceTotal?: TemuMoney;
-      estimatedSettlementTotal?: TemuMoney;
-    };
+    salesProceeds?: Record<string, TemuMoney | undefined>;
+    estimatedRevenue?: TemuMoney;
+    basePriceTotal?: TemuMoney;
+    shippingAmountTotal?: TemuMoney;
   };
+  orderList?: Array<Record<string, TemuMoney | undefined>>;
 };
 
 const STATUS_LABEL: Record<number, string> = {
@@ -35,10 +36,87 @@ const STATUS_LABEL: Record<number, string> = {
   51: "Partially delivered",
 };
 
-function minorToMajor(money: TemuMoney | undefined): number | null {
+function minorToMajor(money: TemuMoney | undefined): { amount: number; currency: string } | null {
   const raw = Number(money?.amount);
   if (!Number.isFinite(raw)) return null;
-  return Number.isInteger(raw) ? raw / 100 : raw;
+  const currency = money?.currency?.trim() || "GBP";
+  return {
+    amount: Number.isInteger(raw) ? raw / 100 : raw,
+    currency,
+  };
+}
+
+function firstMoney(
+  source: Record<string, TemuMoney | undefined> | undefined,
+  keys: string[],
+): { amount: number; currency: string } | null {
+  if (!source) return null;
+  let zero: { amount: number; currency: string } | null = null;
+  for (const key of keys) {
+    const money = minorToMajor(source[key]);
+    if (!money) continue;
+    if (money.amount !== 0) return money;
+    zero ??= money;
+  }
+  return zero;
+}
+
+function sumLineMoney(
+  lines: Array<Record<string, TemuMoney | undefined>> | undefined,
+  key: string,
+): { amount: number; currency: string } | null {
+  let total = 0;
+  let currency = "GBP";
+  let found = false;
+  for (const line of lines ?? []) {
+    const money = minorToMajor(line[key]);
+    if (!money) continue;
+    found = true;
+    total += money.amount;
+    currency = money.currency;
+  }
+  return found ? { amount: Math.round(total * 100) / 100, currency } : null;
+}
+
+function proceedsFromAmount(priced: AmountQuery): { amount: number; currency: string } | null {
+  const parent = priced.parentOrderMap;
+  const proceeds = parent?.salesProceeds;
+  return (
+    firstMoney(proceeds, ["estimatedSettlementTotal", "basePriceDiscountedTotal", "basePriceTotal"]) ??
+    sumLineMoney(priced.orderList, "estimatedSettlementTotal") ??
+    sumLineMoney(priced.orderList, "basePriceTotal") ??
+    minorToMajor(parent?.estimatedRevenue) ??
+    minorToMajor(parent?.basePriceTotal)
+  );
+}
+
+async function loadSalesProceeds(
+  credentials: TemuCredentials,
+  orderId: string,
+  preferV1: boolean,
+): Promise<{ amount: number; currency: string; usedV1: boolean } | null> {
+  const types = preferV1
+    ? ["bg.order.amount.query"]
+    : ["temu.order.amount.v2.query", "bg.order.amount.query"];
+
+  for (const type of types) {
+    try {
+      const priced = await temuCall<AmountQuery>(credentials, type, {
+        parentOrderSn: orderId,
+      });
+      const money = proceedsFromAmount(priced);
+      if (money) {
+        return { ...money, usedV1: type === "bg.order.amount.query" };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (error instanceof TemuApiError && /not applicable/i.test(message)) {
+        continue;
+      }
+      if (type === types[types.length - 1]) return null;
+    }
+  }
+  return null;
 }
 
 function orderDate(value: number | undefined): string | null {
@@ -72,6 +150,7 @@ export async function listTemuAccountPayments(days = 30): Promise<AccountPayment
 
   const orders = (await listOrders(credentials, days)).slice(0, 40);
   const payments: AccountPayment[] = [];
+  let preferV1 = false;
 
   for (let index = 0; index < orders.length; index += 4) {
     const batch = orders.slice(index, index + 4);
@@ -82,26 +161,8 @@ export async function listTemuAccountPayments(days = 30): Promise<AccountPayment
         const date = orderDate(parent?.parentOrderTime);
         if (!orderId || !date) return null;
         const status = parent?.parentOrderStatus;
-        let amount: number | null = null;
-        let currency = "GBP";
-        if (status !== 3) {
-          try {
-            const priced = await temuCall<TemuAmount>(
-              credentials,
-              "temu.order.amount.v2.query",
-              { parentOrderSn: orderId },
-            );
-            const proceeds = priced.parentOrderMap?.salesProceeds;
-            const settlement = proceeds?.estimatedSettlementTotal;
-            const base = proceeds?.basePriceTotal;
-            amount = minorToMajor(settlement) ?? minorToMajor(base);
-            currency = settlement?.currency?.trim() || base?.currency?.trim() || "GBP";
-          } catch (error) {
-            if (!(error instanceof TemuApiError) || !/not applicable/i.test(error.message)) {
-              amount = null;
-            }
-          }
-        }
+        const proceeds = await loadSalesProceeds(credentials, orderId, preferV1);
+        if (proceeds?.usedV1) preferV1 = true;
         const description =
           item.orderList
             ?.map((line) => line.goodsName?.trim() || line.originalGoodsName?.trim())
@@ -114,8 +175,8 @@ export async function listTemuAccountPayments(days = 30): Promise<AccountPayment
           status: STATUS_LABEL[status ?? -1] ?? "Order",
           reference: orderId,
           description,
-          amount,
-          currency,
+          amount: proceeds?.amount ?? null,
+          currency: proceeds?.currency ?? "GBP",
         } satisfies AccountPayment;
       }),
     );
