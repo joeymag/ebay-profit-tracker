@@ -194,6 +194,19 @@ function paymentsFromRows(rows: string[][]): AccountPayment[] {
   });
 }
 
+function fileHost(fileUrl: string): string {
+  try {
+    return new URL(fileUrl).host;
+  } catch {
+    return "unknown-host";
+  }
+}
+
+function responseDetail(body: string): string {
+  const text = body.replace(/\s+/g, " ").trim();
+  return text.slice(0, 400) || "empty response";
+}
+
 async function downloadReport(fileUrl: string, fileName: string): Promise<AccountPayment[]> {
   const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
   const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
@@ -205,7 +218,18 @@ async function downloadReport(fileUrl: string, fileName: string): Promise<Accoun
     },
   });
   if (!response.ok) {
-    throw new Error(`Temu payment report download failed (${response.status}).`);
+    const detail = responseDetail(await response.text());
+    const host = fileHost(fileUrl);
+    console.error("Temu payment report download failed", {
+      status: response.status,
+      host,
+      fileName,
+      contentType: response.headers.get("content-type"),
+      body: detail,
+    });
+    throw new Error(
+      `Temu payment report download failed (${response.status}) from ${host}. ${detail}`,
+    );
   }
   const buffer = Buffer.from(await response.arrayBuffer());
   return paymentsFromRows(readRows(buffer, fileName));
