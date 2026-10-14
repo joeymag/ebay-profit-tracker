@@ -1,4 +1,4 @@
-import { amazonFetch } from "@/lib/amazon/client";
+import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { AMAZON_MARKETPLACE_UK, getAmazonConfig } from "@/lib/amazon/config";
 
 type CurrencyAmount = {
@@ -21,9 +21,27 @@ type FinancialEventGroupsResponse = {
   };
 };
 
+type DeferredTransaction = {
+  totalAmount?: {
+    currencyCode?: string;
+    currencyAmount?: number;
+  };
+};
+
+type TransactionsResponse = {
+  nextToken?: string;
+  transactions?: DeferredTransaction[];
+  payload?: {
+    nextToken?: string;
+    transactions?: DeferredTransaction[];
+  };
+};
+
 export type AmazonBalanceSummary = {
   currency: string;
   balance: number;
+  deferred: number;
+  total: number;
   payingOut: number;
   lastPayout: number | null;
   lastPayoutDate: string | null;
@@ -68,6 +86,63 @@ function isPaidOut(status: string | undefined): boolean {
   return normalized === "succeeded" || normalized === "successful";
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sumDeferredTransactions(
+  currency: string,
+  marketplaceId: string,
+): Promise<number> {
+  const postedBefore = new Date(Date.now() - 3 * 60 * 1000);
+  const postedAfter = new Date(
+    postedBefore.getTime() - 179 * 24 * 60 * 60 * 1000,
+  );
+  let nextToken: string | undefined;
+  let total = 0;
+
+  for (let page = 0; page < 25; page += 1) {
+    let data: TransactionsResponse;
+    try {
+      data = await amazonFetch<TransactionsResponse>({
+        path: "/finances/2024-06-19/transactions",
+        query: {
+          postedAfter: postedAfter.toISOString(),
+          postedBefore: postedBefore.toISOString(),
+          marketplaceId,
+          transactionStatus: "DEFERRED",
+          nextToken,
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof AmazonApiError) || error.status !== 429) throw error;
+      await wait(2000);
+      data = await amazonFetch<TransactionsResponse>({
+        path: "/finances/2024-06-19/transactions",
+        query: {
+          postedAfter: postedAfter.toISOString(),
+          postedBefore: postedBefore.toISOString(),
+          marketplaceId,
+          transactionStatus: "DEFERRED",
+          nextToken,
+        },
+      });
+    }
+
+    const transactions = data.payload?.transactions ?? data.transactions ?? [];
+    for (const transaction of transactions) {
+      const code = transaction.totalAmount?.currencyCode;
+      const amount = Number(transaction.totalAmount?.currencyAmount);
+      if (code === currency && Number.isFinite(amount)) total += amount;
+    }
+
+    nextToken = data.payload?.nextToken ?? data.nextToken;
+    if (!nextToken) break;
+  }
+
+  return total;
+}
+
 export async function getAmazonBalanceSummary(): Promise<AmazonBalanceSummary> {
   const startedAfter = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
   const groups: FinancialEventGroup[] = [];
@@ -88,6 +163,13 @@ export async function getAmazonBalanceSummary(): Promise<AmazonBalanceSummary> {
   }
 
   const currency = preferredCurrency(groups);
+  const marketplaceId = getAmazonConfig().marketplaceId;
+  let deferred = 0;
+  try {
+    deferred = await sumDeferredTransactions(currency, marketplaceId);
+  } catch {
+    deferred = 0;
+  }
 
   let balance = 0;
   let payingOut = 0;
@@ -118,9 +200,14 @@ export async function getAmazonBalanceSummary(): Promise<AmazonBalanceSummary> {
     }
   }
 
+  const openBalance = roundMoney(balance);
+  const deferredBalance = roundMoney(deferred);
+
   return {
     currency,
-    balance: roundMoney(balance),
+    balance: openBalance,
+    deferred: deferredBalance,
+    total: roundMoney(openBalance + deferredBalance),
     payingOut: roundMoney(payingOut),
     lastPayout,
     lastPayoutDate,

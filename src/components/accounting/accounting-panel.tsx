@@ -54,6 +54,8 @@ type AmazonBalance = {
   ok: true;
   currency: string;
   balance: number;
+  deferred?: number;
+  total?: number;
   payingOut: number;
   lastPayout: number | null;
   lastPayoutDate: string | null;
@@ -355,8 +357,9 @@ export function AccountingPanel() {
             <div>
               <CardTitle>Amazon balance</CardTitle>
               <CardDescription>
-                Open settlement still in your Amazon seller account, plus any
-                payout already on its way to the bank.
+                Total balance still in your Amazon seller account, including
+                deferred transactions, plus any payout already on its way to
+                the bank.
               </CardDescription>
             </div>
             <Button
@@ -381,10 +384,20 @@ export function AccountingPanel() {
           ) : amazonBalance ? (
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <p className="text-sm text-muted-foreground">Current balance</p>
+                <p className="text-sm text-muted-foreground">Total balance</p>
                 <p className="text-2xl font-semibold tabular-nums">
-                  {formatMoney(amazonBalance.balance, amazonBalance.currency)}
+                  {formatMoney(
+                    amazonBalance.total ?? amazonBalance.balance,
+                    amazonBalance.currency,
+                  )}
                 </p>
+                {amazonBalance.deferred ? (
+                  <p className="text-xs text-muted-foreground">
+                    Includes{" "}
+                    {formatMoney(amazonBalance.deferred, amazonBalance.currency)}{" "}
+                    deferred
+                  </p>
+                ) : null}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Paying out</p>
