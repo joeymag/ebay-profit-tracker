@@ -203,6 +203,37 @@ async function downloadReport(fileUrl: string, fileName: string): Promise<Accoun
   return paymentsFromRows(readRows(buffer, fileName));
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function utcMidnight(ms: number): number {
+  const date = new Date(ms);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+/** Closed UTC days, with the current day ending a minute ago so the end is not in the future. */
+function reportRanges(totalDays: number, chunkDays: number): Array<{ start: number; end: number }> {
+  const now = Date.now() - 60_000;
+  const todayStart = utcMidnight(now);
+  const windowStart = todayStart - (totalDays - 1) * DAY_MS;
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let start = windowStart; start <= todayStart; start += chunkDays * DAY_MS) {
+    const chunkLastDay = Math.min(start + (chunkDays - 1) * DAY_MS, todayStart);
+    const end = chunkLastDay === todayStart ? now : chunkLastDay + DAY_MS - 1;
+    if (end > start) ranges.push({ start, end });
+  }
+  return ranges;
+}
+
+function eachUtcDay(start: number, end: number): Array<{ start: number; end: number }> {
+  const now = Date.now() - 60_000;
+  const days: Array<{ start: number; end: number }> = [];
+  for (let day = utcMidnight(start); day <= utcMidnight(end); day += DAY_MS) {
+    const dayEnd = Math.min(day + DAY_MS - 1, now);
+    if (dayEnd > day) days.push({ start: day, end: dayEnd });
+  }
+  return days;
+}
+
 type BillCallStyle = "values" | "nested";
 
 async function createBillTask(
@@ -264,6 +295,52 @@ async function readBillTask(
   return temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.get", { taskId });
 }
 
+async function startReport(
+  credentials: TemuCredentials,
+  start: number,
+  end: number,
+): Promise<{ taskId: string; style: BillCallStyle } | null> {
+  const created = await createBillTask(credentials, start, end);
+  const taskId = created.task.taskId?.trim();
+  return taskId ? { taskId, style: created.style } : null;
+}
+
+async function startPaymentReports(
+  credentials: TemuCredentials,
+  days: number,
+): Promise<Array<{ taskId: string; style: BillCallStyle }>> {
+  const started: Array<{ taskId: string; style: BillCallStyle }> = [];
+  const rejected: Array<{ start: number; end: number }> = [];
+
+  for (const range of reportRanges(days, 7)) {
+    try {
+      const task = await startReport(credentials, range.start, range.end);
+      if (task) started.push(task);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!/invalid date range/i.test(message)) throw error;
+      rejected.push(range);
+    }
+  }
+
+  const dayWindows =
+    started.length === 0 && rejected.length > 0
+      ? eachUtcDay(rejected[rejected.length - 1].start, rejected[rejected.length - 1].end)
+      : rejected.flatMap((range) => eachUtcDay(range.start, range.end));
+
+  for (const range of dayWindows) {
+    try {
+      const task = await startReport(credentials, range.start, range.end);
+      if (task) started.push(task);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!/invalid date range/i.test(message)) throw error;
+    }
+  }
+
+  return started;
+}
+
 export async function listTemuAccountPayments(days = 30): Promise<{
   payments: AccountPayment[];
   warning: string | null;
@@ -271,36 +348,45 @@ export async function listTemuAccountPayments(days = 30): Promise<{
   const credentials = await getStoredTemuCredentials();
   if (!credentials) return { payments: [], warning: null };
 
-  const end = Date.now() - 60_000;
-  const start = end - days * 24 * 60 * 60 * 1000;
-  const created = await createBillTask(credentials, start, end);
-  const taskId = created.task.taskId?.trim();
-  if (!taskId) {
-    return { payments: [], warning: "Temu did not start a payment report." };
+  const pending = await startPaymentReports(credentials, days);
+  if (pending.length === 0) {
+    return { payments: [], warning: "Invalid date range" };
   }
 
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  const payments: AccountPayment[] = [];
+  let warning: string | null = null;
+
+  for (let attempt = 0; attempt < 12 && pending.length > 0; attempt += 1) {
     if (attempt > 0) await wait(2000);
-    const task = await readBillTask(credentials, taskId, created.style);
-    if (task.fileUrl?.trim()) {
-      const payments = await downloadReport(task.fileUrl.trim(), task.fileName?.trim() || "");
-      payments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
-      return {
-        payments,
-        warning: payments.length === 0 ? "The Temu report downloaded, but it had no payment rows." : null,
-      };
+    const stillPending: Array<{ taskId: string; style: BillCallStyle }> = [];
+    for (const job of pending) {
+      const task = await readBillTask(credentials, job.taskId, job.style);
+      if (task.fileUrl?.trim()) {
+        const rows = await downloadReport(task.fileUrl.trim(), task.fileName?.trim() || "");
+        payments.push(
+          ...rows.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
+        );
+        continue;
+      }
+      const status = task.status?.trim() ?? "";
+      if (/fail|error|cancel/i.test(status) || task.errorMessage?.trim()) {
+        warning = task.errorMessage?.trim() || `Temu payment report ${status || "failed"}.`;
+        continue;
+      }
+      stillPending.push(job);
     }
-    const status = task.status?.trim() ?? "";
-    if (/fail|error|cancel/i.test(status) || task.errorMessage?.trim()) {
-      return {
-        payments: [],
-        warning: task.errorMessage?.trim() || `Temu payment report ${status || "failed"}.`,
-      };
-    }
+    pending.splice(0, pending.length, ...stillPending);
   }
 
+  payments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date));
+  if (pending.length > 0) {
+    warning = "Temu is still preparing the payment report. Refresh in a moment.";
+  }
   return {
-    payments: [],
-    warning: "Temu is still preparing the payment report. Refresh in a moment.",
+    payments,
+    warning:
+      payments.length === 0
+        ? warning || "The Temu report downloaded, but it had no payment rows."
+        : warning,
   };
 }
