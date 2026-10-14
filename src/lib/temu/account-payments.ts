@@ -195,7 +195,15 @@ function paymentsFromRows(rows: string[][]): AccountPayment[] {
 }
 
 async function downloadReport(fileUrl: string, fileName: string): Promise<AccountPayment[]> {
-  const response = await fetch(fileUrl);
+  const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
+  const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
+  const response = await fetch(`${proxy}/temu-file`, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-temu-target": fileUrl,
+    },
+  });
   if (!response.ok) {
     throw new Error(`Temu payment report download failed (${response.status}).`);
   }
