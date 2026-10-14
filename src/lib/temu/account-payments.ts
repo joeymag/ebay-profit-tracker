@@ -208,7 +208,7 @@ function fileShape(fileUrl: string): string {
 
 function responseDetail(body: string): string {
   const text = body.replace(/\s+/g, " ").trim();
-  return text.slice(0, 400) || "empty response";
+  return text.slice(0, 700) || "empty response";
 }
 
 function linkExpiry(expiresAt?: number): string {
@@ -226,7 +226,11 @@ function fileAuthHeaders(credentials: TemuCredentials): Record<string, string> {
     data_type: "JSON",
     timestamp: String(Math.floor(Date.now() / 1000)),
   };
-  return { ...fields, sign: signTemuRequest(fields, credentials.appSecret) };
+  return {
+    ...fields,
+    sign: signTemuRequest(fields, credentials.appSecret),
+    ...(credentials.mallId ? { mallid: credentials.mallId } : {}),
+  };
 }
 
 async function downloadReport(
