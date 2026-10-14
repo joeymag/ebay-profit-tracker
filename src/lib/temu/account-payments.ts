@@ -288,18 +288,22 @@ function linkExpiry(expiresAt?: number): string {
   return seconds >= 0 ? `expires ${when} (in ${seconds}s)` : `expired ${when} (${-seconds}s ago)`;
 }
 
-function fileAuthHeaders(credentials: TemuCredentials): Record<string, string> {
+function fileAuthHeaders(credentials: TemuCredentials, fileUrl: string): Record<string, string> {
+  let signOM = "";
+  try {
+    signOM = new URL(fileUrl).searchParams.get("signOM") ?? "";
+  } catch {
+    signOM = "";
+  }
   const fields: Record<string, string> = {
     app_key: credentials.appKey,
     access_token: credentials.accessToken,
     data_type: "JSON",
     timestamp: String(Math.floor(Date.now() / 1000)),
-  };
-  return {
-    ...fields,
-    sign: signTemuRequest(fields, credentials.appSecret),
+    ...(signOM ? { signOM } : {}),
     ...(credentials.mallId ? { mallid: credentials.mallId } : {}),
   };
+  return { ...fields, sign: signTemuRequest(fields, credentials.appSecret) };
 }
 
 async function downloadReport(
@@ -316,7 +320,7 @@ async function downloadReport(
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ url: fileUrl, headerSets: [fileAuthHeaders(credentials)] }),
+    body: JSON.stringify({ url: fileUrl, headerSets: [fileAuthHeaders(credentials, fileUrl)] }),
   });
   if (!response.ok) {
     const detail = responseDetail(await response.text());
