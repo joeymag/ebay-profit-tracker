@@ -194,11 +194,13 @@ function paymentsFromRows(rows: string[][]): AccountPayment[] {
   });
 }
 
-function fileHost(fileUrl: string): string {
+function fileShape(fileUrl: string): string {
   try {
-    return new URL(fileUrl).host;
+    const url = new URL(fileUrl);
+    const keys = [...url.searchParams.keys()];
+    return `${url.host}${url.pathname} params ${keys.join(", ") || "none"}`;
   } catch {
-    return "unknown-host";
+    return "unreadable file url";
   }
 }
 
@@ -211,24 +213,25 @@ async function downloadReport(fileUrl: string, fileName: string): Promise<Accoun
   const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
   const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
   const response = await fetch(`${proxy}/temu-file`, {
-    method: "GET",
+    method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
-      "x-temu-target": fileUrl,
+      "content-type": "application/json",
     },
+    body: JSON.stringify({ url: fileUrl }),
   });
   if (!response.ok) {
     const detail = responseDetail(await response.text());
-    const host = fileHost(fileUrl);
+    const shape = fileShape(fileUrl);
     console.error("Temu payment report download failed", {
       status: response.status,
-      host,
+      shape,
       fileName,
       contentType: response.headers.get("content-type"),
       body: detail,
     });
     throw new Error(
-      `Temu payment report download failed (${response.status}) from ${host}. ${detail}`,
+      `Temu payment report download failed (${response.status}) from ${shape}. ${detail}`,
     );
   }
   const buffer = Buffer.from(await response.arrayBuffer());
