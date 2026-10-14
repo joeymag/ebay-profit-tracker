@@ -1,7 +1,8 @@
 import { inflateRawSync } from "node:zlib";
 
 import type { AccountPayment } from "@/lib/accounting/payments";
-import { temuCall } from "@/lib/temu/client";
+import { TemuApiError, temuCall, temuCallValues } from "@/lib/temu/client";
+import type { TemuCredentials } from "@/lib/temu/config";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
 type BillTask = {
@@ -202,6 +203,67 @@ async function downloadReport(fileUrl: string, fileName: string): Promise<Accoun
   return paymentsFromRows(readRows(buffer, fileName));
 }
 
+type BillCallStyle = "values" | "nested";
+
+async function createBillTask(
+  credentials: TemuCredentials,
+  startMs: number,
+  endMs: number,
+): Promise<{ task: BillTask; style: BillCallStyle }> {
+  const attempts: Array<{ style: BillCallStyle; run: () => Promise<BillTask> }> = [
+    {
+      style: "values",
+      run: () =>
+        temuCallValues<BillTask>(credentials, "temu.finance.mall.bill.task.create", {
+          fileType: "PAYMENT_REPORT",
+          startTime: startMs,
+          endTime: endMs,
+        }),
+    },
+    {
+      style: "nested",
+      run: () =>
+        temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.create", {
+          fileType: "PAYMENT_REPORT",
+          startTime: startMs,
+          endTime: endMs,
+        }),
+    },
+    {
+      style: "values",
+      run: () =>
+        temuCallValues<BillTask>(credentials, "temu.finance.mall.bill.task.create", {
+          fileType: "PAYMENT_REPORT",
+          startTime: Math.floor(startMs / 1000),
+          endTime: Math.floor(endMs / 1000),
+        }),
+    },
+  ];
+
+  let lastError: unknown;
+  for (const attempt of attempts) {
+    try {
+      return { task: await attempt.run(), style: attempt.style };
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : "";
+      if (!/invalid parameter/i.test(message)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new TemuApiError("Temu rejected the request.");
+}
+
+async function readBillTask(
+  credentials: TemuCredentials,
+  taskId: string,
+  style: BillCallStyle,
+): Promise<BillTask> {
+  if (style === "values") {
+    return temuCallValues<BillTask>(credentials, "temu.finance.mall.bill.task.get", { taskId });
+  }
+  return temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.get", { taskId });
+}
+
 export async function listTemuAccountPayments(days = 30): Promise<{
   payments: AccountPayment[];
   warning: string | null;
@@ -209,23 +271,17 @@ export async function listTemuAccountPayments(days = 30): Promise<{
   const credentials = await getStoredTemuCredentials();
   if (!credentials) return { payments: [], warning: null };
 
-  const end = Date.now();
+  const end = Date.now() - 60_000;
   const start = end - days * 24 * 60 * 60 * 1000;
-  const created = await temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.create", {
-    fileType: "PAYMENT_REPORT",
-    startTime: start,
-    endTime: end,
-  });
-  const taskId = created.taskId?.trim();
+  const created = await createBillTask(credentials, start, end);
+  const taskId = created.task.taskId?.trim();
   if (!taskId) {
     return { payments: [], warning: "Temu did not start a payment report." };
   }
 
   for (let attempt = 0; attempt < 12; attempt += 1) {
     if (attempt > 0) await wait(2000);
-    const task = await temuCall<BillTask>(credentials, "temu.finance.mall.bill.task.get", {
-      taskId,
-    });
+    const task = await readBillTask(credentials, taskId, created.style);
     if (task.fileUrl?.trim()) {
       const payments = await downloadReport(task.fileUrl.trim(), task.fileName?.trim() || "");
       payments.sort((left, right) => Date.parse(right.date) - Date.parse(left.date));

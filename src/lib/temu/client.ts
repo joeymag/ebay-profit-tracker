@@ -135,6 +135,45 @@ export async function temuCall<T>(
   });
 }
 
+/** Top-level business fields, with numbers left as JSON numbers. Temu signs the decimal text. */
+export async function temuCallValues<T>(
+  credentials: TemuCredentials,
+  type: string,
+  fields: Record<string, string | number>,
+): Promise<T> {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signedFields: Record<string, string> = {
+    type,
+    app_key: credentials.appKey,
+    access_token: credentials.accessToken,
+    timestamp,
+    data_type: "JSON",
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    signedFields[key] = String(value);
+  }
+  const sign = signTemuRequest(signedFields, credentials.appSecret);
+  const body: Record<string, string | number> = { ...signedFields, ...fields, sign };
+
+  const response = await postTemu(credentials.region, JSON.stringify(body));
+  const text = await response.text();
+  if (!response.ok) {
+    throw new TemuApiError(`Temu request failed (${response.status}).`);
+  }
+  let data: TemuResponse & { result?: T };
+  try {
+    data = JSON.parse(text) as TemuResponse & { result?: T };
+  } catch {
+    throw new TemuApiError("Temu returned a response that was not JSON.");
+  }
+  if (!data.success || data.result == null) {
+    throw new TemuApiError(
+      data.errorMsg || data.error_msg || "Temu rejected the request.",
+    );
+  }
+  return data.result;
+}
+
 /** Same call with business fields as top-level parameters, matching Temu's curl examples. */
 export async function temuCallFlat<T>(
   credentials: TemuCredentials,
