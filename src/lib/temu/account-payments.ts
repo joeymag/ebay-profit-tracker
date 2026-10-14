@@ -3,6 +3,7 @@ import { inflateRawSync } from "node:zlib";
 import type { AccountPayment } from "@/lib/accounting/payments";
 import { TemuApiError, temuCall, temuCallValues } from "@/lib/temu/client";
 import type { TemuCredentials } from "@/lib/temu/config";
+import { signTemuRequest } from "@/lib/temu/sign";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
 type BillTask = {
@@ -209,7 +210,21 @@ function responseDetail(body: string): string {
   return text.slice(0, 400) || "empty response";
 }
 
-async function downloadReport(fileUrl: string, fileName: string): Promise<AccountPayment[]> {
+function fileAuthHeaders(credentials: TemuCredentials): Record<string, string> {
+  const fields: Record<string, string> = {
+    app_key: credentials.appKey,
+    access_token: credentials.accessToken,
+    data_type: "JSON",
+    timestamp: String(Math.floor(Date.now() / 1000)),
+  };
+  return { ...fields, sign: signTemuRequest(fields, credentials.appSecret) };
+}
+
+async function downloadReport(
+  fileUrl: string,
+  fileName: string,
+  credentials: TemuCredentials,
+): Promise<AccountPayment[]> {
   const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
   const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
   const response = await fetch(`${proxy}/temu-file`, {
@@ -218,7 +233,7 @@ async function downloadReport(fileUrl: string, fileName: string): Promise<Accoun
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ url: fileUrl }),
+    body: JSON.stringify({ url: fileUrl, headerSets: [fileAuthHeaders(credentials)] }),
   });
   if (!response.ok) {
     const detail = responseDetail(await response.text());
@@ -397,7 +412,11 @@ export async function listTemuAccountPayments(days = 30): Promise<{
     for (const job of pending) {
       const task = await readBillTask(credentials, job.taskId, job.style);
       if (task.fileUrl?.trim()) {
-        const rows = await downloadReport(task.fileUrl.trim(), task.fileName?.trim() || "");
+        const rows = await downloadReport(
+          task.fileUrl.trim(),
+          task.fileName?.trim() || "",
+          credentials,
+        );
         payments.push(
           ...rows.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
         );
