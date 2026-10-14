@@ -1,4 +1,7 @@
-import { marketplaceOrderTag } from "@/lib/marketplace-orders/types";
+import {
+  marketplaceOrderTag,
+  type MarketplaceChannel,
+} from "@/lib/marketplace-orders/types";
 import { shopifyAdminGraphql } from "@/lib/shopify/graphql";
 
 type ShopifyOrderNode = {
@@ -7,7 +10,7 @@ type ShopifyOrderNode = {
 };
 
 async function findShopifyOrder(
-  channel: "eBay" | "Amazon",
+  channel: MarketplaceChannel,
   orderId: string,
 ): Promise<ShopifyOrderNode | null> {
   const tag = marketplaceOrderTag(channel, orderId).replace(/"/g, '\\"');
@@ -28,7 +31,7 @@ async function findShopifyOrder(
 
 /** Cancel the Shopify copy of a marketplace order and put the stock back. */
 export async function cancelShopifyMarketplaceOrder(
-  channel: "eBay" | "Amazon",
+  channel: MarketplaceChannel,
   orderId: string,
 ): Promise<"cancelled" | "already" | "missing"> {
   const order = await findShopifyOrder(channel, orderId);

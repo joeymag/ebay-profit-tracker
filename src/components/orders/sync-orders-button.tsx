@@ -69,7 +69,7 @@ export function SyncOrdersButton({
 
       const createdNote =
         data.marketplaceCreated && data.marketplaceCreated > 0
-          ? ` Created ${data.marketplaceCreated} Shopify order${data.marketplaceCreated === 1 ? "" : "s"} from eBay or Amazon.`
+          ? ` Created ${data.marketplaceCreated} Shopify order${data.marketplaceCreated === 1 ? "" : "s"} from eBay, Amazon, or Temu.`
           : "";
       const unmatchedNote =
         data.unmatchedSkus && data.unmatchedSkus.length > 0
@@ -77,11 +77,11 @@ export function SyncOrdersButton({
           : "";
       const addressNote =
         data.marketplaceAddressesUpdated && data.marketplaceAddressesUpdated > 0
-          ? ` Added the Amazon address to ${data.marketplaceAddressesUpdated} Shopify order${data.marketplaceAddressesUpdated === 1 ? "" : "s"}.`
+          ? ` Added the shipping address to ${data.marketplaceAddressesUpdated} Shopify order${data.marketplaceAddressesUpdated === 1 ? "" : "s"}.`
           : "";
       const cancelNote =
         data.marketplaceCancelled && data.marketplaceCancelled > 0
-          ? ` Cancelled ${data.marketplaceCancelled} Shopify order${data.marketplaceCancelled === 1 ? "" : "s"} that were cancelled on eBay or Amazon.`
+          ? ` Cancelled ${data.marketplaceCancelled} Shopify order${data.marketplaceCancelled === 1 ? "" : "s"} that were cancelled on eBay, Amazon, or Temu.`
           : "";
       const marketError = data.marketplaceErrors?.[0]
         ? ` ${data.marketplaceErrors[0]}`

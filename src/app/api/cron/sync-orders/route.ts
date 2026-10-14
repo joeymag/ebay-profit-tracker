@@ -33,6 +33,7 @@ async function runAutoSync(): Promise<void> {
       "[cron/sync-orders] marketplace import",
       JSON.stringify({
         created: imported.created,
+        temuCreated: imported.temuCreated,
         skipped: imported.skipped,
         addressesUpdated: imported.addressesUpdated,
         cancelled: imported.cancelled,

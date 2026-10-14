@@ -15,6 +15,12 @@ import {
   marketplaceOrderTag,
   type MarketplaceSale,
 } from "@/lib/marketplace-orders/types";
+import { TemuApiError } from "@/lib/temu/client";
+import {
+  fetchRecentTemuCancelledIds,
+  fetchRecentTemuSales,
+} from "@/lib/temu/recent-orders";
+import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 import { cancelShopifyMarketplaceOrder } from "@/lib/shopify/cancel-marketplace-order";
 import { fillShopifyOrderAddress } from "@/lib/shopify/fill-order-address";
 import { shopifyAdminGraphql } from "@/lib/shopify/graphql";
@@ -26,6 +32,7 @@ export type MarketplaceImportResult = {
   skipped: number;
   ebayCreated: number;
   amazonCreated: number;
+  temuCreated: number;
   unmatchedSkus: string[];
   addressesUpdated: number;
   cancelled: number;
@@ -37,6 +44,7 @@ const EMPTY: MarketplaceImportResult = {
   skipped: 0,
   ebayCreated: 0,
   amazonCreated: 0,
+  temuCreated: 0,
   unmatchedSkus: [],
   addressesUpdated: 0,
   cancelled: 0,
@@ -78,6 +86,17 @@ function shopifyPhone(value: string | null | undefined, country: string | null):
 async function alreadyInDatabase(sale: MarketplaceSale): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
   const supabase = createSupabaseAdmin();
+  if (sale.channel === "Temu") {
+    const tag = marketplaceOrderTag(sale.channel, sale.orderId);
+    const { data, error } = await supabase
+      .from("orders")
+      .select("shopify_id")
+      .ilike("tags", `%${tag}%`)
+      .limit(1);
+    if (error) return false;
+    return Boolean(data && data.length > 0);
+  }
+
   const column = sale.channel === "eBay" ? "ebay_order_id" : "amazon_order_id";
   const ids =
     sale.channel === "eBay" ? ebayOrderIdLookupVariants(sale.orderId) : [sale.orderId];
@@ -151,6 +170,7 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
         : { title: line.title, sku: line.sku }),
       quantity: line.quantity,
       requiresShipping: true,
+      ...(line.properties?.length ? { properties: line.properties } : {}),
       priceSet: money(line.unitPrice, sale.currency),
     });
   }
@@ -180,7 +200,11 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
       : null;
 
   const attributeName =
-    sale.channel === "eBay" ? "eBay Order Id" : "Amazon Order Id";
+    sale.channel === "eBay"
+      ? "eBay Order Id"
+      : sale.channel === "Amazon"
+        ? "Amazon Order Id"
+        : "Temu Order Id";
 
   const orderInput = {
         currency: sale.currency.toUpperCase(),
@@ -291,6 +315,20 @@ export async function importMarketplaceOrders(options?: {
     }
   }
 
+  if (await getStoredTemuCredentials()) {
+    try {
+      sales.push(...(await fetchRecentTemuSales(days)));
+    } catch (error) {
+      const message =
+        error instanceof TemuApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Could not load Temu orders.";
+      result.errors.push(message);
+    }
+  }
+
   if (await getStoredAmazonRefreshToken()) {
     try {
       const amazon = await fetchRecentAmazonSales(days);
@@ -318,7 +356,8 @@ export async function importMarketplaceOrders(options?: {
       const unmatched = await createShopifyOrder(sale);
       result.created += 1;
       if (sale.channel === "eBay") result.ebayCreated += 1;
-      else result.amazonCreated += 1;
+      else if (sale.channel === "Amazon") result.amazonCreated += 1;
+      else result.temuCreated += 1;
       result.unmatchedSkus.push(...unmatched);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Create failed.";
@@ -334,7 +373,7 @@ export async function importMarketplaceOrders(options?: {
 
   let addressFills = 0;
   for (const sale of sales) {
-    if (sale.channel !== "Amazon" || addressFills >= 20) continue;
+    if (sale.channel === "eBay" || addressFills >= 20) continue;
     if (!sale.address?.address1) continue;
     try {
       if (await fillShopifyOrderAddress(sale)) {
@@ -363,6 +402,21 @@ export async function importMarketplaceOrders(options?: {
     }
   }
 
+  if (await getStoredTemuCredentials()) {
+    try {
+      const cancelledIds = await fetchRecentTemuCancelledIds(cancelDays);
+      await cancelImportedOrders("Temu", cancelledIds, result);
+    } catch (error) {
+      const message =
+        error instanceof TemuApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Could not load cancelled Temu orders.";
+      result.errors.push(message);
+    }
+  }
+
   if (await getStoredAmazonRefreshToken()) {
     try {
       const cancelledIds = await fetchRecentAmazonCancelledIds(cancelDays);
@@ -383,7 +437,7 @@ export async function importMarketplaceOrders(options?: {
 }
 
 async function cancelImportedOrders(
-  channel: "eBay" | "Amazon",
+  channel: MarketplaceSale["channel"],
   orderIds: string[],
   result: MarketplaceImportResult,
 ) {

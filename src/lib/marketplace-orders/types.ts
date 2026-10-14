@@ -3,7 +3,10 @@ export type MarketplaceLine = {
   title: string;
   quantity: number;
   unitPrice: number;
+  properties?: Array<{ name: string; value: string }>;
 };
+
+export type MarketplaceChannel = "eBay" | "Amazon" | "Temu";
 
 export type MarketplaceAddress = {
   name: string | null;
@@ -17,15 +20,16 @@ export type MarketplaceAddress = {
 };
 
 export function marketplaceOrderTag(
-  channel: "eBay" | "Amazon",
+  channel: MarketplaceChannel,
   orderId: string,
 ): string {
-  const prefix = channel === "eBay" ? "ebay-order" : "amazon-order";
+  const prefix =
+    channel === "eBay" ? "ebay-order" : channel === "Amazon" ? "amazon-order" : "temu-order";
   return `${prefix}-${orderId}`.slice(0, 40);
 }
 
 export type MarketplaceSale = {
-  channel: "eBay" | "Amazon";
+  channel: MarketplaceChannel;
   orderId: string;
   createdAt: string;
   currency: string;

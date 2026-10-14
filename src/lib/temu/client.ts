@@ -17,7 +17,8 @@ export type TemuTokenInfo = {
   expiredTime: number | null;
 };
 
-const TEMU_PROXY = "https://145.241.234.131.sslip.io";
+const TEMU_PROXY =
+  process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
 const TEMU_PROXY_TOKEN = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
 
 async function postTemu(region: TemuCredentials["region"], body: string): Promise<Response> {
@@ -68,4 +69,62 @@ export async function getTemuAccessTokenInfo(
     mallId: mallId == null || mallId === "" ? null : String(mallId),
     expiredTime: data.result?.expiredTime ?? null,
   };
+}
+
+export class TemuApiError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TemuApiError";
+  }
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      sorted[key] = sortKeys(source[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/** Signed Temu router call. Business fields go in `request`. */
+export async function temuCall<T>(
+  credentials: TemuCredentials,
+  type: string,
+  request: Record<string, unknown>,
+): Promise<T> {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const requestJson = JSON.stringify(sortKeys(request));
+  const params: Record<string, string> = {
+    type,
+    app_key: credentials.appKey,
+    access_token: credentials.accessToken,
+    timestamp,
+    data_type: "JSON",
+    request: requestJson,
+  };
+  params.sign = signTemuRequest(params, credentials.appSecret);
+
+  const response = await postTemu(credentials.region, JSON.stringify(params));
+  const text = await response.text();
+  if (!response.ok) {
+    throw new TemuApiError(`Temu request failed (${response.status}).`);
+  }
+
+  let data: TemuResponse & { result?: T };
+  try {
+    data = JSON.parse(text) as TemuResponse & { result?: T };
+  } catch {
+    throw new TemuApiError("Temu returned a response that was not JSON.");
+  }
+  if (!data.success || data.result == null) {
+    throw new TemuApiError(
+      data.errorMsg || data.error_msg || "Temu rejected the request.",
+    );
+  }
+  return data.result;
 }
