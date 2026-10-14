@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { summarizeMarketplacePush } from "@/lib/inventory/push-marketplace-stock";
 import { refreshConfigStockForSku } from "@/lib/inventory/sync-listing-stock";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import {
@@ -55,6 +56,8 @@ export async function POST(request: Request) {
       locationId: result.locationId,
       available: result.available,
       updatedVariantCount: result.updatedVariantCount,
+      marketplace: result.marketplace,
+      marketplaceSummary: summarizeMarketplacePush(result.marketplace),
       configSync,
     });
   } catch (error) {

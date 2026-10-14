@@ -17,6 +17,10 @@ import {
   type SkuSalesStats,
   type StockSalesInsight,
 } from "@/lib/orders/sku-units-sold";
+import {
+  pushMarketplaceListingQuantity,
+  type MarketplaceQuantityResult,
+} from "@/lib/inventory/push-marketplace-stock";
 
 export type { StockSalesInsight };
 
@@ -514,6 +518,7 @@ export async function updateStockQuantity(input: {
   locationId: number;
   available: number;
   updatedVariantCount: number;
+  marketplace: MarketplaceQuantityResult[];
 }> {
   if (!Number.isFinite(input.available) || input.available < 0) {
     throw new Error("Quantity must be zero or greater.");
@@ -560,11 +565,14 @@ export async function updateStockQuantity(input: {
     throw new Error("Stock updated but could not reload product details.");
   }
 
+  const marketplace = await pushMarketplaceListingQuantity(input.sku.trim(), quantity);
+
   return {
     lookup: refreshed,
     locationId: primaryLocationId,
     available: quantity,
     updatedVariantCount: tracked.length,
+    marketplace,
   };
 }
 

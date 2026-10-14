@@ -24,7 +24,12 @@ type LookupResponse =
   | { ok: false; error: string };
 
 type SetResponse =
-  | { ok: true; item: StockSkuLookup; available: number }
+  | {
+      ok: true;
+      item: StockSkuLookup;
+      available: number;
+      marketplaceSummary?: string;
+    }
   | { ok: false; error: string };
 
 function listingAvailable(listing: StockSkuLookup, locationId: number | null) {
@@ -134,7 +139,12 @@ export function StockControlClient() {
 
       setItem(data.item);
       setQtyInput(String(data.available));
-      setSuccess(`Updated ${item.sku} to ${data.available} in Shopify.`);
+      const marketplaceNote = data.marketplaceSummary
+        ? ` ${data.marketplaceSummary}`
+        : "";
+      setSuccess(
+        `Updated ${item.sku} to ${data.available} in Shopify.${marketplaceNote}`,
+      );
 
       setSkuInput("");
       setItem(null);
@@ -172,7 +182,7 @@ export function StockControlClient() {
           </CardTitle>
           <CardDescription>
             Scan a barcode with your scanner, or type a SKU and press Enter. Stock
-            updates go straight to Shopify inventory.
+            updates Shopify and the eBay and Amazon listing quantity for that SKU.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -413,7 +423,7 @@ export function StockControlClient() {
                     Saving…
                   </>
                 ) : (
-                  "Update Shopify stock"
+                  "Update stock"
                 )}
               </Button>
             </div>
