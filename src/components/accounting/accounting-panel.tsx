@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 
+import { AccountPaymentsTable } from "@/components/accounting/account-payments-table";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -74,6 +75,8 @@ type Transaction = {
   synced_at: string;
 };
 
+type AccountTab = "ebay" | "amazon" | "temu" | "quickbooks";
+
 export function AccountingPanel() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<Status | null>(null);
@@ -92,6 +95,7 @@ export function AccountingPanel() {
     null,
   );
   const [amazonBalanceLoading, setAmazonBalanceLoading] = useState(true);
+  const [account, setAccount] = useState<AccountTab>("ebay");
 
   const loadEbayBalance = useCallback(async () => {
     setEbayBalanceLoading(true);
@@ -270,6 +274,28 @@ export function AccountingPanel() {
         </div>
       ) : null}
 
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ["ebay", "eBay"],
+            ["amazon", "Amazon"],
+            ["temu", "Temu"],
+            ["quickbooks", "QuickBooks"],
+          ] as const
+        ).map(([id, label]) => (
+          <Button
+            key={id}
+            type="button"
+            variant={account === id ? "default" : "outline"}
+            onClick={() => setAccount(id)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+
+      {account === "ebay" ? (
+        <>
       <Card className="surface-card">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -350,7 +376,12 @@ export function AccountingPanel() {
           )}
         </CardContent>
       </Card>
+      <AccountPaymentsTable channel="ebay" />
+        </>
+      ) : null}
 
+      {account === "amazon" ? (
+        <>
       <Card className="surface-card">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -432,7 +463,12 @@ export function AccountingPanel() {
           )}
         </CardContent>
       </Card>
+      <AccountPaymentsTable channel="amazon" />
+        </>
+      ) : null}
 
+      {account === "temu" ? (
+        <>
       <Card className="surface-card">
         <CardHeader>
           <CardTitle>Temu balance</CardTitle>
@@ -442,7 +478,12 @@ export function AccountingPanel() {
           </CardDescription>
         </CardHeader>
       </Card>
+      <AccountPaymentsTable channel="temu" />
+        </>
+      ) : null}
 
+      {account === "quickbooks" ? (
+        <>
       <Card className="surface-card">
         <CardHeader>
           <CardTitle>QuickBooks</CardTitle>
@@ -638,6 +679,8 @@ export function AccountingPanel() {
             </CardContent>
           </Card>
         </>
+      ) : null}
+      </>
       ) : null}
     </div>
   );
