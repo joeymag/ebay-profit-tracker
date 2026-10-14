@@ -18,8 +18,8 @@ export async function GET() {
   }
 
   try {
-    const payments = await listTemuAccountPayments(30);
-    return NextResponse.json({ ok: true, payments });
+    const { payments, warning } = await listTemuAccountPayments(30);
+    return NextResponse.json({ ok: true, payments, warning });
   } catch (error) {
     const message =
       error instanceof TemuApiError

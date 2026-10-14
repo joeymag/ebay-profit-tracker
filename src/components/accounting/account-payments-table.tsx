@@ -60,6 +60,7 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
   const [payments, setPayments] = useState<AccountPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
@@ -70,14 +71,17 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
       const payload = (await response.json()) as {
         ok: boolean;
         payments?: AccountPayment[];
+        warning?: string | null;
         error?: string;
       };
       if (!payload.ok) {
         setPayments([]);
+        setWarning(null);
         setError(payload.error ?? "Could not load payments.");
         return;
       }
       setPayments(payload.payments ?? []);
+      setWarning(payload.warning ?? null);
     } catch {
       setPayments([]);
       setError("Could not load payments.");
@@ -141,6 +145,11 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
+        {warning ? (
+          <p className="border-b border-border/50 px-6 py-3 text-sm text-muted-foreground">
+            {warning}
+          </p>
+        ) : null}
         {error ? (
           <p className="p-6 text-sm text-muted-foreground">{error}</p>
         ) : loading && payments.length === 0 ? (

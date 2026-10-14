@@ -91,22 +91,11 @@ function sortKeys(value: unknown): unknown {
   return value;
 }
 
-/** Signed Temu router call. Business fields go in `request`. */
-export async function temuCall<T>(
+async function signedTemuCall<T>(
   credentials: TemuCredentials,
-  type: string,
-  request: Record<string, unknown>,
+  fields: Record<string, string>,
 ): Promise<T> {
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const requestJson = JSON.stringify(sortKeys(request));
-  const params: Record<string, string> = {
-    type,
-    app_key: credentials.appKey,
-    access_token: credentials.accessToken,
-    timestamp,
-    data_type: "JSON",
-    request: requestJson,
-  };
+  const params = { ...fields };
   params.sign = signTemuRequest(params, credentials.appSecret);
 
   const response = await postTemu(credentials.region, JSON.stringify(params));
@@ -127,4 +116,38 @@ export async function temuCall<T>(
     );
   }
   return data.result;
+}
+
+/** Signed Temu router call. Business fields go in `request`. */
+export async function temuCall<T>(
+  credentials: TemuCredentials,
+  type: string,
+  request: Record<string, unknown>,
+): Promise<T> {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  return signedTemuCall<T>(credentials, {
+    type,
+    app_key: credentials.appKey,
+    access_token: credentials.accessToken,
+    timestamp,
+    data_type: "JSON",
+    request: JSON.stringify(sortKeys(request)),
+  });
+}
+
+/** Same call with business fields as top-level parameters, matching Temu's curl examples. */
+export async function temuCallFlat<T>(
+  credentials: TemuCredentials,
+  type: string,
+  fields: Record<string, string>,
+): Promise<T> {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  return signedTemuCall<T>(credentials, {
+    type,
+    app_key: credentials.appKey,
+    access_token: credentials.accessToken,
+    timestamp,
+    data_type: "JSON",
+    ...fields,
+  });
 }
