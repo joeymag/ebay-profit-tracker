@@ -43,15 +43,17 @@ type TemuShipping = {
 
 type TemuAmount = {
   parentOrderMap?: {
-    customerPaid?: {
-      customerPaidTotal?: TemuMoney;
-      shippingTotalTaxIncl?: TemuMoney;
+    salesProceeds?: {
+      shippingTotalTaxExcl?: TemuMoney;
+      basePriceTotal?: TemuMoney;
+      estimatedSettlementTotal?: TemuMoney;
     };
   };
   orderList?: Array<{
     orderSn?: string;
-    unitRetailPriceTaxIncl?: TemuMoney;
-    retailPriceTotalTaxIncl?: TemuMoney;
+    unitBasePrice?: TemuMoney;
+    basePriceTotal?: TemuMoney;
+    estimatedSettlementTotal?: TemuMoney;
     quantity?: number;
   }>;
 };
@@ -165,10 +167,17 @@ async function toSale(
       const skuId = line.skuId == null ? null : String(line.skuId);
       const resolved = lineSku(extCode, skuId, catalog);
       const priced = amountBySn.get(line.orderSn.trim());
-      const unitFromRetail = minorToMajor(priced?.unitRetailPriceTaxIncl);
-      const total = minorToMajor(priced?.retailPriceTotalTaxIncl);
+      const unitFromBase = minorToMajor(priced?.unitBasePrice);
+      const baseTotal = minorToMajor(priced?.basePriceTotal);
+      const settlement = minorToMajor(priced?.estimatedSettlementTotal);
       const unitPrice =
-        unitFromRetail > 0 ? unitFromRetail : quantity > 0 ? total / quantity : 0;
+        unitFromBase > 0
+          ? unitFromBase
+          : quantity > 0 && baseTotal > 0
+            ? baseTotal / quantity
+            : quantity > 0
+              ? settlement / quantity
+              : 0;
       return {
         sku: resolved.sku,
         title:
@@ -194,10 +203,12 @@ async function toSale(
     shipping.receiptName?.trim() ||
     [first, last].filter(Boolean).join(" ") ||
     null;
+  const proceeds = amount?.parentOrderMap?.salesProceeds;
   const currency =
-    amount?.orderList?.find((line) => line.unitRetailPriceTaxIncl?.currency)
-      ?.unitRetailPriceTaxIncl?.currency ||
-    amount?.parentOrderMap?.customerPaid?.customerPaidTotal?.currency ||
+    amount?.orderList?.find((line) => line.unitBasePrice?.currency)?.unitBasePrice
+      ?.currency ||
+    proceeds?.estimatedSettlementTotal?.currency ||
+    proceeds?.basePriceTotal?.currency ||
     "GBP";
   const createdSeconds = parent?.parentOrderTime;
 
@@ -209,9 +220,7 @@ async function toSale(
       : new Date().toISOString(),
     currency,
     email: shipping.mail?.trim() || null,
-    shipping: parent?.hasShippingFee
-      ? 0
-      : minorToMajor(amount?.parentOrderMap?.customerPaid?.shippingTotalTaxIncl),
+    shipping: minorToMajor(proceeds?.shippingTotalTaxExcl),
     address: shipping.addressLine1
       ? {
           name,
