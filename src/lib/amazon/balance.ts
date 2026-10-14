@@ -1,4 +1,5 @@
 import { amazonFetch } from "@/lib/amazon/client";
+import { AMAZON_MARKETPLACE_UK, getAmazonConfig } from "@/lib/amazon/config";
 
 type CurrencyAmount = {
   CurrencyCode?: string;
@@ -28,10 +29,43 @@ export type AmazonBalanceSummary = {
   lastPayoutDate: string | null;
 };
 
-function amountOf(value: CurrencyAmount | undefined, currency: string): number {
-  if (!value || value.CurrencyCode !== currency) return 0;
+const MARKETPLACE_CURRENCY: Record<string, string> = {
+  [AMAZON_MARKETPLACE_UK]: "GBP",
+  A1PA6795UKMFR9: "EUR",
+  A13V1IB3VIYZZH: "EUR",
+  APJ6JRA9NG5V4: "EUR",
+  A1RKKUPIHCS9HS: "EUR",
+  A1805IZSGTT6HS: "EUR",
+  AMEN7PMS3EDWL: "EUR",
+  A2NODRKZP88ZB5: "SEK",
+  A1C3SOZRARQ6R3: "PLN",
+};
+
+function roundMoney(amount: number): number {
+  return Math.round(amount * 100) / 100;
+}
+
+function amountOf(value: CurrencyAmount | undefined): number | null {
+  if (!value?.CurrencyCode) return null;
   const amount = Number(value.CurrencyAmount);
-  return Number.isFinite(amount) ? amount : 0;
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function preferredCurrency(groups: FinancialEventGroup[]): string {
+  const configured =
+    MARKETPLACE_CURRENCY[getAmazonConfig().marketplaceId] ?? "GBP";
+  const present = new Set(
+    groups
+      .map((group) => group.OriginalTotal?.CurrencyCode)
+      .filter((code): code is string => Boolean(code)),
+  );
+  if (present.has(configured) || present.size === 0) return configured;
+  return [...present][0] ?? configured;
+}
+
+function isPaidOut(status: string | undefined): boolean {
+  const normalized = status?.toLowerCase();
+  return normalized === "succeeded" || normalized === "successful";
 }
 
 export async function getAmazonBalanceSummary(): Promise<AmazonBalanceSummary> {
@@ -53,9 +87,7 @@ export async function getAmazonBalanceSummary(): Promise<AmazonBalanceSummary> {
     if (!nextToken) break;
   }
 
-  const currency =
-    groups.find((group) => group.OriginalTotal?.CurrencyCode)?.OriginalTotal
-      ?.CurrencyCode || "GBP";
+  const currency = preferredCurrency(groups);
 
   let balance = 0;
   let payingOut = 0;
@@ -63,27 +95,33 @@ export async function getAmazonBalanceSummary(): Promise<AmazonBalanceSummary> {
   let lastPayoutDate: string | null = null;
 
   for (const group of groups) {
-    const amount = amountOf(group.OriginalTotal, currency);
+    if (group.OriginalTotal?.CurrencyCode !== currency) continue;
+    const amount = amountOf(group.OriginalTotal);
+    if (amount == null) continue;
+
     if (group.ProcessingStatus === "Open") {
       balance += amount;
     }
     if (group.FundTransferStatus === "Processing") {
       payingOut += amount;
     }
-    if (group.FundTransferStatus === "Succeeded" && group.FundTransferDate) {
-      const current = lastPayoutDate ? Date.parse(lastPayoutDate) : 0;
-      const next = Date.parse(group.FundTransferDate);
-      if (Number.isFinite(next) && next >= current) {
-        lastPayout = amount;
-        lastPayoutDate = group.FundTransferDate;
-      }
+    if (!isPaidOut(group.FundTransferStatus) || !group.FundTransferDate) {
+      continue;
+    }
+    if (amount === 0) continue;
+
+    const current = lastPayoutDate ? Date.parse(lastPayoutDate) : 0;
+    const next = Date.parse(group.FundTransferDate);
+    if (Number.isFinite(next) && next >= current) {
+      lastPayout = roundMoney(amount);
+      lastPayoutDate = group.FundTransferDate;
     }
   }
 
   return {
     currency,
-    balance: Math.round(balance * 100) / 100,
-    payingOut: Math.round(payingOut * 100) / 100,
+    balance: roundMoney(balance),
+    payingOut: roundMoney(payingOut),
     lastPayout,
     lastPayoutDate,
   };
