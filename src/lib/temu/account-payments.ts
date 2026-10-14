@@ -333,6 +333,12 @@ async function downloadReport(
     );
   }
   const buffer = Buffer.from(await response.arrayBuffer());
+  const preview = buffer.subarray(0, 400).toString("utf8").trim();
+  if (preview.startsWith("{") && preview.includes("error_code")) {
+    throw new Error(
+      `Temu payment report download failed from ${fileShape(fileUrl)}. ${linkExpiry(expiresAt)}. ${responseDetail(preview)}`,
+    );
+  }
   const parsed = readRows(buffer, fileName);
   const payments = paymentsFromRows(parsed.rows);
   if (payments.length > 0) return { payments, note: null };
