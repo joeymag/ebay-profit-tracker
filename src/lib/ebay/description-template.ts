@@ -15,7 +15,9 @@ export async function getEbayDescriptionTemplate(): Promise<string> {
     .eq("id", TEMPLATE_ID)
     .maybeSingle();
   if (error || !data?.html?.trim()) return DEFAULT_EBAY_DESCRIPTION_TEMPLATE;
-  return data.html;
+  return data.html
+    .replace(/max-width:\s*1100px/gi, "max-width:none")
+    .replace(/max-width:\s*260px/gi, "max-width:100%");
 }
 
 export async function saveEbayDescriptionTemplate(html: string): Promise<void> {

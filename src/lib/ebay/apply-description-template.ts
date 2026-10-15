@@ -3,19 +3,20 @@ export const DESCRIPTION_TEMPLATE_BATCH_SIZE = 6;
 
 export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
 #ebay-description, #ebay-description * { box-sizing: border-box; }
-#ebay-description { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: #1f2937; line-height: 1.6; background: #f9fafb; padding: 16px 0; font-size: 16px; }
+#ebay-description { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: #1f2937; line-height: 1.6; background: #f9fafb; padding: 0; font-size: 16px; width: 100%; max-width: none; overflow: hidden; }
+#ebay-description img { max-width: 100%; height: auto; }
 #ebay-description a { color: #c2410c; text-decoration: none; }
-#ebay-description .container { width: 100%; max-width: 1100px; margin: 0 auto; padding: 8px 16px; }
-#ebay-description .block { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 24px; margin-bottom: 16px; }
+#ebay-description .container { width: 100%; max-width: none; margin: 0; padding: 0 0 12px; }
+#ebay-description .block { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; padding: 24px; margin-bottom: 16px; overflow: hidden; }
 #ebay-description .brand { background: #111111; border-radius: 20px; border-top: 4px solid #F47A12; padding: 28px 16px 22px; text-align: center; }
 #ebay-description .brand .logo { max-width: 280px; width: 100%; height: auto; display: block; margin: 0 auto 8px; }
 #ebay-description .brand p { margin: 0 0 14px; color: #d9d9d9; }
 #ebay-description h2 { font-size: 28px; line-height: 1.25; font-weight: 700; margin: 0 0 16px; color: #111827; }
-#ebay-description .row { display: flex; flex-wrap: wrap; margin-left: -12px; margin-right: -12px; }
-#ebay-description .span5, #ebay-description .span7, #ebay-description .span4 { padding-left: 12px; padding-right: 12px; min-width: 0; }
-#ebay-description .span5 { flex: 0 0 41.666%; max-width: 41.666%; }
-#ebay-description .span7 { flex: 0 0 58.333%; max-width: 58.333%; }
-#ebay-description .span4 { flex: 0 0 33.333%; max-width: 33.333%; margin-bottom: 12px; }
+#ebay-description .row { display: flex; flex-wrap: wrap; gap: 12px; }
+#ebay-description .span4 { flex: 1 1 200px; min-width: 0; }
+#ebay-description table.layout { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#ebay-description td.photo-col { width: 38%; vertical-align: top; padding: 0 16px 0 0; }
+#ebay-description td.copy-col { width: 62%; vertical-align: top; }
 #ebay-description .photo { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 16px; padding: 12px; }
 #ebay-description .photo img { width: 100%; max-width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 12px; }
 #ebay-description .btn { display: inline-block; margin: 4px; padding: 12px 18px; border-radius: 12px; font-weight: 700; font-size: 15px; text-decoration: none; }
@@ -24,11 +25,15 @@ export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
 #ebay-description .note { background: #f8fafc; border: 1px solid #e5e7eb; border-left: 4px solid #F47A12; border-radius: 12px; padding: 14px 16px; }
 #ebay-description .note strong { display: block; margin-bottom: 4px; color: #111827; }
 #ebay-description .foot { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
-#ebay-description .foot img { max-width: 180px; width: 100%; height: auto; }
+#ebay-description .foot img { max-width: 180px; width: auto; height: auto; }
 #ebay-description .muted { color: #6b7280; font-size: 14px; margin: 0; }
 @media (max-width: 768px) {
-  #ebay-description .span5, #ebay-description .span7, #ebay-description .span4 { flex: 0 0 100%; max-width: 100%; }
-  #ebay-description td.span5, #ebay-description td.span7 { display: block; width: 100% !important; padding: 0 0 12px !important; }
+  #ebay-description table.layout,
+  #ebay-description table.layout tbody,
+  #ebay-description table.layout tr,
+  #ebay-description td.photo-col,
+  #ebay-description td.copy-col { display: block; width: 100% !important; }
+  #ebay-description td.photo-col { padding: 0 0 12px !important; }
   #ebay-description h2 { font-size: 22px; }
   #ebay-description .block { padding: 16px; border-radius: 14px; }
   #ebay-description .foot { justify-content: center; text-align: center; }
@@ -46,9 +51,9 @@ export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
   <div class="container">
     <div class="block">
       <h2>{{title}}</h2>
-      <table role="presentation" style="width:100%;border-collapse:collapse;"><tr>
-        <td class="span5" style="width:42%;vertical-align:top;padding-right:16px;"><div class="photo">{{image}}</div></td>
-        <td class="span7" style="width:58%;vertical-align:top;"><div style="overflow-wrap:anywhere;"><!--ts-body-start-->{{body}}<!--ts-body-end--></div></td>
+      <table class="layout" role="presentation" style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>
+        <td class="photo-col" style="width:38%;vertical-align:top;padding:0 16px 0 0;"><div class="photo">{{image}}</div></td>
+        <td class="copy-col" style="width:62%;vertical-align:top;"><div style="overflow-wrap:anywhere;word-break:break-word;"><!--ts-body-start-->{{body}}<!--ts-body-end--></div></td>
       </tr></table>
     </div>
   </div>
@@ -63,7 +68,7 @@ export const DEFAULT_EBAY_DESCRIPTION_TEMPLATE = `<style>
   </div>
   <div class="container">
     <div class="block foot" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;">
-      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" style="max-width:180px;width:100%;height:auto;display:block;" />
+      <img class="logo" src="https://tstrade.co.uk/cdn/shop/t/3/assets/tstrade-logo.png?v=13904708887491951791788393307" alt="TS Trade" style="max-width:180px;width:auto;height:auto;display:block;" />
       <p class="muted" style="color:#6b7280;font-size:14px;margin:0;">Dispatched from the UK. The same stock is on tstrade.co.uk.</p>
       <div>
         <a class="btn btn-primary" href="https://tstrade.co.uk/collections/all" style="display:inline-block;margin:4px;padding:12px 18px;border-radius:12px;font-weight:700;font-size:15px;text-decoration:none;background:#F47A12;color:#111111;">Shop</a>
@@ -92,7 +97,7 @@ function escapeHtml(value: string): string {
 function imageHtml(imageUrl: string | null | undefined): string {
   const src = imageUrl?.trim();
   if (!src) return "";
-  return `<img src="${escapeHtml(src)}" alt="Product" style="width:100%;max-width:260px;height:auto;display:block;margin:0 auto;border:0;" />`;
+  return `<img src="${escapeHtml(src)}" alt="Product" style="width:100%;max-width:100%;height:auto;display:block;margin:0 auto;border:0;" />`;
 }
 
 const BOILERPLATE = [
@@ -129,16 +134,31 @@ export function cleanDescriptionBody(body: string, title: string): string {
     html = marked[1].trim();
   }
   const wrapped = html.match(
-    /overflow-wrap:anywhere;">([\s\S]*?)<\/div>\s*<\/td>\s*<\/tr>\s*<\/table>/i,
+    /overflow-wrap:anywhere;[^"]*">([\s\S]*?)<\/div>\s*<\/td>\s*<\/tr>\s*<\/table>/i,
   );
   if (wrapped?.[1] && !html.includes("<!--ts-body-start-->")) {
     html = wrapped[1].trim();
   }
 
+  const codisto = html.match(
+    /<!--\s*startcodistodescription\b[^>]*>([\s\S]*?)<!--\s*endcodistodescription\b[^>]*>/i,
+  );
+  if (codisto?.[1]?.trim()) {
+    html = codisto[1].trim();
+  }
+
   html = html
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<img[^>]*tstrade-logo[^>]*>/gi, "")
+    .replace(/<meta\b[^>]*>/gi, "")
+    .replace(/<input\b[^>]*>/gi, "")
+    .replace(/<img[^>]*(?:tstrade-logo|cloudfront\.net|codisto)[^>]*>/gi, "")
+    .replace(/<a\b[^>]*class="[^"]*lightbox[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "")
+    .replace(
+      /<a\b[^>]*>\s*(?:<i\b[^>]*>\s*<\/i>\s*)?Buy now and save!\s*<\/a>/gi,
+      "",
+    )
+    .replace(/<h2[^>]*>\s*(?:Shipping info|You might also like)\s*<\/h2>[\s\S]*$/i, "")
     .replace(/<\/?div[^>]*>/gi, "")
     .replace(tagTolerant("TS Trade — UK seller, dispatched from the UK."), "")
     .replace(tagTolerant("Dispatched from the UK. The same stock is on tstrade.co.uk."), "")
