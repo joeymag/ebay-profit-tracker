@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -45,9 +46,16 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  const user = bearer
+    ? (
+        await createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+          { auth: { persistSession: false, autoRefreshToken: false } },
+        ).auth.getUser(bearer)
+      ).data.user
+    : (await supabase.auth.getUser()).data.user;
 
   const { pathname } = request.nextUrl;
 
