@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Bold,
+  Code,
   Italic,
   Link,
   List,
@@ -38,13 +42,17 @@ export function DescriptionRichTextEditor({
 }: DescriptionRichTextEditorProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const emitted = useRef<string | null>(null);
+  const reloadFrame = useRef(false);
+  const [showHtml, setShowHtml] = useState(false);
 
   useEffect(() => {
     const frame = frameRef.current;
-    if (!frame || emitted.current === value) return;
+    if (!frame || showHtml) return;
+    if (!reloadFrame.current && emitted.current === value) return;
+    reloadFrame.current = false;
     emitted.current = value;
     frame.srcdoc = frameDocument(value);
-  }, [value]);
+  }, [showHtml, value]);
 
   function publish() {
     const html = frameRef.current?.contentDocument?.body.innerHTML ?? "";
@@ -102,11 +110,60 @@ export function DescriptionRichTextEditor({
         <EditorButton label="Redo" disabled={disabled} onClick={() => run("redo")}>
           <Redo2 />
         </EditorButton>
+        <span className="mx-1 w-px self-stretch bg-border" />
+        <EditorButton label="Align left" disabled={disabled || showHtml} onClick={() => run("justifyLeft")}>
+          <AlignLeft />
+        </EditorButton>
+        <EditorButton label="Align center" disabled={disabled || showHtml} onClick={() => run("justifyCenter")}>
+          <AlignCenter />
+        </EditorButton>
+        <EditorButton label="Align right" disabled={disabled || showHtml} onClick={() => run("justifyRight")}>
+          <AlignRight />
+        </EditorButton>
+        <Button
+          type="button"
+          variant={showHtml ? "secondary" : "ghost"}
+          size="sm"
+          className="ml-auto"
+          aria-pressed={showHtml}
+          disabled={disabled}
+          onClick={() => {
+            if (!showHtml) {
+              const html = frameRef.current?.contentDocument?.body.innerHTML;
+              if (html != null) {
+                emitted.current = html;
+                onChange(html);
+              }
+              setShowHtml(true);
+              return;
+            }
+            reloadFrame.current = true;
+            setShowHtml(false);
+          }}
+        >
+          <Code />
+          {showHtml ? "Hide HTML" : "Show HTML"}
+        </Button>
       </div>
+      <textarea
+        aria-label="Description HTML"
+        value={value}
+        disabled={disabled}
+        spellCheck={false}
+        onChange={(event) => {
+          emitted.current = event.target.value;
+          onChange(event.target.value);
+        }}
+        className={
+          showHtml
+            ? "h-[420px] w-full resize-y bg-transparent px-3 py-2 font-mono text-xs outline-none"
+            : "hidden"
+        }
+      />
       <iframe
         title="Description editor"
         ref={frameRef}
-        className="h-[420px] w-full bg-white"
+        className={showHtml ? "hidden" : "h-[420px] w-full bg-white"}
         sandbox="allow-same-origin"
         onLoad={() => {
           const doc = readyFrame();

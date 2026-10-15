@@ -1203,7 +1203,7 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Format the description here. Push to eBay saves it on the listing.
+                  Format the description, center text, or show the HTML. Push to eBay saves it on the listing.
                   {descriptionDirty ? " Unsaved description change." : ""}
                 </p>
                 <div className="space-y-1.5 rounded-lg border border-border/70 bg-muted/20 p-3">
