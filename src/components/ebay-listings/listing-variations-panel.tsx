@@ -29,6 +29,7 @@ import type {
   EbayListingVariation,
   EbayVariationEdit,
 } from "@/lib/ebay/listing-details";
+import { DescriptionRichTextEditor } from "@/components/ebay-listings/description-rich-text-editor";
 import { applyDescriptionTemplate } from "@/lib/ebay/apply-description-template";
 import { variationRowNeedsSku } from "@/lib/ebay/listing-sku-status";
 import {
@@ -1191,20 +1192,18 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
                 >
                   Description
                 </label>
-                <textarea
+                <DescriptionRichTextEditor
                   id="listing-description-draft"
                   value={descriptionDraft}
-                  onChange={(event) => {
-                    setDescriptionDraft(event.target.value);
+                  disabled={saving || savingCosts}
+                  onChange={(html) => {
+                    setDescriptionDraft(html);
                     setSaveMessage(null);
                     setSaveError(null);
                   }}
-                  rows={10}
-                  disabled={saving || savingCosts}
-                  className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 />
                 <p className="text-xs text-muted-foreground">
-                  HTML is allowed. Push to eBay saves this description on the listing.
+                  Format the description here. Push to eBay saves it on the listing.
                   {descriptionDirty ? " Unsaved description change." : ""}
                 </p>
                 <div className="space-y-1.5 rounded-lg border border-border/70 bg-muted/20 p-3">
