@@ -212,7 +212,9 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
         ...(sale.email ? { email: sale.email } : {}),
         ...(phone ? { phone } : {}),
         tags: [sale.channel, marketplaceOrderTag(sale.channel, sale.orderId)],
-        note: `Imported from ${sale.channel} order ${sale.orderId}`,
+        note: `Imported from ${sale.channel} order ${sale.orderId}${
+          sale.channel === "Temu" && total <= 0 ? " Price was not available from Temu." : ""
+        }`,
         customAttributes: [{ key: attributeName, value: sale.orderId }],
         taxesIncluded: true,
         lineItems,
@@ -228,14 +230,18 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
                 },
               ]
             : [],
-        transactions: [
-          {
-            kind: "SALE",
-            status: "SUCCESS",
-            gateway: sale.channel,
-            amountSet: money(total, sale.currency),
-          },
-        ],
+        ...(total > 0
+          ? {
+              transactions: [
+                {
+                  kind: "SALE" as const,
+                  status: "SUCCESS" as const,
+                  gateway: sale.channel,
+                  amountSet: money(total, sale.currency),
+                },
+              ],
+            }
+          : {}),
       };
 
   const mutation = `#graphql
