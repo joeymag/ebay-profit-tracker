@@ -1,7 +1,7 @@
 import type { MarketplaceSale } from "@/lib/marketplace-orders/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { temuCall, TemuApiError } from "@/lib/temu/client";
+import { temuCall, temuCallFlat, temuCallValues, TemuApiError } from "@/lib/temu/client";
 import type { TemuCredentials } from "@/lib/temu/config";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
@@ -113,17 +113,45 @@ function lineSku(
   return { sku: mapped || extCode || skuId, temuSku };
 }
 
+function orderListFields(
+  request: Record<string, unknown>,
+  page: number,
+): Record<string, string | number> {
+  const fields: Record<string, string | number> = {
+    pageNumber: page,
+    pageSize: 50,
+  };
+  for (const [key, value] of Object.entries(request)) {
+    if (typeof value === "number" && Number.isFinite(value)) fields[key] = value;
+    else if (typeof value === "string" && value.trim()) fields[key] = value.trim();
+  }
+  return fields;
+}
+
 async function listOrders(
   credentials: TemuCredentials,
   request: Record<string, unknown>,
 ): Promise<NonNullable<TemuOrderList["pageItems"]>> {
   const items: NonNullable<TemuOrderList["pageItems"]> = [];
   for (let page = 1; page <= 4; page += 1) {
-    const result = await temuCall<TemuOrderList>(credentials, "bg.order.list.v2.get", {
-      ...request,
-      pageNumber: page,
-      pageSize: 50,
-    });
+    const fields = orderListFields(request, page);
+    let result: TemuOrderList;
+    try {
+      result = await temuCallValues<TemuOrderList>(
+        credentials,
+        "bg.order.list.v2.get",
+        fields,
+      );
+    } catch (error) {
+      if (!(error instanceof TemuApiError) || !/invalid param/i.test(error.message)) {
+        throw error;
+      }
+      result = await temuCall<TemuOrderList>(credentials, "bg.order.list.v2.get", {
+        ...request,
+        pageNumber: page,
+        pageSize: 50,
+      });
+    }
     const batch = result.pageItems ?? [];
     items.push(...batch);
     if (batch.length < 50) break;
@@ -142,13 +170,16 @@ async function toSale(
   if (!orderId || status == null || !IMPORT_STATUSES.has(status)) return null;
 
   const [shipping, amount] = await Promise.all([
-    temuCall<TemuShipping>(credentials, "bg.order.shippinginfo.v2.get", {
+    temuCallFlat<TemuShipping>(credentials, "bg.order.shippinginfo.v2.get", {
       parentOrderSn: orderId,
     }),
-    temuCall<TemuAmount>(credentials, "temu.order.amount.v2.query", {
+    temuCallFlat<TemuAmount>(credentials, "temu.order.amount.v2.query", {
       parentOrderSn: orderId,
     }).catch(async (error: unknown) => {
-      if (error instanceof TemuApiError && /not applicable/i.test(error.message)) {
+      if (
+        error instanceof TemuApiError &&
+        /not applicable|don't have this api access|invalid param/i.test(error.message)
+      ) {
         return null;
       }
       throw error;
