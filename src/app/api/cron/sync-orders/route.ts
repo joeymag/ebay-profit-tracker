@@ -3,6 +3,10 @@ import { after, NextResponse } from "next/server";
 import { syncEbayPostageFromApis } from "@/lib/ebay/ebay-postage-enrichment";
 import { saveEbayTrafficHistory } from "@/lib/ebay/save-traffic";
 import {
+  ebayLiveListingsNeedRefresh,
+  syncEbayLiveListings,
+} from "@/lib/ebay/save-live-listings";
+import {
   dispatchShopifyFromEbayPostage,
   pushShopifyTrackingToMarketplaces,
 } from "@/lib/orders/sync-dispatch";
@@ -102,6 +106,15 @@ async function runAutoSync(): Promise<void> {
     console.info("[cron/sync-orders] eBay analytics", JSON.stringify(traffic));
   } catch (error) {
     console.error("[cron/sync-orders] eBay analytics failed:", error);
+  }
+
+  try {
+    if (await ebayLiveListingsNeedRefresh()) {
+      const listings = await syncEbayLiveListings();
+      console.info("[cron/sync-orders] eBay listings", JSON.stringify(listings));
+    }
+  } catch (error) {
+    console.error("[cron/sync-orders] eBay listings failed:", error);
   }
 
   console.info(

@@ -519,6 +519,58 @@ export type Database = {
         >;
         Relationships: [];
       };
+      ebay_live_listings: {
+        Row: {
+          listing_id: string;
+          sku: string;
+          title: string | null;
+          offer_id: string | null;
+          status: string;
+          format: string | null;
+          marketplace_id: string;
+          price: number | null;
+          currency: string | null;
+          quantity: number | null;
+          image_url: string | null;
+          item_web_url: string | null;
+          promo_rate_percent: number | null;
+          promo_ad_status: string | null;
+          promo_campaign_name: string | null;
+          promo_campaign_id: string | null;
+          promo_ad_id: string | null;
+          unit_cost: number | null;
+          default_postage: number | null;
+          transactions_last_30_days: number | null;
+          synced_at: string;
+        };
+        Insert: {
+          listing_id: string;
+          sku: string;
+          title?: string | null;
+          offer_id?: string | null;
+          status: string;
+          format?: string | null;
+          marketplace_id: string;
+          price?: number | null;
+          currency?: string | null;
+          quantity?: number | null;
+          image_url?: string | null;
+          item_web_url?: string | null;
+          promo_rate_percent?: number | null;
+          promo_ad_status?: string | null;
+          promo_campaign_name?: string | null;
+          promo_campaign_id?: string | null;
+          promo_ad_id?: string | null;
+          unit_cost?: number | null;
+          default_postage?: number | null;
+          transactions_last_30_days?: number | null;
+          synced_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ebay_live_listings"]["Insert"]
+        >;
+        Relationships: [];
+      };
       ebay_description_template: {
         Row: {
           id: string;

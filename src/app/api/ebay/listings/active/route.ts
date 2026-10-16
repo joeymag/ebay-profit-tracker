@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { fetchActiveEbayListings } from "@/lib/ebay/active-listings";
+import { persistActiveEbayListings } from "@/lib/ebay/save-live-listings";
 import { getEbayConfig } from "@/lib/ebay/config";
 import { EbayApiError } from "@/lib/ebay/errors";
 import { getStoredEbayRefreshToken } from "@/lib/ebay/token-store";
@@ -31,6 +32,11 @@ export async function GET() {
 
   try {
     const result = await fetchActiveEbayListings();
+    try {
+      await persistActiveEbayListings(result);
+    } catch (saveError) {
+      console.error("[ebay/listings/active] save failed:", saveError);
+    }
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof EbayApiError) {
