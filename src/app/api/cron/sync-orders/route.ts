@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { syncEbayPostageFromApis } from "@/lib/ebay/ebay-postage-enrichment";
+import { saveEbayTrafficHistory } from "@/lib/ebay/save-traffic";
 import {
   dispatchShopifyFromEbayPostage,
   pushShopifyTrackingToMarketplaces,
@@ -94,6 +95,13 @@ async function runAutoSync(): Promise<void> {
     );
   } catch (error) {
     console.error("[cron/sync-orders] marketplace dispatch failed:", error);
+  }
+
+  try {
+    const traffic = await saveEbayTrafficHistory();
+    console.info("[cron/sync-orders] eBay analytics", JSON.stringify(traffic));
+  } catch (error) {
+    console.error("[cron/sync-orders] eBay analytics failed:", error);
   }
 
   console.info(

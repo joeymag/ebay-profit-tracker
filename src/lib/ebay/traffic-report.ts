@@ -166,10 +166,20 @@ function parseListingTrafficRows(
 
 export async function fetchListingTrafficReport(options?: {
   range?: string;
+  startYmd?: string;
+  endYmd?: string;
 }): Promise<ListingTrafficReport> {
   const range = parseDateRange(options?.range);
   const { marketplaceId } = getEbayConfig();
-  const { startYmd, endYmd, rangeLabel } = resolveAnalyticsDateBounds(range);
+  const bounds =
+    options?.startYmd && options?.endYmd
+      ? {
+          startYmd: options.startYmd,
+          endYmd: options.endYmd,
+          rangeLabel: `${options.startYmd} to ${options.endYmd}`,
+        }
+      : resolveAnalyticsDateBounds(range);
+  const { startYmd, endYmd, rangeLabel } = bounds;
   const filter = encodeURIComponent(
     `marketplace_ids:{${marketplaceId}},date_range:${formatAnalyticsDateRange(startYmd, endYmd)}`,
   );

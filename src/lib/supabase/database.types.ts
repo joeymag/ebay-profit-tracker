@@ -469,6 +469,56 @@ export type Database = {
         >;
         Relationships: [];
       };
+      ebay_listing_traffic_days: {
+        Row: {
+          listing_id: string;
+          metric_date: string;
+          marketplace_id: string;
+          title: string | null;
+          search_impressions: number | null;
+          total_impressions: number | null;
+          all_impressions: number | null;
+          views: number | null;
+          click_through_rate: number | null;
+          transactions: number | null;
+          sales_conversion_rate: number | null;
+          fetched_at: string;
+        };
+        Insert: {
+          listing_id: string;
+          metric_date: string;
+          marketplace_id: string;
+          title?: string | null;
+          search_impressions?: number | null;
+          total_impressions?: number | null;
+          all_impressions?: number | null;
+          views?: number | null;
+          click_through_rate?: number | null;
+          transactions?: number | null;
+          sales_conversion_rate?: number | null;
+          fetched_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ebay_listing_traffic_days"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      ebay_listing_traffic_sync: {
+        Row: {
+          metric_date: string;
+          listing_count: number;
+          fetched_at: string;
+        };
+        Insert: {
+          metric_date: string;
+          listing_count: number;
+          fetched_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ebay_listing_traffic_sync"]["Insert"]
+        >;
+        Relationships: [];
+      };
       ebay_description_template: {
         Row: {
           id: string;
