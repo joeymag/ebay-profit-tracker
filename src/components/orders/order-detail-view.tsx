@@ -5,6 +5,7 @@ import { AmazonOrderCostsForm } from "@/components/orders/amazon-order-costs-for
 import { BuyShippingLabelCard } from "@/components/orders/buy-shipping-label-card";
 import { CustomerHistoryCard } from "@/components/orders/customer-history-card";
 import { DeleteOrderButton } from "@/components/orders/delete-order-button";
+import { DownloadInvoiceButton } from "@/components/orders/download-invoice-button";
 import { DesiredProfitCalculator } from "@/components/orders/desired-profit-calculator";
 import { EbayOrderCostsForm } from "@/components/orders/ebay-order-costs-form";
 import { SimpleOrderCostsForm } from "@/components/orders/simple-order-costs-form";
@@ -144,12 +145,18 @@ export function OrderDetailView({
           <ArrowLeft className="size-4" />
           Back to orders
         </Link>
-        <DeleteOrderButton
-          shopifyId={order.shopifyId}
-          orderNumber={order.orderNumber}
-          backHref={backHref}
-          cancelled={cancelled}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <DownloadInvoiceButton
+            shopifyId={order.shopifyId}
+            orderNumber={order.orderNumber}
+          />
+          <DeleteOrderButton
+            shopifyId={order.shopifyId}
+            orderNumber={order.orderNumber}
+            backHref={backHref}
+            cancelled={cancelled}
+          />
+        </div>
       </div>
 
       {costsIncomplete ? (
