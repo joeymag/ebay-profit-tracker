@@ -2,6 +2,7 @@ import { Suspense } from "react";
 
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { ChannelFilterBar } from "@/components/filters/channel-filter-bar";
+import { CustomerFilterBar } from "@/components/filters/customer-filter-bar";
 import { DateRangeFilterBar } from "@/components/filters/date-range-filter-bar";
 import { ProductFilterBar } from "@/components/filters/product-filter-bar";
 import { OrdersPageClient } from "@/components/orders/orders-page-client";
@@ -26,7 +27,12 @@ import { getAutoSyncStatus } from "@/lib/shopify/auto-sync-status";
 import { OrdersFilterSummary } from "@/components/orders/orders-filter-summary";
 
 type OrdersPageProps = {
-  searchParams: Promise<{ range?: string; channel?: string; product?: string }>;
+  searchParams: Promise<{
+    range?: string;
+    channel?: string;
+    product?: string;
+    customer?: string;
+  }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -43,8 +49,11 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     channelLabel,
     productLabel,
     product,
+    customerLabel,
+    customer,
     ordersInRange,
     ordersBeforeProductFilter,
+    ordersBeforeCustomerFilter,
     repeatEbayUsernames,
   } = await getStoredOrdersForRange(params);
   const autoSyncStatus = await getAutoSyncStatus();
@@ -63,13 +72,18 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   if (productLabel) {
     filterParts.push(productLabel);
   }
+  if (customerLabel) {
+    filterParts.push(customerLabel);
+  }
   const filterSummary = filterParts.join(" · ");
   const countHint =
-    product && orders.length !== ordersBeforeProductFilter
-      ? `${orders.length} of ${ordersBeforeProductFilter} matching · ${filterSummary}`
-      : orders.length !== ordersInRange
-        ? `${orders.length} of ${ordersInRange} in ${filterSummary}`
-        : `${orders.length} orders · ${filterSummary}`;
+    customer && orders.length !== ordersBeforeCustomerFilter
+      ? `${orders.length} of ${ordersBeforeCustomerFilter} matching · ${filterSummary}`
+      : product && orders.length !== ordersBeforeProductFilter
+        ? `${orders.length} of ${ordersBeforeProductFilter} matching · ${filterSummary}`
+        : orders.length !== ordersInRange
+          ? `${orders.length} of ${ordersInRange} in ${filterSummary}`
+          : `${orders.length} orders · ${filterSummary}`;
 
   return (
     <>
@@ -108,6 +122,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">Product</p>
             <ProductFilterBar />
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">Customer</p>
+            <CustomerFilterBar />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-4">
             <p className="text-sm text-muted-foreground">

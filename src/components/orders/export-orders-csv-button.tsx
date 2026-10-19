@@ -17,6 +17,7 @@ export function ExportOrdersCsvButton({ orderCount }: ExportOrdersCsvButtonProps
     const range = searchParams.get("range");
     const channel = searchParams.get("channel");
     const product = searchParams.get("product");
+    const customer = searchParams.get("customer");
 
     if (range) {
       params.set("range", range);
@@ -26,6 +27,9 @@ export function ExportOrdersCsvButton({ orderCount }: ExportOrdersCsvButtonProps
     }
     if (product) {
       params.set("product", product);
+    }
+    if (customer) {
+      params.set("customer", customer);
     }
 
     const query = params.toString();

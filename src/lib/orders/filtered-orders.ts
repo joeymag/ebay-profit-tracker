@@ -23,6 +23,11 @@ import { aggregateEbayDashboardFees } from "@/lib/orders/platform-fees";
 import { effectiveProductCost } from "@/lib/orders/product-cost-vat";
 import { getRepeatEbayCustomerUsernames } from "@/lib/orders/customer-history";
 import {
+  filterOrdersByCustomer,
+  formatCustomerFilterLabel,
+  parseCustomerFilter,
+} from "@/lib/orders/customer-filter";
+import {
   filterOrdersByProductTitle,
   formatProductFilterLabel,
   parseProductFilter,
@@ -33,14 +38,17 @@ export async function getStoredOrdersForRange(searchParams?: {
   range?: string;
   channel?: string;
   product?: string;
+  customer?: string;
 }) {
   const range = parseDateRange(searchParams?.range);
   const channel = parseSalesChannelFilter(searchParams?.channel);
   const product = parseProductFilter(searchParams?.product);
+  const customer = parseCustomerFilter(searchParams?.customer);
   const database = await getStoredOrders();
   const ordersInRange = filterOrdersByDateRange(database.orders, range);
   const ordersByChannel = filterOrdersByChannel(ordersInRange, channel);
-  const orders = filterOrdersByProductTitle(ordersByChannel, product);
+  const ordersByProduct = filterOrdersByProductTitle(ordersByChannel, product);
+  const orders = filterOrdersByCustomer(ordersByProduct, customer);
 
   return {
     ...database,
@@ -49,12 +57,15 @@ export async function getStoredOrdersForRange(searchParams?: {
     range,
     channel,
     product,
+    customer,
     rangeLabel: getDateRangeLabel(range),
     channelLabel: getSalesChannelFilterLabel(channel),
     productLabel: product ? formatProductFilterLabel(product) : null,
+    customerLabel: customer ? formatCustomerFilterLabel(customer) : null,
     totalOrders: database.orders.length,
     ordersInRange: ordersInRange.length,
     ordersBeforeProductFilter: ordersByChannel.length,
+    ordersBeforeCustomerFilter: ordersByProduct.length,
     repeatEbayUsernames: getRepeatEbayCustomerUsernames(database.orders),
   };
 }

@@ -11,6 +11,7 @@ export async function GET(request: Request) {
       range: searchParams.get("range") ?? undefined,
       channel: searchParams.get("channel") ?? undefined,
       product: searchParams.get("product") ?? undefined,
+      customer: searchParams.get("customer") ?? undefined,
     });
 
     const csv = buildOrdersCsv(orders);
