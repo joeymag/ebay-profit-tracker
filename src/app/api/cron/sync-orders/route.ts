@@ -6,6 +6,7 @@ import {
   ebayLiveListingsNeedRefresh,
   syncEbayLiveListings,
 } from "@/lib/ebay/save-live-listings";
+import { geocodePendingOrders } from "@/lib/geocoding/geocode";
 import {
   dispatchShopifyFromEbayPostage,
   pushShopifyTrackingToMarketplaces,
@@ -115,6 +116,13 @@ async function runAutoSync(): Promise<void> {
     }
   } catch (error) {
     console.error("[cron/sync-orders] eBay listings failed:", error);
+  }
+
+  try {
+    const geocode = await geocodePendingOrders({ limit: 200 });
+    console.info("[cron/sync-orders] geocode", JSON.stringify(geocode));
+  } catch (error) {
+    console.error("[cron/sync-orders] geocode failed:", error);
   }
 
   console.info(

@@ -7,9 +7,9 @@ export function MapEmptyHint({ markerCount }: { markerCount: number }) {
 
   return (
     <p className="rounded-lg border border-dashed border-border/80 bg-muted/30 px-4 py-3 text-base text-muted-foreground">
-      No geocoded orders in this period. Sync orders from Shopify to import
-      addresses, then run geocoding. Orders with a postcode are mapped
-      automatically after sync.
+      No geocoded orders in this period. Use Map pending addresses above, or
+      wait for the next order sync. Orders with a UK postcode are mapped in
+      batches after each sync.
     </p>
   );
 }

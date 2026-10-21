@@ -424,7 +424,8 @@ export async function geocodePendingOrders(options?: {
     .or(
       "shipping_zip.not.is.null,shipping_city.not.is.null,shipping_address1.not.is.null",
     )
-    .limit(options?.limit ?? 1000);
+    .order("created_at", { ascending: false })
+    .limit(options?.limit ?? 200);
 
   if (error) {
     throw new Error(error.message);

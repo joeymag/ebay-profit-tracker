@@ -7,6 +7,7 @@ import {
   MapEmptyHint,
   MapStatsBar,
 } from "@/components/map/map-page-chrome";
+import { GeocodeAddressesButton } from "@/components/map/geocode-addresses-button";
 import { OrdersMapPanel } from "@/components/map/orders-map-panel";
 import {
   Card,
@@ -46,12 +47,17 @@ export default async function MapPage({ searchParams }: MapPageProps) {
           </Suspense>
         </div>
 
-        <MapStatsBar
-          markerCount={markers.length}
-          totalOrders={orders.length}
-          missingGeocode={missingGeocode}
-          rangeLabel={rangeLabel}
-        />
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <MapStatsBar
+            markerCount={markers.length}
+            totalOrders={orders.length}
+            missingGeocode={missingGeocode}
+            rangeLabel={rangeLabel}
+          />
+          {missingGeocode > 0 || markers.length === 0 ? (
+            <GeocodeAddressesButton />
+          ) : null}
+        </div>
 
         <MapEmptyHint markerCount={markers.length} />
 
