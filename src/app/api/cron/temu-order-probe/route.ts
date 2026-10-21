@@ -133,11 +133,31 @@ export async function GET(request: Request) {
     (values.ok ? values.sampleParentOrderSn : null) ||
     (nested && "ok" in nested && nested.ok ? nested.sampleParentOrderSn : null);
 
+  type AmountAttempt = {
+    type: string;
+    shape: "flat" | "nested";
+    ok: boolean;
+    error?: string;
+    hasAnyPrice?: boolean;
+    samplePrices?: Array<{
+      orderSn: string | null;
+      unitBasePrice: ReturnType<typeof money>;
+      basePriceTotal: ReturnType<typeof money>;
+      estimatedSettlementTotal: ReturnType<typeof money>;
+    }>;
+    parentSalesProceeds?: {
+      basePriceTotal: ReturnType<typeof money>;
+      estimatedSettlementTotal: ReturnType<typeof money>;
+      shippingTotalTaxExcl: ReturnType<typeof money>;
+    } | null;
+  };
+
   let amount:
     | {
         ok: true;
         parentOrderSn: string;
         hasAnyPrice: boolean;
+        usedType?: string;
         parentSalesProceeds: {
           basePriceTotal: ReturnType<typeof money>;
           estimatedSettlementTotal: ReturnType<typeof money>;
@@ -153,46 +173,94 @@ export async function GET(request: Request) {
     | ReturnType<typeof failure>
     | { skipped: true; reason: string };
 
+  const amountAttempts: AmountAttempt[] = [];
+
   if (!parentOrderSn) {
     amount = { skipped: true, reason: "no orders in window" };
   } else {
-    try {
-      const priced = await temuCallFlat<TemuAmount>(
-        credentials,
-        "temu.order.amount.v2.query",
-        { parentOrderSn },
-      );
-      const samplePrices = (priced.orderList ?? []).slice(0, 3).map((line) => ({
-        orderSn: line.orderSn ?? null,
-        unitBasePrice: money(line.unitBasePrice),
-        basePriceTotal: money(line.basePriceTotal),
-        estimatedSettlementTotal: money(line.estimatedSettlementTotal),
-      }));
-      const parentSales = priced.parentOrderMap?.salesProceeds ?? null;
-      const parentSalesProceeds = parentSales
-        ? {
-            basePriceTotal: money(parentSales.basePriceTotal),
-            estimatedSettlementTotal: money(parentSales.estimatedSettlementTotal),
-            shippingTotalTaxExcl: money(parentSales.shippingTotalTaxExcl),
-          }
-        : null;
+    const amountTypes = [
+      "temu.order.amount.v2.query",
+      "bg.order.amount.query",
+      "temu.order.amount.v3.query",
+    ] as const;
+
+    for (const type of amountTypes) {
+      for (const shape of ["flat", "nested"] as const) {
+        try {
+          const priced =
+            shape === "flat"
+              ? await temuCallFlat<TemuAmount>(credentials, type, {
+                  parentOrderSn,
+                })
+              : await temuCall<TemuAmount>(credentials, type, {
+                  parentOrderSn,
+                });
+          const samplePrices = (priced.orderList ?? []).slice(0, 3).map((line) => ({
+            orderSn: line.orderSn ?? null,
+            unitBasePrice: money(line.unitBasePrice),
+            basePriceTotal: money(line.basePriceTotal),
+            estimatedSettlementTotal: money(line.estimatedSettlementTotal),
+          }));
+          const parentSales = priced.parentOrderMap?.salesProceeds ?? null;
+          const parentSalesProceeds = parentSales
+            ? {
+                basePriceTotal: money(parentSales.basePriceTotal),
+                estimatedSettlementTotal: money(
+                  parentSales.estimatedSettlementTotal,
+                ),
+                shippingTotalTaxExcl: money(parentSales.shippingTotalTaxExcl),
+              }
+            : null;
+          const hasAnyPrice =
+            samplePrices.some(
+              (p) =>
+                hasMoney(p.unitBasePrice) ||
+                hasMoney(p.basePriceTotal) ||
+                hasMoney(p.estimatedSettlementTotal),
+            ) ||
+            hasMoney(parentSalesProceeds?.basePriceTotal ?? null) ||
+            hasMoney(parentSalesProceeds?.estimatedSettlementTotal ?? null);
+          amountAttempts.push({
+            type,
+            shape,
+            ok: true,
+            hasAnyPrice,
+            samplePrices,
+            parentSalesProceeds,
+          });
+        } catch (error) {
+          amountAttempts.push({
+            type,
+            shape,
+            ok: false,
+            error:
+              error instanceof TemuApiError || error instanceof Error
+                ? error.message
+                : "Temu request failed.",
+          });
+        }
+      }
+    }
+
+    const winner =
+      amountAttempts.find((a) => a.ok && a.hasAnyPrice) ??
+      amountAttempts.find((a) => a.ok);
+    if (winner?.ok) {
       amount = {
         ok: true,
         parentOrderSn,
-        parentSalesProceeds,
-        samplePrices,
-        hasAnyPrice:
-          samplePrices.some(
-            (p) =>
-              hasMoney(p.unitBasePrice) ||
-              hasMoney(p.basePriceTotal) ||
-              hasMoney(p.estimatedSettlementTotal),
-          ) ||
-          hasMoney(parentSalesProceeds?.basePriceTotal ?? null) ||
-          hasMoney(parentSalesProceeds?.estimatedSettlementTotal ?? null),
+        usedType: `${winner.type}/${winner.shape}`,
+        parentSalesProceeds: winner.parentSalesProceeds ?? null,
+        samplePrices: winner.samplePrices ?? [],
+        hasAnyPrice: Boolean(winner.hasAnyPrice),
       };
-    } catch (error) {
-      amount = failure(error);
+    } else {
+      amount = {
+        ok: false,
+        error: amountAttempts
+          .map((a) => `${a.type}/${a.shape}: ${a.error}`)
+          .join(" | "),
+      };
     }
   }
 
@@ -204,5 +272,6 @@ export async function GET(request: Request) {
     values,
     nested,
     amount,
+    amountAttempts,
   });
 }
