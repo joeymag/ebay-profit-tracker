@@ -159,6 +159,30 @@ async function listOrders(
   return items;
 }
 
+async function loadOrderAmount(
+  credentials: TemuCredentials,
+  parentOrderSn: string,
+): Promise<TemuAmount | null> {
+  // EU/UK stores often reject v2 ("not applicable…region"); v1 flat works there.
+  const types = ["temu.order.amount.v2.query", "bg.order.amount.query"] as const;
+  for (const type of types) {
+    try {
+      return await temuCallFlat<TemuAmount>(credentials, type, { parentOrderSn });
+    } catch (error) {
+      if (
+        error instanceof TemuApiError &&
+        /not applicable|don't have this api access|invalid param|BUSINESS_SERVICE_ERROR/i.test(
+          error.message,
+        )
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return null;
+}
+
 async function toSale(
   credentials: TemuCredentials,
   item: NonNullable<TemuOrderList["pageItems"]>[number],
@@ -173,17 +197,7 @@ async function toSale(
     temuCallFlat<TemuShipping>(credentials, "bg.order.shippinginfo.v2.get", {
       parentOrderSn: orderId,
     }),
-    temuCallFlat<TemuAmount>(credentials, "temu.order.amount.v2.query", {
-      parentOrderSn: orderId,
-    }).catch(async (error: unknown) => {
-      if (
-        error instanceof TemuApiError &&
-        /not applicable|don't have this api access|invalid param/i.test(error.message)
-      ) {
-        return null;
-      }
-      throw error;
-    }),
+    loadOrderAmount(credentials, orderId),
   ]);
 
   const amountBySn = new Map(
