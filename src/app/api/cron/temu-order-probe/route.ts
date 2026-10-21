@@ -72,14 +72,17 @@ function failure(error: unknown) {
   };
 }
 
-function isAuthorizedCron(request: Request): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return false;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+function isAuthorizedProbe(request: Request): boolean {
+  const auth = request.headers.get("authorization");
+  const secrets = [
+    process.env.CRON_SECRET?.trim(),
+    process.env.TEMU_PROXY_SECRET?.trim(),
+  ].filter(Boolean);
+  return secrets.some((secret) => auth === `Bearer ${secret}`);
 }
 
 export async function GET(request: Request) {
-  if (!isAuthorizedCron(request)) {
+  if (!isAuthorizedProbe(request)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
