@@ -78,6 +78,13 @@ async function readStored(channel: PaymentChannel): Promise<{
   return { payments: rows.map(toPayment), syncedAt };
 }
 
+export async function saveMarketplacePayments(
+  channel: PaymentChannel,
+  payments: AccountPayment[],
+): Promise<string> {
+  return savePayments(channel, payments);
+}
+
 async function savePayments(channel: PaymentChannel, payments: AccountPayment[]): Promise<string> {
   const syncedAt = new Date().toISOString();
   const rows = payments

@@ -1,10 +1,13 @@
 import { gunzipSync, inflateRawSync } from "node:zlib";
 
 import type { AccountPayment } from "@/lib/accounting/payments";
-import { TemuApiError, temuCall, temuCallValues } from "@/lib/temu/client";
+import { TemuApiError, getTemuAccessTokenInfo, temuCall, temuCallValues } from "@/lib/temu/client";
 import type { TemuCredentials } from "@/lib/temu/config";
 import { signTemuRequest } from "@/lib/temu/sign";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
+
+const DOWNLOAD_BLOCKED_HINT =
+  "Temu created the report but their OpenAPI host blocks the CSV download (403). In Seller Center open Finances → Payments, download the payment report CSV/Excel, then upload it here.";
 
 type BillTask = {
   taskId?: string;
@@ -306,43 +309,10 @@ function fileAuthHeaders(credentials: TemuCredentials, fileUrl: string): Record<
   return { ...fields, sign: signTemuRequest(fields, credentials.appSecret) };
 }
 
-async function downloadReport(
-  fileUrl: string,
+export function parseTemuPaymentReport(
+  buffer: Buffer,
   fileName: string,
-  credentials: TemuCredentials,
-  expiresAt?: number,
-): Promise<{ payments: AccountPayment[]; note: string | null }> {
-  const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
-  const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
-  const response = await fetch(`${proxy}/temu-file`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ url: fileUrl, headerSets: [fileAuthHeaders(credentials, fileUrl)] }),
-  });
-  if (!response.ok) {
-    const detail = responseDetail(await response.text());
-    const shape = fileShape(fileUrl);
-    console.error("Temu payment report download failed", {
-      status: response.status,
-      shape,
-      fileName,
-      contentType: response.headers.get("content-type"),
-      body: detail,
-    });
-    throw new Error(
-      `Temu payment report download failed (${response.status}) from ${shape}. ${linkExpiry(expiresAt)}. ${detail}`,
-    );
-  }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const preview = buffer.subarray(0, 400).toString("utf8").trim();
-  if (preview.startsWith("{") && preview.includes("error_code")) {
-    throw new Error(
-      `Temu payment report download failed from ${fileShape(fileUrl)}. ${linkExpiry(expiresAt)}. ${responseDetail(preview)}`,
-    );
-  }
+): { payments: AccountPayment[]; note: string | null } {
   const parsed = readRows(buffer, fileName);
   const payments = paymentsFromRows(parsed.rows);
   if (payments.length > 0) return { payments, note: null };
@@ -354,6 +324,75 @@ async function downloadReport(
     payments,
     note: `${buffer.length} bytes, columns ${parsed.rows[0]?.length ?? 0}, files ${parsed.entries.slice(0, 6).join(", ") || "none"}, headers ${headers.join(" | ") || "none"}.`,
   };
+}
+
+function isDownloadBlocked(detail: string): boolean {
+  return /40003|3000000|BAD_PARAMS|signOM|l2l-finance/i.test(detail);
+}
+
+async function downloadReport(
+  fileUrl: string,
+  fileName: string,
+  credentials: TemuCredentials,
+  expiresAt?: number,
+): Promise<{ payments: AccountPayment[]; note: string | null }> {
+  const proxy = process.env.TEMU_PROXY_URL?.trim() || "https://145.241.234.131.sslip.io";
+  const token = process.env.TEMU_PROXY_SECRET?.trim() ?? "";
+  const hosts = [fileUrl];
+  try {
+    const url = new URL(fileUrl);
+    if (url.hostname === "openapi-b-eu.temu.com") {
+      url.hostname = "agentseller-eu.temu.com";
+      hosts.push(url.toString());
+    }
+  } catch {
+    // keep original url only
+  }
+
+  let lastDetail = "";
+  for (const candidate of hosts) {
+    const response = await fetch(`${proxy}/temu-file`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ url: candidate, headerSets: [fileAuthHeaders(credentials, candidate)] }),
+    });
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const preview = buffer.subarray(0, 400).toString("utf8").trim();
+    if (!response.ok || (preview.startsWith("{") && preview.includes("error_code"))) {
+      lastDetail = responseDetail(preview || `HTTP ${response.status}`);
+      console.error("Temu payment report download failed", {
+        status: response.status,
+        shape: fileShape(candidate),
+        fileName,
+        contentType: response.headers.get("content-type"),
+        body: lastDetail.slice(0, 500),
+        expiry: linkExpiry(expiresAt),
+      });
+      continue;
+    }
+    return parseTemuPaymentReport(buffer, fileName);
+  }
+
+  if (isDownloadBlocked(lastDetail)) {
+    throw new Error(DOWNLOAD_BLOCKED_HINT);
+  }
+  throw new Error(
+    `Temu payment report download failed from ${fileShape(fileUrl)}. ${linkExpiry(expiresAt)}. ${lastDetail.slice(0, 400)}`,
+  );
+}
+
+async function withMallId(credentials: TemuCredentials): Promise<TemuCredentials> {
+  if (credentials.mallId) return credentials;
+  try {
+    const info = await getTemuAccessTokenInfo(credentials);
+    if (!info.mallId) return credentials;
+    return { ...credentials, mallId: info.mallId };
+  } catch {
+    return credentials;
+  }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -498,8 +537,9 @@ export async function listTemuAccountPayments(days = 30): Promise<{
   payments: AccountPayment[];
   warning: string | null;
 }> {
-  const credentials = await getStoredTemuCredentials();
-  if (!credentials) return { payments: [], warning: null };
+  const stored = await getStoredTemuCredentials();
+  if (!stored) return { payments: [], warning: null };
+  const credentials = await withMallId(stored);
 
   const pending = await startPaymentReports(credentials, days);
   if (pending.length === 0) {
@@ -525,16 +565,21 @@ export async function listTemuAccountPayments(days = 30): Promise<{
           stillPending.push(job);
           continue;
         }
-        const report = await downloadReport(
-          task.fileUrl.trim(),
-          task.fileName?.trim() || "",
-          credentials,
-          task.expiresAt,
-        );
-        if (report.payments.length === 0 && !emptyNote) emptyNote = report.note;
-        payments.push(
-          ...report.payments.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
-        );
+        try {
+          const report = await downloadReport(
+            task.fileUrl.trim(),
+            task.fileName?.trim() || "",
+            credentials,
+            task.expiresAt,
+          );
+          if (report.payments.length === 0 && !emptyNote) emptyNote = report.note;
+          payments.push(
+            ...report.payments.map((row, index) => ({ ...row, id: `${job.taskId}-${index}` })),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Temu payment report download failed.";
+          warning = message;
+        }
         continue;
       }
       const status = task.status?.trim() ?? "";

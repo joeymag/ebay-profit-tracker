@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2, RefreshCw, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -38,7 +38,8 @@ const COPY: Record<Channel, { title: string; description: string }> = {
   },
   temu: {
     title: "Temu payments",
-    description: "Order payments, refunds, and shipping label purchases from the Temu payments report.",
+    description:
+      "Order payments, refunds, and shipping label purchases from the Temu payments report. If automatic sync is blocked, upload the CSV/Excel from Seller Center → Finances → Payments.",
   },
 };
 
@@ -67,6 +68,8 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
   const [warning, setWarning] = useState<string | null>(null);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -102,6 +105,35 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
       setLoading(false);
     }
   }, [channel]);
+
+  const uploadTemuReport = useCallback(async (file: File) => {
+    setUploading(true);
+    setError(null);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch("/api/temu/payments", { method: "POST", body });
+      const payload = (await response.json()) as {
+        ok: boolean;
+        payments?: AccountPayment[];
+        warning?: string | null;
+        syncedAt?: string | null;
+        error?: string;
+      };
+      if (!payload.ok) {
+        setError(payload.error ?? "Could not import that Temu report.");
+        return;
+      }
+      setPayments(payload.payments ?? []);
+      setWarning(payload.warning ?? null);
+      setSyncedAt(payload.syncedAt ?? null);
+    } catch {
+      setError("Could not import that Temu report.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, []);
 
   useEffect(() => {
     void load(false);
@@ -148,12 +180,40 @@ export function AccountPaymentsTable({ channel }: { channel: Channel }) {
               placeholder={channel === "temu" ? "Search order, type, batch" : "Search order, type, description"}
               className="w-64"
             />
+            {channel === "temu" ? (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void uploadTemuReport(file);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading || uploading}
+                >
+                  {uploading ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Upload className="size-4" />
+                  )}
+                  Upload report
+                </Button>
+              </>
+            ) : null}
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => void load(true)}
-              disabled={loading}
+              disabled={loading || uploading}
             >
               {loading ? (
                 <Loader2 className="size-4 animate-spin" />
