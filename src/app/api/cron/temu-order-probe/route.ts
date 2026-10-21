@@ -188,8 +188,8 @@ export async function GET(request: Request) {
               hasMoney(p.basePriceTotal) ||
               hasMoney(p.estimatedSettlementTotal),
           ) ||
-          hasMoney(parentSalesProceeds?.basePriceTotal) ||
-          hasMoney(parentSalesProceeds?.estimatedSettlementTotal),
+          hasMoney(parentSalesProceeds?.basePriceTotal ?? null) ||
+          hasMoney(parentSalesProceeds?.estimatedSettlementTotal ?? null),
       };
     } catch (error) {
       amount = failure(error);
