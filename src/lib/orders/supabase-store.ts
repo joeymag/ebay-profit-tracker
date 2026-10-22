@@ -14,6 +14,7 @@ import {
   type SkuDefaultSourceOrder,
 } from "@/lib/orders/sku-cost-defaults";
 import { shippingAddressFingerprint, shippingAddressFromFields, shippingAddressToFields, mergeShippingAddressOnSync } from "@/lib/orders/shipping-address";
+import { getSalesChannel } from "@/lib/orders/channel";
 import { parseEbayUsernameForOrder } from "@/lib/orders/ebay-buyer";
 import { resolveLineItemSkuForDisplay } from "@/lib/orders/line-item-sku";
 import { mergeBuyerIdentityOnSync } from "@/lib/shopify/buyer-name";
@@ -296,12 +297,40 @@ export async function saveOrdersToSupabase(
   const { data: existingRows } = await supabase
     .from("orders")
     .select(
-      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, temu_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
+      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, temu_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at, revenue, subtotal, tax, shipping_charged, tags",
     );
 
   const existingById = new Map(
     (existingRows ?? []).map((r) => [r.shopify_id, r]),
   );
+
+  // Keep Temu Estimated-revenue amounts when Shopify still has base-only / £0 totals.
+  const temuMoneyPreserveIds = new Set(
+    importableOrders
+      .filter((order) => {
+        if (getSalesChannel(order.tags) !== "Temu") return false;
+        const previous = existingById.get(order.shopifyId);
+        if (!previous || previous.revenue == null) return false;
+        return Number(previous.revenue) > order.revenue + 0.009;
+      })
+      .map((order) => order.shopifyId),
+  );
+
+  const previousLinePriceById = new Map<number, number>();
+  if (temuMoneyPreserveIds.size > 0) {
+    const { data: previousLines } = await supabase
+      .from("order_line_items")
+      .select("shopify_line_item_id, shopify_order_id, price")
+      .in("shopify_order_id", [...temuMoneyPreserveIds]);
+    for (const line of previousLines ?? []) {
+      if (Number(line.price) > 0) {
+        previousLinePriceById.set(
+          line.shopify_line_item_id,
+          Number(line.price),
+        );
+      }
+    }
+  }
 
   const defaultSource = await loadOrdersForSkuDefaults();
   const skuDefaults = buildSkuCostDefaultsFromOrders([
@@ -333,8 +362,23 @@ export async function saveOrdersToSupabase(
         shippingAddressFingerprint(shippingAddress) !==
         shippingAddressFingerprint(previousAddress);
 
+      const keepTemuMoney = temuMoneyPreserveIds.has(order.shopifyId);
+
       return {
         ...order,
+        ...(keepTemuMoney && previous
+          ? {
+              revenue: Number(previous.revenue),
+              subtotal: Number(previous.subtotal),
+              tax: Number(previous.tax ?? 0),
+              shippingCharged: Number(previous.shipping_charged ?? 0),
+              lineItems: order.lineItems.map((item) => ({
+                ...item,
+                price:
+                  previousLinePriceById.get(item.id) ?? item.price,
+              })),
+            }
+          : {}),
         buyerName: identity.buyerName,
         ebayUsername: identity.ebayUsername,
         ebayOrderId: order.ebayOrderId ?? previous?.ebay_order_id ?? null,
