@@ -297,7 +297,7 @@ export async function saveOrdersToSupabase(
   const { data: existingRows } = await supabase
     .from("orders")
     .select(
-      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, temu_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at, revenue, subtotal, tax, shipping_charged, tags",
+      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, temu_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at, revenue, subtotal, tax, shipping_charged, tags, tracking_numbers, shipping_carrier",
     );
 
   const existingById = new Map(
@@ -363,6 +363,11 @@ export async function saveOrdersToSupabase(
         shippingAddressFingerprint(previousAddress);
 
       const keepTemuMoney = temuMoneyPreserveIds.has(order.shopifyId);
+      const previousTracking = previous?.tracking_numbers ?? [];
+      const keepTemuTracking =
+        getSalesChannel(order.tags) === "Temu" &&
+        previousTracking.length > 0 &&
+        !(order.trackingNumbers?.length);
 
       return {
         ...order,
@@ -377,6 +382,13 @@ export async function saveOrdersToSupabase(
                 price:
                   previousLinePriceById.get(item.id) ?? item.price,
               })),
+            }
+          : {}),
+        ...(keepTemuTracking
+          ? {
+              trackingNumbers: previousTracking,
+              shippingCarrier:
+                order.shippingCarrier || previous?.shipping_carrier || null,
             }
           : {}),
         buyerName: identity.buyerName,

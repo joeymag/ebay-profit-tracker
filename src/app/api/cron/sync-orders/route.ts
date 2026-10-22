@@ -66,6 +66,7 @@ async function runAutoSync(): Promise<void> {
       "[cron/sync-orders] Temu tracking sync",
       JSON.stringify({
         trackingUpdated: temuTracking.trackingUpdated,
+        labelCostUpdated: temuTracking.labelCostUpdated,
         lookups: temuTracking.lookups,
         candidates: temuTracking.candidates,
         skipped: temuTracking.skipped,

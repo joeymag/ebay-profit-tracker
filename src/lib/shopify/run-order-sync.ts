@@ -256,6 +256,12 @@ export async function runOrderSync(
     if (temuTrackingUpdated > 0) {
       withTracking += temuTrackingUpdated;
     }
+    if (temuSync.labelCostUpdated > 0) {
+      console.info(
+        "[run-order-sync] Temu label costs filled:",
+        temuSync.labelCostUpdated,
+      );
+    }
   } catch (error) {
     console.error("[run-order-sync] Temu tracking database sync failed:", error);
   }
@@ -283,7 +289,7 @@ export async function runOrderSync(
     updatedSince,
     hint:
       temuTrackingUpdated > 0
-        ? `Filled Temu tracking on ${temuTrackingUpdated} past order(s).`
+        ? `Filled Temu tracking/label cost on ${temuTrackingUpdated} past order(s).`
         : mode === "quick" && !incremental
           ? labelLookups > 0
             ? `Checked ${labelLookups} recent order(s) for Shopify postage labels.`

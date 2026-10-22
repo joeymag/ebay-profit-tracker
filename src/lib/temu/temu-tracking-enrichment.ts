@@ -1,4 +1,5 @@
 import { getSalesChannel } from "@/lib/orders/channel";
+import { withComputedFinancials } from "@/lib/orders/financials";
 import type { StoredOrder } from "@/lib/orders/types";
 import { TemuApiError } from "@/lib/temu/client";
 import { fetchTemuShipmentTracking } from "@/lib/temu/shipment-tracking";
@@ -16,6 +17,7 @@ export type TemuTrackingEnrichOptions = {
 export type TemuTrackingEnrichResult = {
   orders: StoredOrder[];
   trackingApplied: number;
+  labelCostApplied: number;
   lookups: number;
   skipped: boolean;
   skipReason?: string;
@@ -26,6 +28,7 @@ export type SyncTemuTrackingResult = {
   days: number;
   candidates: number;
   trackingUpdated: number;
+  labelCostUpdated: number;
   lookups: number;
   skipped: boolean;
   skipReason?: string;
@@ -50,6 +53,10 @@ function needsTracking(trackingNumbers: string[] | null | undefined): boolean {
   return !(trackingNumbers?.length);
 }
 
+function needsLabelCost(shippingLabelCost: number | null | undefined): boolean {
+  return shippingLabelCost == null;
+}
+
 function resolveTemuOrderId(order: {
   temuOrderId?: string | null;
   tags?: string | null;
@@ -61,9 +68,26 @@ function mergeTracking(existing: string[], incoming: string[]): string[] {
   return [...new Set([...existing, ...incoming].map((n) => n.trim()).filter(Boolean))];
 }
 
+function recomputeFinancials(
+  order: Pick<
+    StoredOrder,
+    | "revenue"
+    | "productCost"
+    | "shippingLabelCost"
+    | "tags"
+    | "ebayFeeRate"
+    | "ebayAdsFeeRate"
+    | "ebayFeesActual"
+    | "ebayAdsFeeActual"
+  >,
+): Pick<StoredOrder, "platformFee" | "cost" | "profit"> {
+  return withComputedFinancials({
+    ...(order as StoredOrder),
+  });
+}
+
 /**
- * Fill missing tracking numbers on Temu channel orders from
- * bg.logistics.shipment.v2.get (via order detail for child orderSns).
+ * Fill missing tracking / Temu buy-shipping label cost on Temu channel orders.
  * Oldest missing orders are tried first so past orders are not starved by the lookup cap.
  */
 export async function enrichOrdersWithTemuTracking(
@@ -79,6 +103,7 @@ export async function enrichOrdersWithTemuTracking(
     return {
       orders,
       trackingApplied: 0,
+      labelCostApplied: 0,
       lookups: 0,
       skipped: true,
       skipReason: "Temu is not connected.",
@@ -89,17 +114,27 @@ export async function enrichOrdersWithTemuTracking(
     .filter((order) => {
       if (getSalesChannel(order.tags) !== "Temu") return false;
       if (!isRecentOrder(order, recentDays)) return false;
-      if (onlyMissing && !needsTracking(order.trackingNumbers)) return false;
-      return Boolean(resolveTemuOrderId(order));
+      if (!resolveTemuOrderId(order)) return false;
+      if (!onlyMissing) return true;
+      return (
+        needsTracking(order.trackingNumbers) || needsLabelCost(order.shippingLabelCost)
+      );
     })
     .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
 
   if (candidates.length === 0) {
-    return { orders, trackingApplied: 0, lookups: 0, skipped: false };
+    return {
+      orders,
+      trackingApplied: 0,
+      labelCostApplied: 0,
+      lookups: 0,
+      skipped: false,
+    };
   }
 
   const byShopifyId = new Map(orders.map((order) => [order.shopifyId, order]));
   let trackingApplied = 0;
+  let labelCostApplied = 0;
   let lookups = 0;
 
   for (const candidate of candidates) {
@@ -110,31 +145,50 @@ export async function enrichOrdersWithTemuTracking(
     lookups += 1;
     try {
       const shipment = await fetchTemuShipmentTracking(credentials, parentOrderSn);
-      if (shipment.trackingNumbers.length === 0) {
-        if (lookups < maxLookups) await sleep(LOOKUP_DELAY_MS);
-        continue;
-      }
-
       const current = byShopifyId.get(candidate.shopifyId);
       if (!current) continue;
-      const nextNumbers = onlyMissing
-        ? mergeTracking(current.trackingNumbers ?? [], shipment.trackingNumbers)
-        : mergeTracking([], shipment.trackingNumbers);
-      const changed =
-        nextNumbers.join("|") !== (current.trackingNumbers ?? []).join("|") ||
-        (shipment.carrier && shipment.carrier !== current.shippingCarrier);
-      if (!changed) {
+
+      const nextNumbers =
+        shipment.trackingNumbers.length > 0
+          ? onlyMissing
+            ? mergeTracking(current.trackingNumbers ?? [], shipment.trackingNumbers)
+            : mergeTracking([], shipment.trackingNumbers)
+          : (current.trackingNumbers ?? []);
+      const nextLabelCost =
+        shipment.labelCost != null &&
+        (current.shippingLabelCost == null || !onlyMissing)
+          ? shipment.labelCost
+          : current.shippingLabelCost;
+
+      const trackingChanged =
+        nextNumbers.join("|") !== (current.trackingNumbers ?? []).join("|");
+      const carrierChanged = Boolean(
+        shipment.carrier && shipment.carrier !== current.shippingCarrier,
+      );
+      const labelChanged = nextLabelCost !== current.shippingLabelCost;
+
+      if (!trackingChanged && !carrierChanged && !labelChanged) {
+        if (!current.temuOrderId && parentOrderSn) {
+          byShopifyId.set(candidate.shopifyId, {
+            ...current,
+            temuOrderId: parentOrderSn,
+          });
+        }
         if (lookups < maxLookups) await sleep(LOOKUP_DELAY_MS);
         continue;
       }
 
-      byShopifyId.set(candidate.shopifyId, {
+      const patched: StoredOrder = {
         ...current,
         trackingNumbers: nextNumbers,
         shippingCarrier: shipment.carrier || current.shippingCarrier,
+        shippingLabelCost: nextLabelCost,
         temuOrderId: current.temuOrderId || parentOrderSn,
-      });
-      trackingApplied += 1;
+      };
+      const financials = recomputeFinancials(patched);
+      byShopifyId.set(candidate.shopifyId, { ...patched, ...financials });
+      if (trackingChanged) trackingApplied += 1;
+      if (labelChanged && nextLabelCost != null) labelCostApplied += 1;
     } catch (error) {
       if (!(error instanceof TemuApiError)) {
         console.error("[temu-tracking] lookup failed:", error);
@@ -146,13 +200,14 @@ export async function enrichOrdersWithTemuTracking(
   return {
     orders: orders.map((order) => byShopifyId.get(order.shopifyId) ?? order),
     trackingApplied,
+    labelCostApplied,
     lookups,
     skipped: false,
   };
 }
 
 /**
- * Backfill Temu tracking onto stored orders (including ones not in the current Shopify sync batch).
+ * Backfill Temu tracking + buy-shipping label cost onto stored orders.
  */
 export async function syncTemuTrackingFromDatabase(options?: {
   days?: number;
@@ -168,6 +223,7 @@ export async function syncTemuTrackingFromDatabase(options?: {
       days,
       candidates: 0,
       trackingUpdated: 0,
+      labelCostUpdated: 0,
       lookups: 0,
       skipped: true,
       skipReason: "Supabase is not configured.",
@@ -182,6 +238,7 @@ export async function syncTemuTrackingFromDatabase(options?: {
       days,
       candidates: 0,
       trackingUpdated: 0,
+      labelCostUpdated: 0,
       lookups: 0,
       skipped: true,
       skipReason: "Temu is not connected.",
@@ -193,7 +250,9 @@ export async function syncTemuTrackingFromDatabase(options?: {
   const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("orders")
-    .select("shopify_id, created_at, tags, temu_order_id, tracking_numbers, shipping_carrier")
+    .select(
+      "shopify_id, created_at, tags, temu_order_id, tracking_numbers, shipping_carrier, shipping_label_cost, product_cost, revenue, ebay_fee_rate, ebay_ads_fee_rate, ebay_fees_actual, ebay_ads_fee_actual",
+    )
     .gte("created_at", since)
     .ilike("tags", "%temu%")
     .order("created_at", { ascending: true })
@@ -205,6 +264,7 @@ export async function syncTemuTrackingFromDatabase(options?: {
       days,
       candidates: 0,
       trackingUpdated: 0,
+      labelCostUpdated: 0,
       lookups: 0,
       skipped: true,
       skipReason: error?.message || "Could not load Temu orders.",
@@ -213,11 +273,19 @@ export async function syncTemuTrackingFromDatabase(options?: {
   }
 
   const candidates = data.filter((row) => {
-    if (!needsTracking(row.tracking_numbers)) return false;
-    return Boolean(resolveTemuOrderId({ temuOrderId: row.temu_order_id, tags: row.tags }));
+    if (!resolveTemuOrderId({ temuOrderId: row.temu_order_id, tags: row.tags })) {
+      return false;
+    }
+    return (
+      needsTracking(row.tracking_numbers) ||
+      needsLabelCost(
+        row.shipping_label_cost == null ? null : Number(row.shipping_label_cost),
+      )
+    );
   });
 
   let trackingUpdated = 0;
+  let labelCostUpdated = 0;
   let lookups = 0;
 
   for (const row of candidates) {
@@ -231,8 +299,23 @@ export async function syncTemuTrackingFromDatabase(options?: {
     lookups += 1;
     try {
       const shipment = await fetchTemuShipmentTracking(credentials, parentOrderSn);
-      if (shipment.trackingNumbers.length === 0) {
-        // Still persist temu_order_id when we can resolve it from tags.
+      const nextNumbers =
+        shipment.trackingNumbers.length > 0
+          ? mergeTracking(row.tracking_numbers ?? [], shipment.trackingNumbers)
+          : (row.tracking_numbers ?? []);
+      const nextLabelCost =
+        shipment.labelCost != null && row.shipping_label_cost == null
+          ? shipment.labelCost
+          : row.shipping_label_cost == null
+            ? null
+            : Number(row.shipping_label_cost);
+
+      const trackingChanged =
+        nextNumbers.join("|") !== (row.tracking_numbers ?? []).join("|");
+      const labelChanged =
+        shipment.labelCost != null && row.shipping_label_cost == null;
+
+      if (!trackingChanged && !labelChanged && !shipment.carrier) {
         if (!row.temu_order_id) {
           await supabase
             .from("orders")
@@ -243,16 +326,38 @@ export async function syncTemuTrackingFromDatabase(options?: {
         continue;
       }
 
-      const nextNumbers = mergeTracking(row.tracking_numbers ?? [], shipment.trackingNumbers);
+      const financials = recomputeFinancials({
+        revenue: Number(row.revenue),
+        productCost:
+          row.product_cost == null ? null : Number(row.product_cost),
+        shippingLabelCost: nextLabelCost,
+        tags: row.tags,
+        ebayFeeRate:
+          row.ebay_fee_rate == null ? null : Number(row.ebay_fee_rate),
+        ebayAdsFeeRate:
+          row.ebay_ads_fee_rate == null ? null : Number(row.ebay_ads_fee_rate),
+        ebayFeesActual:
+          row.ebay_fees_actual == null ? null : Number(row.ebay_fees_actual),
+        ebayAdsFeeActual:
+          row.ebay_ads_fee_actual == null
+            ? null
+            : Number(row.ebay_ads_fee_actual),
+      });
+
       await supabase
         .from("orders")
         .update({
           temu_order_id: row.temu_order_id || parentOrderSn,
           tracking_numbers: nextNumbers,
           shipping_carrier: shipment.carrier || row.shipping_carrier,
+          ...(labelChanged ? { shipping_label_cost: nextLabelCost } : {}),
+          cost: financials.cost,
+          profit: financials.profit,
         })
         .eq("shopify_id", row.shopify_id);
-      trackingUpdated += 1;
+
+      if (trackingChanged) trackingUpdated += 1;
+      if (labelChanged) labelCostUpdated += 1;
     } catch (err) {
       if (!(err instanceof TemuApiError)) {
         console.error("[temu-tracking] database sync failed:", err);
@@ -266,6 +371,7 @@ export async function syncTemuTrackingFromDatabase(options?: {
     days,
     candidates: candidates.length,
     trackingUpdated,
+    labelCostUpdated,
     lookups,
     skipped: false,
     syncedAt,
