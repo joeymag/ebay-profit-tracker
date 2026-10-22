@@ -43,17 +43,27 @@ type TemuShipping = {
 
 type TemuAmount = {
   parentOrderMap?: {
+    /** v1 (`bg.order.amount.query`) — matches seller UI "Estimated revenue". */
+    estimatedRevenue?: TemuMoney;
+    estimatedRevenueDeduction?: TemuMoney;
+    shippingAmountTotal?: TemuMoney;
+    basePriceTotal?: TemuMoney;
+    taxTotalAfterDiscount?: TemuMoney;
+    /** v2 (`temu.order.amount.v2.query`). */
     salesProceeds?: {
       shippingTotalTaxExcl?: TemuMoney;
       basePriceTotal?: TemuMoney;
       estimatedSettlementTotal?: TemuMoney;
+      estimatedDeduction?: TemuMoney;
     };
   };
   orderList?: Array<{
     orderSn?: string;
     unitBasePrice?: TemuMoney;
+    basePrice?: TemuMoney;
     basePriceTotal?: TemuMoney;
     estimatedSettlementTotal?: TemuMoney;
+    estimatedRevenue?: TemuMoney;
     quantity?: number;
   }>;
 };
@@ -159,15 +169,68 @@ async function listOrders(
   return items;
 }
 
+function moneyAmount(money: TemuMoney | undefined): number {
+  return minorToMajor(money);
+}
+
+/** Seller UI "Estimated revenue" — v1 field, or v2 estimatedSettlementTotal. */
+function parentEstimatedRevenue(amount: TemuAmount | null | undefined): TemuMoney | undefined {
+  const parent = amount?.parentOrderMap;
+  if (!parent) return undefined;
+  if (moneyAmount(parent.estimatedRevenue) > 0) return parent.estimatedRevenue;
+  if (moneyAmount(parent.salesProceeds?.estimatedSettlementTotal) > 0) {
+    return parent.salesProceeds?.estimatedSettlementTotal;
+  }
+  return parent.estimatedRevenue || parent.salesProceeds?.estimatedSettlementTotal;
+}
+
+function parentShippingAmount(amount: TemuAmount | null | undefined): TemuMoney | undefined {
+  const parent = amount?.parentOrderMap;
+  if (!parent) return undefined;
+  if (moneyAmount(parent.shippingAmountTotal) > 0) return parent.shippingAmountTotal;
+  if (moneyAmount(parent.salesProceeds?.shippingTotalTaxExcl) > 0) {
+    return parent.salesProceeds?.shippingTotalTaxExcl;
+  }
+  return parent.shippingAmountTotal || parent.salesProceeds?.shippingTotalTaxExcl;
+}
+
+function parentCurrency(amount: TemuAmount | null | undefined): string | undefined {
+  const parent = amount?.parentOrderMap;
+  return (
+    parent?.estimatedRevenue?.currency ||
+    parent?.salesProceeds?.estimatedSettlementTotal?.currency ||
+    parent?.basePriceTotal?.currency ||
+    parent?.salesProceeds?.basePriceTotal?.currency ||
+    parent?.shippingAmountTotal?.currency ||
+    amount?.orderList?.find((line) => line.unitBasePrice?.currency)?.unitBasePrice?.currency ||
+    amount?.orderList?.find((line) => line.estimatedSettlementTotal?.currency)
+      ?.estimatedSettlementTotal?.currency
+  );
+}
+
+function hasUsableEstimatedRevenue(amount: TemuAmount): boolean {
+  if (moneyAmount(parentEstimatedRevenue(amount)) > 0) return true;
+  return (amount.orderList ?? []).some(
+    (line) =>
+      moneyAmount(line.estimatedSettlementTotal) > 0 ||
+      moneyAmount(line.estimatedRevenue) > 0,
+  );
+}
+
 async function loadOrderAmount(
   credentials: TemuCredentials,
   parentOrderSn: string,
 ): Promise<TemuAmount | null> {
-  // EU/UK stores often reject v2 ("not applicable…region"); v1 flat works there.
-  const types = ["temu.order.amount.v2.query", "bg.order.amount.query"] as const;
+  // Prefer v1 for EU/UK (has estimatedRevenue); v2 often "not applicable" there.
+  const types = ["bg.order.amount.query", "temu.order.amount.v2.query"] as const;
+  let fallback: TemuAmount | null = null;
   for (const type of types) {
     try {
-      return await temuCallFlat<TemuAmount>(credentials, type, { parentOrderSn });
+      const result = await temuCallFlat<TemuAmount>(credentials, type, {
+        parentOrderSn,
+      });
+      if (hasUsableEstimatedRevenue(result)) return result;
+      if (!fallback) fallback = result;
     } catch (error) {
       if (
         error instanceof TemuApiError &&
@@ -180,7 +243,24 @@ async function loadOrderAmount(
       throw error;
     }
   }
-  return null;
+  return fallback;
+}
+
+function lineGoodsWeight(line: {
+  quantity: number;
+  unitBasePrice?: TemuMoney;
+  basePriceTotal?: TemuMoney;
+  estimatedSettlementTotal?: TemuMoney;
+  estimatedRevenue?: TemuMoney;
+}): number {
+  const baseTotal = moneyAmount(line.basePriceTotal);
+  if (baseTotal > 0) return baseTotal;
+  const unit = moneyAmount(line.unitBasePrice);
+  if (unit > 0 && line.quantity > 0) return unit * line.quantity;
+  const settlement =
+    moneyAmount(line.estimatedSettlementTotal) || moneyAmount(line.estimatedRevenue);
+  if (settlement > 0) return settlement;
+  return Math.max(line.quantity, 1);
 }
 
 async function toSale(
@@ -203,43 +283,100 @@ async function toSale(
   const amountBySn = new Map(
     (amount?.orderList ?? []).map((line) => [line.orderSn?.trim() ?? "", line]),
   );
-  const lines = (item.orderList ?? [])
-    .map((line) => {
-      const quantity = line.quantity ?? 0;
-      if (quantity <= 0 || line.orderSn == null) return null;
-      const product = line.productList?.[0];
-      const extCode = product?.extCode?.trim() || null;
-      const skuId = line.skuId == null ? null : String(line.skuId);
-      const resolved = lineSku(extCode, skuId, catalog);
-      const priced = amountBySn.get(line.orderSn.trim());
-      const unitFromBase = minorToMajor(priced?.unitBasePrice);
-      const baseTotal = minorToMajor(priced?.basePriceTotal);
-      const settlement = minorToMajor(priced?.estimatedSettlementTotal);
-      const unitPrice =
-        unitFromBase > 0
-          ? unitFromBase
-          : quantity > 0 && baseTotal > 0
-            ? baseTotal / quantity
-            : quantity > 0
-              ? settlement / quantity
-              : 0;
-      return {
-        sku: resolved.sku,
-        title:
-          line.originalGoodsName?.trim() ||
-          line.goodsName?.trim() ||
-          resolved.sku ||
-          "Temu item",
-        quantity,
-        unitPrice,
-        ...(resolved.temuSku
-          ? { properties: [{ name: "Temu item sku id", value: resolved.temuSku }] }
-          : {}),
-      };
-    })
-    .filter((line): line is NonNullable<typeof line> => line != null);
 
-  if (lines.length === 0) return null;
+  // Estimated revenue (seller UI) is the order total. Keep Temu shipping as a
+  // separate Shopify shipping line; put the remainder on the product lines.
+  const estimatedTotal = moneyAmount(parentEstimatedRevenue(amount));
+  const shippingTotal = moneyAmount(parentShippingAmount(amount));
+  const goodsBudget =
+    estimatedTotal > 0 ? Math.max(0, estimatedTotal - shippingTotal) : 0;
+
+  type PricedDraft = {
+    sku: string | null;
+    title: string;
+    quantity: number;
+    weight: number;
+    fallbackUnit: number;
+    temuSku: string | null;
+  };
+
+  const drafts: PricedDraft[] = [];
+  for (const line of item.orderList ?? []) {
+    const quantity = line.quantity ?? 0;
+    if (quantity <= 0 || line.orderSn == null) continue;
+    const product = line.productList?.[0];
+    const extCode = product?.extCode?.trim() || null;
+    const skuId = line.skuId == null ? null : String(line.skuId);
+    const resolved = lineSku(extCode, skuId, catalog);
+    const priced = amountBySn.get(line.orderSn.trim());
+    const unitFromBase = moneyAmount(priced?.unitBasePrice);
+    const baseTotal = moneyAmount(priced?.basePriceTotal);
+    const settlement =
+      moneyAmount(priced?.estimatedSettlementTotal) ||
+      moneyAmount(priced?.estimatedRevenue);
+    const fallbackUnit =
+      unitFromBase > 0
+        ? unitFromBase
+        : quantity > 0 && baseTotal > 0
+          ? baseTotal / quantity
+          : quantity > 0
+            ? settlement / quantity
+            : 0;
+    drafts.push({
+      sku: resolved.sku,
+      title:
+        line.originalGoodsName?.trim() ||
+        line.goodsName?.trim() ||
+        resolved.sku ||
+        "Temu item",
+      quantity,
+      weight: priced
+        ? lineGoodsWeight({ ...priced, quantity })
+        : Math.max(quantity, 1),
+      fallbackUnit,
+      temuSku: resolved.temuSku,
+    });
+  }
+
+  if (drafts.length === 0) return null;
+
+  const weightSum = drafts.reduce((sum, draft) => sum + draft.weight, 0);
+  const allocatedUnits: number[] = [];
+  if (goodsBudget > 0 && weightSum > 0) {
+    let allocatedGoods = 0;
+    for (let index = 0; index < drafts.length; index += 1) {
+      const draft = drafts[index]!;
+      if (draft.quantity <= 0) {
+        allocatedUnits.push(0);
+        continue;
+      }
+      if (index === drafts.length - 1) {
+        const remainder = Math.max(0, goodsBudget - allocatedGoods);
+        const unit = Math.round((remainder / draft.quantity) * 100) / 100;
+        allocatedUnits.push(unit);
+        allocatedGoods += unit * draft.quantity;
+      } else {
+        const share = (goodsBudget * draft.weight) / weightSum;
+        const unit = Math.round((share / draft.quantity) * 100) / 100;
+        allocatedUnits.push(unit);
+        allocatedGoods += unit * draft.quantity;
+      }
+    }
+  }
+
+  const lines = drafts.map((draft, index) => {
+    const unitPrice =
+      allocatedUnits.length > 0 ? (allocatedUnits[index] ?? 0) : draft.fallbackUnit;
+    return {
+      sku: draft.sku,
+      title: draft.title,
+      quantity: draft.quantity,
+      unitPrice,
+      ...(draft.temuSku
+        ? { properties: [{ name: "Temu item sku id", value: draft.temuSku }] }
+        : {}),
+    };
+  });
 
   const country = countryCode(shipping.regionName1);
   const first = shipping.addressExtra?.firstName?.trim();
@@ -248,13 +385,7 @@ async function toSale(
     shipping.receiptName?.trim() ||
     [first, last].filter(Boolean).join(" ") ||
     null;
-  const proceeds = amount?.parentOrderMap?.salesProceeds;
-  const currency =
-    amount?.orderList?.find((line) => line.unitBasePrice?.currency)?.unitBasePrice
-      ?.currency ||
-    proceeds?.estimatedSettlementTotal?.currency ||
-    proceeds?.basePriceTotal?.currency ||
-    "GBP";
+  const currency = parentCurrency(amount) || "GBP";
   const createdSeconds = parent?.parentOrderTime;
 
   return {
@@ -265,7 +396,7 @@ async function toSale(
       : new Date().toISOString(),
     currency,
     email: shipping.mail?.trim() || null,
-    shipping: minorToMajor(proceeds?.shippingTotalTaxExcl),
+    shipping: shippingTotal,
     address: shipping.addressLine1
       ? {
           name,
