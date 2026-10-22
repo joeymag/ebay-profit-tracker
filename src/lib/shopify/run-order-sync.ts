@@ -10,7 +10,10 @@ import { enrichOrdersWithEbayPostageAndTracking } from "@/lib/ebay/ebay-postage-
 import { enrichOrdersWithLineItemImages } from "@/lib/shopify/line-item-images";
 import { enrichOrdersWithPostageAndTracking } from "@/lib/shopify/postage-enrichment";
 import { getLastOrderSyncCompletedAt } from "@/lib/shopify/sync-state";
-import { enrichOrdersWithTemuTracking } from "@/lib/temu/temu-tracking-enrichment";
+import {
+  enrichOrdersWithTemuTracking,
+  syncTemuTrackingFromDatabase,
+} from "@/lib/temu/temu-tracking-enrichment";
 import type { StoredOrder } from "@/lib/orders/types";
 
 export type OrderSyncMode = "quick" | "full";
@@ -49,8 +52,8 @@ const QUICK_POSTAGE_RECENT_DAYS = 60;
 const QUICK_POSTAGE_MAX_LOOKUPS = 20;
 const QUICK_EBAY_FULFILLMENT_LOOKUPS = 15;
 const FULL_EBAY_FULFILLMENT_LOOKUPS = 60;
-const QUICK_TEMU_TRACKING_LOOKUPS = 15;
-const FULL_TEMU_TRACKING_LOOKUPS = 40;
+const QUICK_TEMU_TRACKING_LOOKUPS = 40;
+const FULL_TEMU_TRACKING_LOOKUPS = 80;
 
 async function applyTemuTrackingEnrichment(
   orders: StoredOrder[],
@@ -242,6 +245,21 @@ export async function runOrderSync(
     trackingFound: withTracking,
   });
 
+  // Backfill Temu tracking from Supabase rows (covers past orders outside this Shopify batch).
+  let temuTrackingUpdated = 0;
+  try {
+    const temuSync = await syncTemuTrackingFromDatabase({
+      days: mode === "full" ? 120 : QUICK_POSTAGE_RECENT_DAYS,
+      maxLookups: mode === "full" ? FULL_TEMU_TRACKING_LOOKUPS : QUICK_TEMU_TRACKING_LOOKUPS,
+    });
+    temuTrackingUpdated = temuSync.trackingUpdated;
+    if (temuTrackingUpdated > 0) {
+      withTracking += temuTrackingUpdated;
+    }
+  } catch (error) {
+    console.error("[run-order-sync] Temu tracking database sync failed:", error);
+  }
+
   const shouldRecalculate =
     !options.skipRecalculateCosts && !incremental && mode === "full";
   const ordersRecalculated = shouldRecalculate
@@ -264,13 +282,15 @@ export async function runOrderSync(
     removedCancelled,
     updatedSince,
     hint:
-      mode === "quick" && !incremental
-        ? labelLookups > 0
-          ? `Checked ${labelLookups} recent order(s) for Shopify postage labels.`
-          : "Quick sync finished. Auto-sync applies postage when new labels are bought."
-        : incremental
-          ? "Auto-sync imports changed Shopify orders and applies postage when a shipping label was purchased."
-          : undefined,
+      temuTrackingUpdated > 0
+        ? `Filled Temu tracking on ${temuTrackingUpdated} past order(s).`
+        : mode === "quick" && !incremental
+          ? labelLookups > 0
+            ? `Checked ${labelLookups} recent order(s) for Shopify postage labels.`
+            : "Quick sync finished. Auto-sync applies postage when new labels are bought."
+          : incremental
+            ? "Auto-sync imports changed Shopify orders and applies postage when a shipping label was purchased."
+            : undefined,
   };
 }
 

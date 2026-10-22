@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { syncEbayPostageFromApis } from "@/lib/ebay/ebay-postage-enrichment";
+import { syncTemuTrackingFromDatabase } from "@/lib/temu/temu-tracking-enrichment";
 import { saveEbayTrafficHistory } from "@/lib/ebay/save-traffic";
 import {
   ebayLiveListingsNeedRefresh,
@@ -55,6 +56,24 @@ async function runAutoSync(): Promise<void> {
     incremental: true,
     skipRecalculateCosts: true,
   });
+
+  try {
+    const temuTracking = await syncTemuTrackingFromDatabase({
+      days: 60,
+      maxLookups: 40,
+    });
+    console.info(
+      "[cron/sync-orders] Temu tracking sync",
+      JSON.stringify({
+        trackingUpdated: temuTracking.trackingUpdated,
+        lookups: temuTracking.lookups,
+        candidates: temuTracking.candidates,
+        skipped: temuTracking.skipped,
+      }),
+    );
+  } catch (error) {
+    console.error("[cron/sync-orders] Temu tracking sync failed:", error);
+  }
 
   const refreshToken = await getStoredEbayRefreshToken();
   if (refreshToken) {
