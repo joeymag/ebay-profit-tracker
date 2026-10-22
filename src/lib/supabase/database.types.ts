@@ -22,6 +22,7 @@ export type Database = {
           ebay_username: string | null;
           ebay_order_id: string | null;
           amazon_order_id: string | null;
+          temu_order_id: string | null;
           amazon_deliver_by_at: string | null;
           ebay_deliver_by_at: string | null;
           shipping_address1: string | null;
@@ -74,6 +75,7 @@ export type Database = {
           ebay_username?: string | null;
           ebay_order_id?: string | null;
           amazon_order_id?: string | null;
+          temu_order_id?: string | null;
           amazon_deliver_by_at?: string | null;
           ebay_deliver_by_at?: string | null;
           shipping_address1?: string | null;

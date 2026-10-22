@@ -42,6 +42,8 @@ export type StoredOrder = {
   ebayOrderId: string | null;
   /** Amazon marketplace order ID from Shopify note attributes. */
   amazonOrderId: string | null;
+  /** Temu parent order SN from Shopify note attributes. */
+  temuOrderId: string | null;
   /** Amazon deliver-by deadline from Shopify note attributes. */
   amazonDeliverByAt: string | null;
   /** eBay deliver-by deadline from Shopify note attributes. */

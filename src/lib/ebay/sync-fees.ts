@@ -70,6 +70,7 @@ function buildStoredOrderFromRow(
     ebayUsername: null,
     ebayOrderId,
     amazonOrderId: null,
+    temuOrderId: null,
     amazonDeliverByAt: null,
     ebayDeliverByAt: null,
     shippingAddress: null,

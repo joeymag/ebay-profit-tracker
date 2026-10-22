@@ -470,6 +470,7 @@ export async function syncEbayPostageFromApis(options?: {
         ebayUsername: null,
         ebayOrderId,
         amazonOrderId: null,
+        temuOrderId: null,
         amazonDeliverByAt: null,
         ebayDeliverByAt: null,
         shippingAddress: null,

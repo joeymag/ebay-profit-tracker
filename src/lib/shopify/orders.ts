@@ -7,6 +7,7 @@ import {
   parseEbayDeliverByAtFromNoteAttributes,
   parseEbayOrderIdFromNoteAttributes,
 } from "@/lib/shopify/ebay-note-attributes";
+import { parseTemuOrderIdFromNoteAttributes } from "@/lib/shopify/temu-note-attributes";
 import { resolveShopifyLineItemSku } from "@/lib/shopify/ebay-line-item-sku";
 import { parseOrderShipping } from "@/lib/shopify/shipping";
 import { parseEbayUsernameForOrder } from "@/lib/orders/ebay-buyer";
@@ -136,6 +137,7 @@ function normalizeOrder(order: ShopifyOrder): StoredOrder {
     }),
     ebayOrderId: parseEbayOrderIdFromNoteAttributes(order.note_attributes),
     amazonOrderId: parseAmazonOrderIdFromNoteAttributes(order.note_attributes),
+    temuOrderId: parseTemuOrderIdFromNoteAttributes(order.note_attributes),
     amazonDeliverByAt: parseAmazonDeliverByAtFromNoteAttributes(order.note_attributes),
     ebayDeliverByAt: parseEbayDeliverByAtFromNoteAttributes(order.note_attributes),
     ebayFeesActual: null,

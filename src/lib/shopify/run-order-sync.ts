@@ -10,6 +10,7 @@ import { enrichOrdersWithEbayPostageAndTracking } from "@/lib/ebay/ebay-postage-
 import { enrichOrdersWithLineItemImages } from "@/lib/shopify/line-item-images";
 import { enrichOrdersWithPostageAndTracking } from "@/lib/shopify/postage-enrichment";
 import { getLastOrderSyncCompletedAt } from "@/lib/shopify/sync-state";
+import { enrichOrdersWithTemuTracking } from "@/lib/temu/temu-tracking-enrichment";
 import type { StoredOrder } from "@/lib/orders/types";
 
 export type OrderSyncMode = "quick" | "full";
@@ -48,6 +49,28 @@ const QUICK_POSTAGE_RECENT_DAYS = 60;
 const QUICK_POSTAGE_MAX_LOOKUPS = 20;
 const QUICK_EBAY_FULFILLMENT_LOOKUPS = 15;
 const FULL_EBAY_FULFILLMENT_LOOKUPS = 60;
+const QUICK_TEMU_TRACKING_LOOKUPS = 15;
+const FULL_TEMU_TRACKING_LOOKUPS = 40;
+
+async function applyTemuTrackingEnrichment(
+  orders: StoredOrder[],
+  options: {
+    recentDays?: number;
+    maxLookups: number;
+  },
+): Promise<StoredOrder[]> {
+  try {
+    const result = await enrichOrdersWithTemuTracking(orders, {
+      recentDays: options.recentDays ?? QUICK_POSTAGE_RECENT_DAYS,
+      maxLookups: options.maxLookups,
+      onlyMissing: true,
+    });
+    return result.orders;
+  } catch (error) {
+    console.error("[run-order-sync] Temu tracking enrichment failed:", error);
+    return orders;
+  }
+}
 
 async function applyEbayPostageEnrichment(
   orders: StoredOrder[],
@@ -107,16 +130,20 @@ async function enrichOrdersForFullSync(orders: StoredOrder[]): Promise<{
     recentDays: 120,
     maxFulfillmentLookups: FULL_EBAY_FULFILLMENT_LOOKUPS,
   });
+  const temuEnriched = await applyTemuTrackingEnrichment(ebayEnriched.orders, {
+    recentDays: 120,
+    maxLookups: FULL_TEMU_TRACKING_LOOKUPS,
+  });
 
-  const withPostage = ebayEnriched.orders.filter(
+  const withPostage = temuEnriched.filter(
     (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
   ).length;
-  const withTracking = ebayEnriched.orders.filter(
+  const withTracking = temuEnriched.filter(
     (o) => o.trackingNumbers.length > 0,
   ).length;
 
   return {
-    orders: ebayEnriched.orders,
+    orders: temuEnriched,
     withPostage,
     withTracking,
     labelLookups: shopifyEnriched.labelLookups,
@@ -161,11 +188,14 @@ export async function runOrderSync(
       recentDays: QUICK_POSTAGE_RECENT_DAYS,
       maxFulfillmentLookups: QUICK_EBAY_FULFILLMENT_LOOKUPS,
     });
-    ordersEnriched = ebayEnriched.orders;
-    withPostage = ebayEnriched.orders.filter(
+    ordersEnriched = await applyTemuTrackingEnrichment(ebayEnriched.orders, {
+      recentDays: QUICK_POSTAGE_RECENT_DAYS,
+      maxLookups: QUICK_TEMU_TRACKING_LOOKUPS,
+    });
+    withPostage = ordersEnriched.filter(
       (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
     ).length;
-    withTracking = ebayEnriched.orders.filter(
+    withTracking = ordersEnriched.filter(
       (o) => o.trackingNumbers.length > 0,
     ).length;
     labelLookups = enriched.labelLookups;
@@ -181,11 +211,14 @@ export async function runOrderSync(
       recentDays: QUICK_POSTAGE_RECENT_DAYS,
       maxFulfillmentLookups: QUICK_EBAY_FULFILLMENT_LOOKUPS,
     });
-    ordersEnriched = ebayEnriched.orders;
-    withPostage = ebayEnriched.orders.filter(
+    ordersEnriched = await applyTemuTrackingEnrichment(ebayEnriched.orders, {
+      recentDays: QUICK_POSTAGE_RECENT_DAYS,
+      maxLookups: QUICK_TEMU_TRACKING_LOOKUPS,
+    });
+    withPostage = ordersEnriched.filter(
       (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
     ).length;
-    withTracking = ebayEnriched.orders.filter(
+    withTracking = ordersEnriched.filter(
       (o) => o.trackingNumbers.length > 0,
     ).length;
     labelLookups = enriched.labelLookups;

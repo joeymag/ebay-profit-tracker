@@ -107,6 +107,7 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
           }),
         ebayOrderId: row.ebay_order_id ?? null,
         amazonOrderId: row.amazon_order_id ?? null,
+        temuOrderId: row.temu_order_id ?? null,
         amazonDeliverByAt: row.amazon_deliver_by_at ?? null,
         ebayDeliverByAt: row.ebay_deliver_by_at ?? null,
         shippingAddress: shippingAddressFromFields(row),

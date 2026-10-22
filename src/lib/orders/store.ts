@@ -86,6 +86,9 @@ function normalizeLegacyOrder(order: StoredOrder & { shipping?: number }): Store
   if (order.amazonOrderId === undefined) {
     order.amazonOrderId = null;
   }
+  if (order.temuOrderId === undefined) {
+    order.temuOrderId = null;
+  }
   if (order.amazonDeliverByAt === undefined) {
     order.amazonDeliverByAt = null;
   }

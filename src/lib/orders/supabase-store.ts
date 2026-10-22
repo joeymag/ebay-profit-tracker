@@ -41,6 +41,7 @@ function orderToRow(order: StoredOrder, syncedAt: string): OrderRow {
     ebay_username: order.ebayUsername,
     ebay_order_id: order.ebayOrderId,
     amazon_order_id: order.amazonOrderId,
+    temu_order_id: order.temuOrderId,
     amazon_deliver_by_at: order.amazonDeliverByAt,
     ebay_deliver_by_at: order.ebayDeliverByAt,
     ...shippingAddressToFields(order.shippingAddress),
@@ -96,6 +97,7 @@ function rowToOrder(
       }),
     ebayOrderId: row.ebay_order_id ?? null,
     amazonOrderId: row.amazon_order_id ?? null,
+    temuOrderId: row.temu_order_id ?? null,
     amazonDeliverByAt: row.amazon_deliver_by_at ?? null,
     ebayDeliverByAt: row.ebay_deliver_by_at ?? null,
     shippingAddress: shippingAddressFromFields(row),
@@ -294,7 +296,7 @@ export async function saveOrdersToSupabase(
   const { data: existingRows } = await supabase
     .from("orders")
     .select(
-      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
+      "shopify_id, buyer_name, ebay_username, ebay_order_id, amazon_order_id, temu_order_id, amazon_deliver_by_at, ebay_deliver_by_at, ebay_fees_actual, ebay_ads_fee_actual, ebay_fees_synced_at, product_cost, product_cost_manual, shipping_label_cost, shipping_label_gid, ebay_fee_rate, ebay_ads_fee_rate, shipping_address1, shipping_address2, shipping_city, shipping_province, shipping_zip, shipping_country, shipping_country_code, shipping_phone, latitude, longitude, geocode_region, geocoded_at",
     );
 
   const existingById = new Map(
@@ -338,6 +340,7 @@ export async function saveOrdersToSupabase(
         ebayOrderId: order.ebayOrderId ?? previous?.ebay_order_id ?? null,
         amazonOrderId:
           order.amazonOrderId ?? previous?.amazon_order_id ?? null,
+        temuOrderId: order.temuOrderId ?? previous?.temu_order_id ?? null,
         amazonDeliverByAt:
           order.amazonDeliverByAt ?? previous?.amazon_deliver_by_at ?? null,
         ebayDeliverByAt:
