@@ -1,6 +1,7 @@
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { ProductSearchFilterBar } from "@/components/filters/product-search-filter-bar";
+import { LinkTemuProductsButton } from "@/components/products/link-temu-products-button";
 import { PrintBagLabelButton } from "@/components/products/print-bag-label-button";
 import { ProductCostInput } from "@/components/products/product-cost-input";
 import { SyncProductsButton } from "@/components/products/sync-products-button";
@@ -49,7 +50,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     <>
       <DashboardHeader
         title="Products"
-        description="Set unit costs for Shopify products — orders link automatically by SKU"
+        description="Set unit costs for Shopify products — eBay, Amazon, and Temu orders link by SKU / Temu SKU"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         {!configured ? (
@@ -66,6 +67,7 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
             <div className="surface-card flex flex-wrap items-center justify-between gap-4 p-5">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-4">
                 <SyncProductsButton />
+                <LinkTemuProductsButton />
                 <ProductSearchFilterBar className="min-w-[16rem] flex-1" />
               </div>
               <p className="text-base text-muted-foreground">
@@ -83,8 +85,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
                 <CardTitle>Product catalog</CardTitle>
                 <CardDescription>
                   Synced from your Shopify product catalog. Enter the cost you pay
-                  per unit (ex-VAT). Temu, eBay, and Amazon orders add VAT in profit
-                  calculations.
+                  per unit (ex-VAT). Use &quot;Link Temu products&quot; to map Temu
+                  SKUs so Temu order profit uses the same costs. eBay, Amazon, and
+                  Temu add VAT in profit calculations.
                   {searchQuery ? ` Showing matches for “${searchQuery}”.` : ""}
                 </CardDescription>
               </CardHeader>

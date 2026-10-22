@@ -13,22 +13,37 @@ import { getProductCatalog } from "@/lib/products/store";
 import type { StoredOrder } from "@/lib/orders/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { fetchTemuSkuUnitCostAliases } from "@/lib/temu/link-temu-products";
+
+async function loadCostCatalogs() {
+  const catalogRows = await getProductCatalog();
+  const temuAliases = await fetchTemuSkuUnitCostAliases();
+  const withAliases = [
+    ...catalogRows,
+    ...temuAliases.map((alias) => ({
+      sku: alias.temuSku,
+      unitCost: alias.unitCost,
+      defaultPostage: alias.defaultPostage,
+      temuSku: alias.temuSku,
+    })),
+  ];
+  return {
+    catalog: buildProductCatalog(withAliases),
+    postage: buildPostageCatalog(withAliases),
+  };
+}
 
 export async function applyProductCostsToOrders(
   orders: StoredOrder[],
 ): Promise<StoredOrder[]> {
-  const catalogRows = await getProductCatalog();
-  const catalog = buildProductCatalog(catalogRows);
-  const postage = buildPostageCatalog(catalogRows);
+  const { catalog, postage } = await loadCostCatalogs();
   return applyCatalogToOrders(orders, catalog, postage).map(withComputedFinancials);
 }
 
 export async function applyProductCostsToOrder(
   order: StoredOrder,
 ): Promise<StoredOrder> {
-  const catalogRows = await getProductCatalog();
-  const catalog = buildProductCatalog(catalogRows);
-  const postage = buildPostageCatalog(catalogRows);
+  const { catalog, postage } = await loadCostCatalogs();
   return withComputedFinancials(applyCatalogToOrder(order, catalog, postage));
 }
 
@@ -74,9 +89,7 @@ export async function recalculateAllOrderProductCosts(): Promise<number> {
     itemsByOrder.set(item.shopify_order_id, list);
   }
 
-  const catalogRows = await getProductCatalog();
-  const catalog = buildProductCatalog(catalogRows);
-  const postage = buildPostageCatalog(catalogRows);
+  const { catalog, postage } = await loadCostCatalogs();
 
   const updates: {
     shopify_id: number;

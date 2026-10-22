@@ -10,6 +10,8 @@ import {
 import { fetchAllShopifyCatalogVariants } from "@/lib/shopify/products-catalog";
 import type { Product } from "@/lib/products/types";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { linkTemuProductsToCatalog } from "@/lib/temu/link-temu-products";
+export type { LinkTemuProductsResult } from "@/lib/temu/link-temu-products";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
@@ -85,6 +87,10 @@ export async function updateProductCost(
 
   await writeProductsToJson(products);
   return products[index];
+}
+
+export async function linkTemuProducts() {
+  return linkTemuProductsToCatalog();
 }
 
 export async function syncProductsFromShopify(): Promise<{
