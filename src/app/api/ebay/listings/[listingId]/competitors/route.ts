@@ -4,6 +4,7 @@ import { getEbayConfig } from "@/lib/ebay/config";
 import { EbayApiError } from "@/lib/ebay/errors";
 import {
   listCompetitorListings,
+  listOurListingSkuOptions,
   upsertCompetitorListing,
 } from "@/lib/ebay/competitor-prices";
 
@@ -24,8 +25,11 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   try {
-    const competitors = await listCompetitorListings(listingId);
-    return NextResponse.json({ ok: true, competitors });
+    const [competitors, ourSkus] = await Promise.all([
+      listCompetitorListings(listingId),
+      listOurListingSkuOptions(listingId),
+    ]);
+    return NextResponse.json({ ok: true, competitors, ourSkus });
   } catch (error) {
     return NextResponse.json(
       {

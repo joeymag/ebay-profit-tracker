@@ -2,6 +2,10 @@ import {
   fetchCompetitorBrowseSnapshot,
   type CompetitorPriceRow,
 } from "@/lib/ebay/browse-client";
+import {
+  fetchEbayListingDetails,
+  type EbayListingVariation,
+} from "@/lib/ebay/listing-details";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 
 export type EbayCompetitorListingRow = {
@@ -18,6 +22,14 @@ export type EbayCompetitorListingRow = {
   updated_at: string;
 };
 
+export type OurListingSkuOption = {
+  sku: string;
+  specifics: string;
+  specificsKey: string;
+  price: number | null;
+  currency: string | null;
+};
+
 function normalizeItemId(value: string): string {
   const trimmed = value.trim();
   const fromUrl = trimmed.match(/\/itm\/(\d{6,})/);
@@ -26,6 +38,126 @@ function normalizeItemId(value: string): string {
   }
   const digits = trimmed.match(/(\d{6,})/);
   return digits?.[1] ?? trimmed;
+}
+
+export function specificsMatchKey(
+  pairs: Array<{ name: string; value: string }>,
+): string {
+  return pairs
+    .map((pair) => ({
+      name: pair.name.trim().toLowerCase(),
+      value: pair.value.trim().toLowerCase().replace(/\s+/g, " "),
+    }))
+    .filter((pair) => pair.name && pair.value)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.value.localeCompare(b.value))
+    .map((pair) => `${pair.name}=${pair.value}`)
+    .join("|");
+}
+
+function normalizePriceRows(prices: unknown): CompetitorPriceRow[] {
+  if (!Array.isArray(prices)) {
+    return [];
+  }
+  return prices.map((row) => {
+    const item = row as Partial<CompetitorPriceRow>;
+    return {
+      sku: item.sku ?? null,
+      ourSku: item.ourSku?.trim() || null,
+      price: typeof item.price === "number" ? item.price : null,
+      currency: item.currency ?? null,
+      quantityAvailable:
+        typeof item.quantityAvailable === "number"
+          ? item.quantityAvailable
+          : null,
+      specificsPairs: Array.isArray(item.specificsPairs)
+        ? item.specificsPairs
+        : [],
+      specificsLabel: item.specificsLabel?.trim() || "Default",
+    };
+  });
+}
+
+function mergePreservedOurSkus(
+  previous: CompetitorPriceRow[],
+  next: CompetitorPriceRow[],
+): CompetitorPriceRow[] {
+  const byLabel = new Map(
+    previous
+      .filter((row) => row.ourSku)
+      .map((row) => [row.specificsLabel, row.ourSku] as const),
+  );
+  const byKey = new Map(
+    previous
+      .filter((row) => row.ourSku)
+      .map((row) => [specificsMatchKey(row.specificsPairs), row.ourSku] as const),
+  );
+
+  return next.map((row) => ({
+    ...row,
+    ourSku:
+      byLabel.get(row.specificsLabel) ??
+      byKey.get(specificsMatchKey(row.specificsPairs)) ??
+      row.ourSku ??
+      null,
+  }));
+}
+
+export function matchOurSkuForCompetitorRow(
+  row: CompetitorPriceRow,
+  ourOptions: OurListingSkuOption[],
+): string | null {
+  const key = specificsMatchKey(row.specificsPairs);
+  if (!key) {
+    return null;
+  }
+  const exact = ourOptions.find((option) => option.specificsKey === key);
+  if (exact) {
+    return exact.sku;
+  }
+
+  // Fall back: all competitor values appear in our specifics string.
+  const values = row.specificsPairs
+    .map((pair) => pair.value.trim().toLowerCase())
+    .filter(Boolean);
+  if (!values.length) {
+    return null;
+  }
+  const fuzzy = ourOptions.find((option) => {
+    const haystack = option.specifics.toLowerCase();
+    return values.every((value) => haystack.includes(value));
+  });
+  return fuzzy?.sku ?? null;
+}
+
+export async function listOurListingSkuOptions(
+  ourListingId: string,
+): Promise<OurListingSkuOption[]> {
+  try {
+    const listing = await fetchEbayListingDetails(ourListingId);
+    return skuOptionsFromVariations(listing.variations);
+  } catch {
+    return [];
+  }
+}
+
+export function skuOptionsFromVariations(
+  variations: EbayListingVariation[],
+): OurListingSkuOption[] {
+  const options: OurListingSkuOption[] = [];
+  for (const variation of variations) {
+    const sku = variation.sku?.trim();
+    if (!sku) {
+      continue;
+    }
+    options.push({
+      sku,
+      specifics: variation.specifics,
+      specificsKey: specificsMatchKey(variation.specificsPairs),
+      price: variation.price,
+      currency: variation.currency,
+    });
+  }
+  return options;
 }
 
 export async function listCompetitorListings(
@@ -71,8 +203,28 @@ export async function upsertCompetitorListing(input: {
     );
   }
 
-  const now = new Date().toISOString();
   const supabase = createSupabaseAdmin();
+  const { data: existing } = await supabase
+    .from("ebay_competitor_listings")
+    .select("prices")
+    .eq("our_listing_id", ourListingId)
+    .eq("competitor_item_id", competitorItemId)
+    .maybeSingle();
+
+  let prices = mergePreservedOurSkus(
+    normalizePriceRows(existing?.prices),
+    snapshot.variations.map((row) => ({ ...row, ourSku: row.ourSku ?? null })),
+  );
+
+  const ourOptions = await listOurListingSkuOptions(ourListingId);
+  if (ourOptions.length) {
+    prices = prices.map((row) => ({
+      ...row,
+      ourSku: row.ourSku || matchOurSkuForCompetitorRow(row, ourOptions),
+    }));
+  }
+
+  const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("ebay_competitor_listings")
     .upsert(
@@ -82,8 +234,8 @@ export async function upsertCompetitorListing(input: {
         competitor_item_id: competitorItemId,
         competitor_title: snapshot.title,
         competitor_url: snapshot.itemWebUrl,
-        variation_count: snapshot.variations.length,
-        prices: snapshot.variations,
+        variation_count: prices.length,
+        prices,
         fetched_at: now,
         updated_at: now,
       },
@@ -125,6 +277,97 @@ export async function refreshCompetitorListing(
   });
 }
 
+export async function updateCompetitorOurSku(input: {
+  competitorId: string;
+  ourListingId: string;
+  specificsLabel: string;
+  ourSku: string | null;
+}): Promise<EbayCompetitorListingRow> {
+  const supabase = createSupabaseAdmin();
+  const { data: existing, error: loadError } = await supabase
+    .from("ebay_competitor_listings")
+    .select("*")
+    .eq("id", input.competitorId)
+    .eq("our_listing_id", input.ourListingId.trim())
+    .maybeSingle();
+
+  if (loadError) {
+    throw new Error(loadError.message);
+  }
+  if (!existing) {
+    throw new Error("Competitor listing not found.");
+  }
+
+  const ourSku = input.ourSku?.trim() || null;
+  const prices = normalizePriceRows(existing.prices).map((row) =>
+    row.specificsLabel === input.specificsLabel
+      ? { ...row, ourSku }
+      : row,
+  );
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("ebay_competitor_listings")
+    .update({ prices, updated_at: now })
+    .eq("id", input.competitorId)
+    .eq("our_listing_id", input.ourListingId.trim())
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return mapRow(data);
+}
+
+export async function autoMatchCompetitorOurSkus(input: {
+  competitorId: string;
+  ourListingId: string;
+}): Promise<EbayCompetitorListingRow> {
+  const supabase = createSupabaseAdmin();
+  const { data: existing, error: loadError } = await supabase
+    .from("ebay_competitor_listings")
+    .select("*")
+    .eq("id", input.competitorId)
+    .eq("our_listing_id", input.ourListingId.trim())
+    .maybeSingle();
+
+  if (loadError) {
+    throw new Error(loadError.message);
+  }
+  if (!existing) {
+    throw new Error("Competitor listing not found.");
+  }
+
+  const ourOptions = await listOurListingSkuOptions(input.ourListingId);
+  if (!ourOptions.length) {
+    throw new Error(
+      "No SKUs found on your listing. Add SKUs on the Variations tab first.",
+    );
+  }
+
+  const prices = normalizePriceRows(existing.prices).map((row) => ({
+    ...row,
+    ourSku: matchOurSkuForCompetitorRow(row, ourOptions) ?? row.ourSku,
+  }));
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("ebay_competitor_listings")
+    .update({ prices, updated_at: now })
+    .eq("id", input.competitorId)
+    .eq("our_listing_id", input.ourListingId.trim())
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return mapRow(data);
+}
+
 export async function deleteCompetitorListing(
   id: string,
   ourListingId: string,
@@ -156,8 +399,6 @@ function mapRow(row: {
 }): EbayCompetitorListingRow {
   return {
     ...row,
-    prices: Array.isArray(row.prices)
-      ? (row.prices as CompetitorPriceRow[])
-      : [],
+    prices: normalizePriceRows(row.prices),
   };
 }

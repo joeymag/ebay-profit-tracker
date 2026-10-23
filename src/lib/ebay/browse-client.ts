@@ -88,6 +88,8 @@ export type BrowseGroupMember = {
 
 export type CompetitorPriceRow = {
   sku: string | null;
+  /** Our catalog / listing SKU this competitor variation maps to. */
+  ourSku: string | null;
   price: number | null;
   currency: string | null;
   quantityAvailable: number | null;
@@ -229,6 +231,7 @@ export async function fetchCompetitorBrowseSnapshot(
       variations: [
         {
           ...member,
+          ourSku: null,
           specificsLabel: specificsLabelFromPairs(member.specificsPairs),
         },
       ],
@@ -286,6 +289,7 @@ export async function fetchCompetitorBrowseSnapshot(
           : member.specificsPairs;
       return {
         ...member,
+        ourSku: null,
         specificsPairs: pairs,
         specificsLabel: specificsLabelFromPairs(pairs),
       };
