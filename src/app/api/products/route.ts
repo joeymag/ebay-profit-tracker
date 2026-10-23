@@ -47,8 +47,8 @@ export async function POST(request: Request) {
       const ordersUpdated = await recalculateAllOrderProductCosts();
       const linked = result.linkedFromOrders + result.linkedFromTemuApi;
       return NextResponse.json({
-        ok: true,
         ...result,
+        ok: true,
         ordersUpdated,
         message: result.skipped
           ? result.skipReason || "Temu link skipped."

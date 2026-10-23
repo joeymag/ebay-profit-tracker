@@ -27,7 +27,7 @@ export async function GET(request: Request) {
         return listTemuAccountPayments(30);
       },
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ...result, ok: true });
   } catch (error) {
     const message =
       error instanceof TemuApiError
@@ -43,7 +43,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
-    const file = form.get("file");
+    // Cast: conflicting FormData typings can omit `.get` under Next/DOM merge.
+    const file = (form as unknown as globalThis.FormData).get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ ok: false, error: "Choose a Temu payment report CSV or Excel file." }, { status: 400 });
     }
