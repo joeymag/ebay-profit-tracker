@@ -275,6 +275,38 @@ export type Database = {
         >;
         Relationships: [];
       };
+      ebay_competitor_listings: {
+        Row: {
+          id: string;
+          our_listing_id: string;
+          competitor_name: string;
+          competitor_item_id: string;
+          competitor_title: string | null;
+          competitor_url: string | null;
+          variation_count: number;
+          prices: unknown;
+          fetched_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          our_listing_id: string;
+          competitor_name: string;
+          competitor_item_id: string;
+          competitor_title?: string | null;
+          competitor_url?: string | null;
+          variation_count?: number;
+          prices?: unknown;
+          fetched_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["ebay_competitor_listings"]["Insert"]
+        >;
+        Relationships: [];
+      };
       amazon_reprice_events: {
         Row: {
           id: number;

@@ -86,6 +86,32 @@ export type BrowseGroupMember = {
   specificsPairs: Array<{ name: string; value: string }>;
 };
 
+export type CompetitorPriceRow = {
+  sku: string | null;
+  price: number | null;
+  currency: string | null;
+  quantityAvailable: number | null;
+  specificsPairs: Array<{ name: string; value: string }>;
+  specificsLabel: string;
+};
+
+export type CompetitorBrowseSnapshot = {
+  itemId: string;
+  itemGroupId: string | null;
+  title: string | null;
+  itemWebUrl: string | null;
+  variations: CompetitorPriceRow[];
+};
+
+function specificsLabelFromPairs(
+  pairs: Array<{ name: string; value: string }>,
+): string {
+  if (!pairs.length) {
+    return "Default";
+  }
+  return pairs.map((pair) => `${pair.name}: ${pair.value}`).join(" · ");
+}
+
 type BrowseLocalizedAspect = {
   name?: string;
   value?: string;
@@ -169,6 +195,119 @@ export async function fetchBrowseGroupMembersByListingId(
   }
 
   return items.map(parseBrowseGroupMember);
+}
+
+/**
+ * Public Browse snapshot for any seller's listing (single SKU or full MSKU group).
+ */
+export async function fetchCompetitorBrowseSnapshot(
+  itemId: string,
+): Promise<CompetitorBrowseSnapshot | null> {
+  const { marketplaceId } = getEbayConfig();
+  const trimmedId = itemId.trim();
+  if (!trimmedId) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    legacy_item_id: trimmedId,
+  });
+  const response = await browseFetch(
+    `/item/get_item_by_legacy_id?${params.toString()}`,
+    marketplaceId,
+  );
+  const text = await response.text();
+
+  if (response.ok) {
+    const data = JSON.parse(text) as BrowseItemResponse;
+    const member = parseBrowseGroupMember(data);
+    return {
+      itemId: trimmedId,
+      itemGroupId: null,
+      title: data.title?.trim() || null,
+      itemWebUrl: data.itemWebUrl?.trim() || null,
+      variations: [
+        {
+          ...member,
+          specificsLabel: specificsLabelFromPairs(member.specificsPairs),
+        },
+      ],
+    };
+  }
+
+  if (response.status !== 400) {
+    throw new EbayApiError(
+      `eBay Browse API error (${response.status}) for item ${trimmedId}`,
+      response.status,
+      text,
+    );
+  }
+
+  const itemGroupId = itemGroupIdFromBrowseError(text, trimmedId);
+  if (!itemGroupId) {
+    return null;
+  }
+
+  const groupParams = new URLSearchParams({ item_group_id: itemGroupId });
+  const groupResponse = await browseFetch(
+    `/item/get_items_by_item_group?${groupParams.toString()}`,
+    marketplaceId,
+  );
+  const groupText = await groupResponse.text();
+  if (!groupResponse.ok) {
+    throw new EbayApiError(
+      `eBay Browse API error (${groupResponse.status}) for item group ${itemGroupId}`,
+      groupResponse.status,
+      groupText,
+    );
+  }
+
+  const groupData = JSON.parse(groupText) as ItemGroupResponse;
+  const items = groupData.items ?? [];
+  if (!items.length) {
+    return null;
+  }
+
+  const primary = items[0]!;
+  const members = items.map(parseBrowseGroupMember);
+  const varyingNames = varyingAspectNames(members);
+
+  return {
+    itemId: trimmedId,
+    itemGroupId,
+    title: primary.title?.trim() || null,
+    itemWebUrl: primary.itemWebUrl?.trim() || null,
+    variations: members.map((member) => {
+      const pairs =
+        varyingNames.length > 0
+          ? member.specificsPairs.filter((pair) =>
+              varyingNames.includes(pair.name),
+            )
+          : member.specificsPairs;
+      return {
+        ...member,
+        specificsPairs: pairs,
+        specificsLabel: specificsLabelFromPairs(pairs),
+      };
+    }),
+  };
+}
+
+function varyingAspectNames(
+  members: BrowseGroupMember[],
+): string[] {
+  const valuesByName = new Map<string, Set<string>>();
+  for (const member of members) {
+    for (const pair of member.specificsPairs) {
+      const set = valuesByName.get(pair.name) ?? new Set<string>();
+      set.add(pair.value);
+      valuesByName.set(pair.name, set);
+    }
+  }
+
+  return [...valuesByName.entries()]
+    .filter(([, values]) => values.size > 1)
+    .map(([name]) => name);
 }
 
 function itemGroupIdFromBrowseError(

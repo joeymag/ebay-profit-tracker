@@ -180,9 +180,14 @@ function MoneyDraftInput({
 
 type ListingVariationsPanelProps = {
   listingId: string;
+  /** When embedded in listing tabs, hide the duplicate back link. */
+  hideBackLink?: boolean;
 };
 
-export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProps) {
+export function ListingVariationsPanel({
+  listingId,
+  hideBackLink = false,
+}: ListingVariationsPanelProps) {
   const [listing, setListing] = useState<EbayListingDetails | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
   const [titleDraft, setTitleDraft] = useState("");
@@ -1038,13 +1043,15 @@ export function ListingVariationsPanel({ listingId }: ListingVariationsPanelProp
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <Link
-          href="/ebay-listings"
-          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-        >
-          <ArrowLeft className="size-4" />
-          All listings
-        </Link>
+        {hideBackLink ? null : (
+          <Link
+            href="/ebay-listings"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <ArrowLeft className="size-4" />
+            All listings
+          </Link>
+        )}
         <Button
           type="button"
           variant="outline"
