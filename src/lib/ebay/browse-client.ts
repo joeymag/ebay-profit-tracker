@@ -1,6 +1,9 @@
 import { getEbayApplicationAccessToken } from "@/lib/ebay/auth";
 import { getEbayConfig } from "@/lib/ebay/config";
+import type { CompetitorPriceRow } from "@/lib/ebay/competitor-prices-shared";
 import { EbayApiError } from "@/lib/ebay/errors";
+
+export type { CompetitorPriceRow } from "@/lib/ebay/competitor-prices-shared";
 
 export type BrowseItemDetails = {
   listingId: string;
@@ -86,16 +89,9 @@ export type BrowseGroupMember = {
   specificsPairs: Array<{ name: string; value: string }>;
 };
 
-export type CompetitorPriceRow = {
-  sku: string | null;
-  /** Our catalog / listing SKU this competitor variation maps to. */
-  ourSku: string | null;
-  price: number | null;
-  currency: string | null;
-  quantityAvailable: number | null;
-  specificsPairs: Array<{ name: string; value: string }>;
-  specificsLabel: string;
-};
+import type { CompetitorPriceRow } from "@/lib/ebay/competitor-prices-shared";
+
+export type { CompetitorPriceRow } from "@/lib/ebay/competitor-prices-shared";
 
 export type CompetitorBrowseSnapshot = {
   itemId: string;

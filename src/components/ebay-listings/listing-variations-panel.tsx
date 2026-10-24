@@ -33,7 +33,7 @@ import {
   cheapestCompetitorByOurSku,
   type CompetitorPriceBySku,
   type EbayCompetitorListingRow,
-} from "@/lib/ebay/competitor-prices";
+} from "@/lib/ebay/competitor-prices-shared";
 import { DescriptionRichTextEditor } from "@/components/ebay-listings/description-rich-text-editor";
 import { applyDescriptionTemplate } from "@/lib/ebay/apply-description-template";
 import { variationRowNeedsSku } from "@/lib/ebay/listing-sku-status";

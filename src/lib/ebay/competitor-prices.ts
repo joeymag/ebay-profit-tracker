@@ -1,76 +1,29 @@
+import { fetchCompetitorBrowseSnapshot } from "@/lib/ebay/browse-client";
 import {
-  fetchCompetitorBrowseSnapshot,
+  matchOurSkuForCompetitorRow,
+  specificsMatchKey,
   type CompetitorPriceRow,
-} from "@/lib/ebay/browse-client";
+  type EbayCompetitorListingRow,
+  type OurListingSkuOption,
+} from "@/lib/ebay/competitor-prices-shared";
 import {
   fetchEbayListingDetails,
   type EbayListingVariation,
 } from "@/lib/ebay/listing-details";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 
-export type EbayCompetitorListingRow = {
-  id: string;
-  our_listing_id: string;
-  competitor_name: string;
-  competitor_item_id: string;
-  competitor_title: string | null;
-  competitor_url: string | null;
-  variation_count: number;
-  prices: CompetitorPriceRow[];
-  fetched_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+export type {
+  CompetitorPriceBySku,
+  CompetitorPriceRow,
+  EbayCompetitorListingRow,
+  OurListingSkuOption,
+} from "@/lib/ebay/competitor-prices-shared";
 
-export type OurListingSkuOption = {
-  sku: string;
-  specifics: string;
-  specificsKey: string;
-  price: number | null;
-  currency: string | null;
-};
-
-/** Cheapest linked competitor price for one of our SKUs. */
-export type CompetitorPriceBySku = {
-  ourSku: string;
-  competitorName: string;
-  competitorItemId: string;
-  competitorPrice: number;
-  currency: string | null;
-  specificsLabel: string;
-};
-
-/**
- * For each of our SKUs, pick the lowest competitor price among saved mappings.
- */
-export function cheapestCompetitorByOurSku(
-  competitors: EbayCompetitorListingRow[],
-): Map<string, CompetitorPriceBySku> {
-  const map = new Map<string, CompetitorPriceBySku>();
-
-  for (const competitor of competitors) {
-    for (const row of competitor.prices) {
-      const ourSku = row.ourSku?.trim();
-      if (!ourSku || row.price == null || !Number.isFinite(row.price)) {
-        continue;
-      }
-
-      const current = map.get(ourSku);
-      if (!current || row.price < current.competitorPrice) {
-        map.set(ourSku, {
-          ourSku,
-          competitorName: competitor.competitor_name,
-          competitorItemId: competitor.competitor_item_id,
-          competitorPrice: row.price,
-          currency: row.currency,
-          specificsLabel: row.specificsLabel,
-        });
-      }
-    }
-  }
-
-  return map;
-}
+export {
+  cheapestCompetitorByOurSku,
+  matchOurSkuForCompetitorRow,
+  specificsMatchKey,
+} from "@/lib/ebay/competitor-prices-shared";
 
 function normalizeItemId(value: string): string {
   const trimmed = value.trim();
@@ -80,20 +33,6 @@ function normalizeItemId(value: string): string {
   }
   const digits = trimmed.match(/(\d{6,})/);
   return digits?.[1] ?? trimmed;
-}
-
-export function specificsMatchKey(
-  pairs: Array<{ name: string; value: string }>,
-): string {
-  return pairs
-    .map((pair) => ({
-      name: pair.name.trim().toLowerCase(),
-      value: pair.value.trim().toLowerCase().replace(/\s+/g, " "),
-    }))
-    .filter((pair) => pair.name && pair.value)
-    .sort((a, b) => a.name.localeCompare(b.name) || a.value.localeCompare(b.value))
-    .map((pair) => `${pair.name}=${pair.value}`)
-    .join("|");
 }
 
 function normalizePriceRows(prices: unknown): CompetitorPriceRow[] {
@@ -142,33 +81,6 @@ function mergePreservedOurSkus(
       row.ourSku ??
       null,
   }));
-}
-
-export function matchOurSkuForCompetitorRow(
-  row: CompetitorPriceRow,
-  ourOptions: OurListingSkuOption[],
-): string | null {
-  const key = specificsMatchKey(row.specificsPairs);
-  if (!key) {
-    return null;
-  }
-  const exact = ourOptions.find((option) => option.specificsKey === key);
-  if (exact) {
-    return exact.sku;
-  }
-
-  // Fall back: all competitor values appear in our specifics string.
-  const values = row.specificsPairs
-    .map((pair) => pair.value.trim().toLowerCase())
-    .filter(Boolean);
-  if (!values.length) {
-    return null;
-  }
-  const fuzzy = ourOptions.find((option) => {
-    const haystack = option.specifics.toLowerCase();
-    return values.every((value) => haystack.includes(value));
-  });
-  return fuzzy?.sku ?? null;
 }
 
 export async function listOurListingSkuOptions(
@@ -255,7 +167,10 @@ export async function upsertCompetitorListing(input: {
 
   let prices = mergePreservedOurSkus(
     normalizePriceRows(existing?.prices),
-    snapshot.variations.map((row) => ({ ...row, ourSku: row.ourSku ?? null })),
+    snapshot.variations.map((row) => ({
+      ...row,
+      ourSku: row.ourSku ?? null,
+    })),
   );
 
   const ourOptions = await listOurListingSkuOptions(ourListingId);

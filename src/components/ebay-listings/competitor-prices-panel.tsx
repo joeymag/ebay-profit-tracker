@@ -31,7 +31,7 @@ import {
 import type {
   EbayCompetitorListingRow,
   OurListingSkuOption,
-} from "@/lib/ebay/competitor-prices";
+} from "@/lib/ebay/competitor-prices-shared";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
