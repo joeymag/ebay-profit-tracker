@@ -65,6 +65,271 @@ function priceDiff(
   return ourPrice - competitorPrice;
 }
 
+const PREFERRED_AXIS_ORDER = [
+  "screw size",
+  "size",
+  "gauge",
+  "your pack quantity",
+  "pack quantity",
+  "pack size",
+  "quantity",
+  "number in pack",
+];
+
+function shortAxisLabel(name: string): string {
+  const lower = name.trim().toLowerCase();
+  if (lower.includes("screw size") || lower === "size") return "Size";
+  if (lower.includes("pack")) return "Pack";
+  if (lower.includes("gauge")) return "Gauge";
+  if (lower.includes("quantity") || lower.includes("qty")) return "Qty";
+  return name;
+}
+
+function shortAspectValue(value: string): string {
+  // "3mm x 10mm (No.4 x 3/8\")" → keep readable but drop trailing noise if huge
+  const trimmed = value.trim();
+  if (trimmed.length <= 40) return trimmed;
+  return `${trimmed.slice(0, 37)}…`;
+}
+
+function axisNamesFromCompetitor(
+  competitor: EbayCompetitorListingRow,
+): string[] {
+  const counts = new Map<string, Set<string>>();
+  for (const row of competitor.prices) {
+    for (const pair of row.specificsPairs) {
+      const set = counts.get(pair.name) ?? new Set<string>();
+      set.add(pair.value);
+      counts.set(pair.name, set);
+    }
+  }
+
+  const varying = [...counts.entries()]
+    .filter(([, values]) => values.size > 1)
+    .map(([name]) => name);
+
+  const names = varying.length > 0 ? varying : [...counts.keys()];
+  return names.sort((a, b) => {
+    const ai = PREFERRED_AXIS_ORDER.findIndex((key) =>
+      a.toLowerCase().includes(key),
+    );
+    const bi = PREFERRED_AXIS_ORDER.findIndex((key) =>
+      b.toLowerCase().includes(key),
+    );
+    const aRank = ai === -1 ? 99 : ai;
+    const bRank = bi === -1 ? 99 : bi;
+    return aRank - bRank || a.localeCompare(b);
+  });
+}
+
+function aspectValue(
+  row: EbayCompetitorListingRow["prices"][number],
+  axisName: string,
+): string {
+  return (
+    row.specificsPairs.find((pair) => pair.name === axisName)?.value?.trim() ||
+    "—"
+  );
+}
+
+function sortCompetitorRows(
+  rows: EbayCompetitorListingRow["prices"],
+  axes: string[],
+) {
+  return [...rows].sort((a, b) => {
+    for (const axis of axes) {
+      const av = aspectValue(a, axis);
+      const bv = aspectValue(b, axis);
+      const an = Number.parseFloat(av.replace(/,/g, ""));
+      const bn = Number.parseFloat(bv.replace(/,/g, ""));
+      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) {
+        return an - bn;
+      }
+      const cmp = av.localeCompare(bv, undefined, { numeric: true });
+      if (cmp) return cmp;
+    }
+    return a.specificsLabel.localeCompare(b.specificsLabel, undefined, {
+      numeric: true,
+    });
+  });
+}
+
+function CompetitorPricesTable({
+  competitor,
+  ourSkus,
+  ourPriceBySku,
+  savingSkuKey,
+  onSaveOurSku,
+}: {
+  competitor: EbayCompetitorListingRow;
+  ourSkus: OurListingSkuOption[];
+  ourPriceBySku: Map<string, OurListingSkuOption>;
+  savingSkuKey: string | null;
+  onSaveOurSku: (
+    competitorId: string,
+    specificsLabel: string,
+    ourSku: string,
+  ) => Promise<void>;
+}) {
+  const axes = useMemo(
+    () => axisNamesFromCompetitor(competitor).slice(0, 3),
+    [competitor],
+  );
+  const rows = useMemo(
+    () => sortCompetitorRows(competitor.prices, axes),
+    [competitor.prices, axes],
+  );
+  const showTheirSku = rows.some((row) => Boolean(row.sku?.trim()));
+
+  return (
+    <div className="overflow-x-auto">
+      <Table className="min-w-[720px] text-sm">
+        <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
+          <TableRow className="hover:bg-transparent">
+            {axes.map((axis) => (
+              <TableHead
+                key={axis}
+                className="whitespace-nowrap px-3 first:pl-5"
+              >
+                {shortAxisLabel(axis)}
+              </TableHead>
+            ))}
+            {axes.length === 0 ? (
+              <TableHead className="pl-5">Variation</TableHead>
+            ) : null}
+            <TableHead className="w-[7.5rem] whitespace-nowrap px-3 text-right">
+              Their £
+            </TableHead>
+            <TableHead className="w-[7.5rem] whitespace-nowrap px-3 text-right">
+              Our £
+            </TableHead>
+            <TableHead className="w-[6.5rem] whitespace-nowrap px-3 text-right">
+              Diff
+            </TableHead>
+            <TableHead className="min-w-[9.5rem] px-3">Our SKU</TableHead>
+            {showTheirSku ? (
+              <TableHead className="px-3 pr-5 text-muted-foreground">
+                Their SKU
+              </TableHead>
+            ) : null}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row, index) => {
+            const our = row.ourSku
+              ? ourPriceBySku.get(row.ourSku)
+              : undefined;
+            const diff = priceDiff(our?.price, row.price);
+            const skuKey = `${competitor.id}:${row.specificsLabel}`;
+            const undercut = diff != null && diff > 0;
+            const weCheaper = diff != null && diff < 0;
+            const prev = rows[index - 1];
+            const sizeAxis = axes[0];
+            const newSizeGroup =
+              sizeAxis &&
+              prev &&
+              aspectValue(prev, sizeAxis) !== aspectValue(row, sizeAxis);
+
+            return (
+              <TableRow
+                key={`${competitor.id}-${row.specificsLabel}-${index}`}
+                className={cn(
+                  undercut && "bg-amber-500/10",
+                  weCheaper && "bg-emerald-500/5",
+                  newSizeGroup && "border-t-2 border-border",
+                )}
+              >
+                {axes.map((axis) => (
+                  <TableCell
+                    key={axis}
+                    className="whitespace-nowrap px-3 align-middle first:pl-5"
+                    title={aspectValue(row, axis)}
+                  >
+                    <span className="font-medium">
+                      {shortAspectValue(aspectValue(row, axis))}
+                    </span>
+                  </TableCell>
+                ))}
+                {axes.length === 0 ? (
+                  <TableCell className="max-w-[16rem] whitespace-normal pl-5 align-middle text-xs">
+                    {row.specificsLabel}
+                  </TableCell>
+                ) : null}
+                <TableCell className="px-3 text-right align-middle tabular-nums font-medium">
+                  {row.price != null
+                    ? formatMoney(row.price, row.currency || "GBP")
+                    : "—"}
+                </TableCell>
+                <TableCell className="px-3 text-right align-middle tabular-nums">
+                  {our?.price != null
+                    ? formatMoney(our.price, our.currency || "GBP")
+                    : "—"}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "px-3 text-right align-middle tabular-nums font-medium",
+                    diff == null
+                      ? "text-muted-foreground"
+                      : undercut
+                        ? "text-amber-700 dark:text-amber-300"
+                        : weCheaper
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "",
+                  )}
+                >
+                  {diff == null
+                    ? "—"
+                    : `${diff > 0 ? "+" : ""}${formatMoney(
+                        diff,
+                        row.currency || our?.currency || "GBP",
+                      )}`}
+                </TableCell>
+                <TableCell className="px-3 align-middle">
+                  <select
+                    className="h-8 w-full max-w-[11rem] rounded-md border border-input bg-transparent px-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+                    value={row.ourSku ?? ""}
+                    title={
+                      row.ourSku
+                        ? ourPriceBySku.get(row.ourSku)?.specifics || row.ourSku
+                        : "Link to your SKU"
+                    }
+                    disabled={
+                      ourSkus.length === 0 || savingSkuKey === skuKey
+                    }
+                    onChange={(event) =>
+                      void onSaveOurSku(
+                        competitor.id,
+                        row.specificsLabel,
+                        event.target.value,
+                      )
+                    }
+                  >
+                    <option value="">Not linked</option>
+                    {ourSkus.map((option) => (
+                      <option
+                        key={option.sku}
+                        value={option.sku}
+                        title={option.specifics}
+                      >
+                        {option.sku}
+                      </option>
+                    ))}
+                  </select>
+                </TableCell>
+                {showTheirSku ? (
+                  <TableCell className="px-3 pr-5 align-middle font-mono text-xs text-muted-foreground">
+                    {row.sku || "—"}
+                  </TableCell>
+                ) : null}
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 export function CompetitorPricesPanel({ listingId }: CompetitorPricesPanelProps) {
   const [competitors, setCompetitors] = useState<EbayCompetitorListingRow[]>(
     [],
@@ -387,7 +652,7 @@ export function CompetitorPricesPanel({ listingId }: CompetitorPricesPanelProps)
                     {competitor.competitor_name}
                   </CardTitle>
                   <CardDescription className="space-y-1">
-                    <span className="block">
+                    <span className="block truncate" title={competitor.competitor_title ?? undefined}>
                       Item {competitor.competitor_item_id}
                       {competitor.competitor_title
                         ? ` · ${competitor.competitor_title}`
@@ -468,93 +733,13 @@ export function CompetitorPricesPanel({ listingId }: CompetitorPricesPanelProps)
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <Table className="min-w-[980px]">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="pl-6">Variation</TableHead>
-                      <TableHead>Their SKU</TableHead>
-                      <TableHead className="min-w-[14rem]">Our SKU</TableHead>
-                      <TableHead className="text-right">Their price</TableHead>
-                      <TableHead className="text-right">Our price</TableHead>
-                      <TableHead className="pr-6 text-right">Diff</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {competitor.prices.map((row, index) => {
-                      const our = row.ourSku
-                        ? ourPriceBySku.get(row.ourSku)
-                        : undefined;
-                      const diff = priceDiff(our?.price, row.price);
-                      const skuKey = `${competitor.id}:${row.specificsLabel}`;
-                      return (
-                        <TableRow
-                          key={`${competitor.id}-${row.specificsLabel}-${index}`}
-                        >
-                          <TableCell className="max-w-[22rem] whitespace-normal pl-6 align-top">
-                            {row.specificsLabel}
-                          </TableCell>
-                          <TableCell className="align-top font-mono text-xs">
-                            {row.sku || "—"}
-                          </TableCell>
-                          <TableCell className="align-top">
-                            <select
-                              className="h-8 w-full min-w-[12rem] rounded-lg border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-                              value={row.ourSku ?? ""}
-                              disabled={
-                                ourSkus.length === 0 || savingSkuKey === skuKey
-                              }
-                              onChange={(event) =>
-                                void saveOurSku(
-                                  competitor.id,
-                                  row.specificsLabel,
-                                  event.target.value,
-                                )
-                              }
-                            >
-                              <option value="">Not linked</option>
-                              {ourSkus.map((option) => (
-                                <option key={option.sku} value={option.sku}>
-                                  {option.sku}
-                                  {option.specifics
-                                    ? ` — ${option.specifics}`
-                                    : ""}
-                                </option>
-                              ))}
-                            </select>
-                          </TableCell>
-                          <TableCell className="text-right align-top tabular-nums">
-                            {row.price != null
-                              ? formatMoney(row.price, row.currency || "GBP")
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-right align-top tabular-nums">
-                            {our?.price != null
-                              ? formatMoney(our.price, our.currency || "GBP")
-                              : "—"}
-                          </TableCell>
-                          <TableCell
-                            className={cn(
-                              "pr-6 text-right align-top tabular-nums",
-                              diff == null
-                                ? "text-muted-foreground"
-                                : diff > 0
-                                  ? "text-amber-700 dark:text-amber-300"
-                                  : diff < 0
-                                    ? "text-emerald-700 dark:text-emerald-300"
-                                    : "",
-                            )}
-                          >
-                            {diff == null
-                              ? "—"
-                              : `${diff > 0 ? "+" : ""}${formatMoney(diff, row.currency || our?.currency || "GBP")}`}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+              <CompetitorPricesTable
+                competitor={competitor}
+                ourSkus={ourSkus}
+                ourPriceBySku={ourPriceBySku}
+                savingSkuKey={savingSkuKey}
+                onSaveOurSku={saveOurSku}
+              />
             </CardContent>
           </Card>
         ))
