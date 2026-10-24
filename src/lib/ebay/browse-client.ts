@@ -89,10 +89,6 @@ export type BrowseGroupMember = {
   specificsPairs: Array<{ name: string; value: string }>;
 };
 
-import type { CompetitorPriceRow } from "@/lib/ebay/competitor-prices-shared";
-
-export type { CompetitorPriceRow } from "@/lib/ebay/competitor-prices-shared";
-
 export type CompetitorBrowseSnapshot = {
   itemId: string;
   itemGroupId: string | null;
