@@ -30,6 +30,48 @@ export type OurListingSkuOption = {
   currency: string | null;
 };
 
+/** Cheapest linked competitor price for one of our SKUs. */
+export type CompetitorPriceBySku = {
+  ourSku: string;
+  competitorName: string;
+  competitorItemId: string;
+  competitorPrice: number;
+  currency: string | null;
+  specificsLabel: string;
+};
+
+/**
+ * For each of our SKUs, pick the lowest competitor price among saved mappings.
+ */
+export function cheapestCompetitorByOurSku(
+  competitors: EbayCompetitorListingRow[],
+): Map<string, CompetitorPriceBySku> {
+  const map = new Map<string, CompetitorPriceBySku>();
+
+  for (const competitor of competitors) {
+    for (const row of competitor.prices) {
+      const ourSku = row.ourSku?.trim();
+      if (!ourSku || row.price == null || !Number.isFinite(row.price)) {
+        continue;
+      }
+
+      const current = map.get(ourSku);
+      if (!current || row.price < current.competitorPrice) {
+        map.set(ourSku, {
+          ourSku,
+          competitorName: competitor.competitor_name,
+          competitorItemId: competitor.competitor_item_id,
+          competitorPrice: row.price,
+          currency: row.currency,
+          specificsLabel: row.specificsLabel,
+        });
+      }
+    }
+  }
+
+  return map;
+}
+
 function normalizeItemId(value: string): string {
   const trimmed = value.trim();
   const fromUrl = trimmed.match(/\/itm\/(\d{6,})/);

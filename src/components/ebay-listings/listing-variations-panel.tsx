@@ -29,6 +29,11 @@ import type {
   EbayListingVariation,
   EbayVariationEdit,
 } from "@/lib/ebay/listing-details";
+import {
+  cheapestCompetitorByOurSku,
+  type CompetitorPriceBySku,
+  type EbayCompetitorListingRow,
+} from "@/lib/ebay/competitor-prices";
 import { DescriptionRichTextEditor } from "@/components/ebay-listings/description-rich-text-editor";
 import { applyDescriptionTemplate } from "@/lib/ebay/apply-description-template";
 import { variationRowNeedsSku } from "@/lib/ebay/listing-sku-status";
@@ -42,6 +47,10 @@ import { cn } from "@/lib/utils";
 type DetailsResponse =
   | { ok: true; listing: EbayListingDetails }
   | { ok: false; error: string; code?: string; details?: string };
+
+type CompetitorsResponse =
+  | { ok: true; competitors: EbayCompetitorListingRow[] }
+  | { ok: false; error: string };
 
 type ReviseResponse =
   | {
@@ -211,6 +220,10 @@ export function ListingVariationsPanel({
     () => new Set(),
   );
   const [bulkPostage, setBulkPostage] = useState("");
+  const [competitorBySku, setCompetitorBySku] = useState<
+    Map<string, CompetitorPriceBySku>
+  >(() => new Map());
+  const [undercutOnly, setUndercutOnly] = useState(false);
 
   useEffect(() => {
     try {
@@ -230,10 +243,23 @@ export function ListingVariationsPanel({
     setSaveError(null);
 
     try {
-      const response = await fetch(
-        `/api/ebay/listings/${encodeURIComponent(listingId)}/details`,
-      );
-      const payload = (await response.json()) as DetailsResponse;
+      const [detailsResponse, competitorsResponse] = await Promise.all([
+        fetch(`/api/ebay/listings/${encodeURIComponent(listingId)}/details`),
+        fetch(
+          `/api/ebay/listings/${encodeURIComponent(listingId)}/competitors`,
+        ),
+      ]);
+      const payload = (await detailsResponse.json()) as DetailsResponse;
+      const competitorsPayload =
+        (await competitorsResponse.json()) as CompetitorsResponse;
+
+      if (competitorsPayload.ok) {
+        setCompetitorBySku(
+          cheapestCompetitorByOurSku(competitorsPayload.competitors),
+        );
+      } else {
+        setCompetitorBySku(new Map());
+      }
 
       if (!payload.ok) {
         setListing(null);
@@ -258,6 +284,7 @@ export function ListingVariationsPanel({
       setDescriptionDraft("");
       setDrafts([]);
       setSelectedIndexes(new Set());
+      setCompetitorBySku(new Map());
       setError({
         ok: false,
         error: "Could not reach the listing details endpoint.",
@@ -376,6 +403,43 @@ export function ListingVariationsPanel({
       });
     });
   }, [drafts, listing?.promoRatePercent, sellingFeePercent]);
+
+  const undercutByIndex = useMemo(() => {
+    if (!listing) {
+      return new Map<number, { competitor: CompetitorPriceBySku; gap: number }>();
+    }
+
+    const map = new Map<
+      number,
+      { competitor: CompetitorPriceBySku; gap: number }
+    >();
+
+    listing.variations.forEach((row, index) => {
+      const draft = drafts[index];
+      const sku = (draft?.sku.trim() || row.sku?.trim() || "").trim();
+      if (!sku) {
+        return;
+      }
+      const competitor = competitorBySku.get(sku);
+      if (!competitor) {
+        return;
+      }
+      const ourPrice = parseMoneyInput(draft?.price ?? "");
+      if (ourPrice == null) {
+        return;
+      }
+      if (competitor.competitorPrice < ourPrice) {
+        map.set(index, {
+          competitor,
+          gap: ourPrice - competitor.competitorPrice,
+        });
+      }
+    });
+
+    return map;
+  }, [listing, drafts, competitorBySku]);
+
+  const undercutCount = undercutByIndex.size;
 
   const missingSkuIndexes = useMemo(() => {
     if (!listing) {
@@ -1320,6 +1384,13 @@ export function ListingVariationsPanel({
                     {missingSkuIndexes.length} missing SKU
                   </Badge>
                 ) : null}
+                {undercutCount > 0 ? (
+                  <Badge variant="destructive">
+                    {undercutCount} undercut by competitor
+                  </Badge>
+                ) : competitorBySku.size > 0 ? (
+                  <Badge variant="secondary">Competitors linked</Badge>
+                ) : null}
               </CardDescription>
               {listing.promoWarning ? (
                 <p className="text-sm text-amber-700 dark:text-amber-300">
@@ -1465,19 +1536,43 @@ export function ListingVariationsPanel({
                 </>
               )}
             </Button>
-            <p className="text-sm text-muted-foreground lg:pb-2">
-              {allRowsSelected
-                ? "All variations selected"
-                : `${selectedIndexes.size} of ${drafts.length} selected`}
-              {missingSkuIndexes.length > 0
-                ? ` · ${missingSkuIndexes.length} missing SKU`
-                : ""}
-            </p>
+            <div className="flex flex-wrap items-center gap-3 lg:pb-2">
+              <p className="text-sm text-muted-foreground">
+                {allRowsSelected
+                  ? "All variations selected"
+                  : `${selectedIndexes.size} of ${drafts.length} selected`}
+                {missingSkuIndexes.length > 0
+                  ? ` · ${missingSkuIndexes.length} missing SKU`
+                  : ""}
+                {undercutCount > 0
+                  ? ` · ${undercutCount} cheaper elsewhere`
+                  : ""}
+              </p>
+              {undercutCount > 0 || undercutOnly ? (
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={undercutOnly}
+                    onChange={(event) => setUndercutOnly(event.target.checked)}
+                    className="size-4 rounded border-input accent-primary"
+                  />
+                  Show undercut only
+                </label>
+              ) : null}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
+          {undercutCount > 0 ? (
+            <div className="border-b border-amber-500/30 bg-amber-500/10 px-6 py-3 text-sm text-amber-900 dark:text-amber-100">
+              {undercutCount} variation
+              {undercutCount === 1 ? " is" : "s are"} priced higher than a linked
+              competitor. See the Competitor column
+              {undercutOnly ? "." : ", or filter to undercut only."}
+            </div>
+          ) : null}
           <div className="overflow-x-auto">
-            <Table className="min-w-[1140px]">
+            <Table className="min-w-[1280px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12 pl-6">
@@ -1500,6 +1595,7 @@ export function ListingVariationsPanel({
                   <TableHead>Variation</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead className="w-[8.5rem]">Price</TableHead>
+                  <TableHead className="min-w-[10rem]">Competitor</TableHead>
                   <TableHead className="w-[8.5rem]">Cost ex-VAT</TableHead>
                   <TableHead className="w-[8.5rem]">Postage</TableHead>
                   <TableHead className="w-[7.5rem] text-right">Est. fees</TableHead>
@@ -1519,6 +1615,15 @@ export function ListingVariationsPanel({
                   const selected = selectedIndexes.has(index);
                   const currency = row.currency ?? listing.currency ?? "GBP";
                   const estimate = feeEstimates[index] ?? null;
+                  const undercut = undercutByIndex.get(index);
+                  const sku = (draft.sku.trim() || row.sku?.trim() || "").trim();
+                  const linkedCompetitor = sku
+                    ? competitorBySku.get(sku)
+                    : undefined;
+
+                  if (undercutOnly && !undercut) {
+                    return null;
+                  }
 
                   const needsSku = variationRowNeedsSku(
                     draft.sku,
@@ -1530,11 +1635,13 @@ export function ListingVariationsPanel({
                     <TableRow
                       key={`${row.sku ?? "nosku"}-${index}`}
                       className={
-                        dirty
-                          ? "bg-amber-500/5"
-                          : selected
-                            ? "bg-muted/30"
-                            : undefined
+                        undercut
+                          ? "bg-amber-500/10"
+                          : dirty
+                            ? "bg-amber-500/5"
+                            : selected
+                              ? "bg-muted/30"
+                              : undefined
                       }
                     >
                       <TableCell className="pl-6 align-middle">
@@ -1587,6 +1694,40 @@ export function ListingVariationsPanel({
                             updateDraft(index, { price: value })
                           }
                         />
+                      </TableCell>
+                      <TableCell className="align-top">
+                        {linkedCompetitor ? (
+                          <div className="space-y-0.5">
+                            <p
+                              className={cn(
+                                "tabular-nums font-medium",
+                                undercut
+                                  ? "text-amber-800 dark:text-amber-200"
+                                  : "text-muted-foreground",
+                              )}
+                            >
+                              {formatMoney(
+                                linkedCompetitor.competitorPrice,
+                                linkedCompetitor.currency || currency,
+                              )}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {linkedCompetitor.competitorName}
+                            </p>
+                            {undercut ? (
+                              <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                                Cheaper by{" "}
+                                {formatMoney(undercut.gap, currency)}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                                You match or beat
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="align-top">
                         <MoneyDraftInput
