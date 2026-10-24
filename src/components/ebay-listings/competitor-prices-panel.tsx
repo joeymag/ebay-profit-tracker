@@ -286,7 +286,7 @@ function CompetitorPricesTable({
                 </TableCell>
                 <TableCell className="px-3 align-middle">
                   <select
-                    className="h-8 w-full max-w-[11rem] rounded-md border border-input bg-transparent px-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+                    className="h-8 w-full max-w-[11rem] rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground outline-none [color-scheme:light] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
                     value={row.ourSku ?? ""}
                     title={
                       row.ourSku
@@ -304,12 +304,15 @@ function CompetitorPricesTable({
                       )
                     }
                   >
-                    <option value="">Not linked</option>
+                    <option value="" className="bg-white text-zinc-900">
+                      Not linked
+                    </option>
                     {ourSkus.map((option) => (
                       <option
                         key={option.sku}
                         value={option.sku}
                         title={option.specifics}
+                        className="bg-white text-zinc-900"
                       >
                         {option.sku}
                       </option>
