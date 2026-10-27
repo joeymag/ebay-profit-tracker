@@ -14,6 +14,7 @@ type GenerateSkuBody = {
   listingIds?: string[];
   prefix?: string;
   variationSpecifics?: string[];
+  regenerate?: boolean;
 };
 
 export async function POST(request: Request) {
@@ -85,11 +86,14 @@ export async function POST(request: Request) {
     );
   }
 
+  const regenerate = Boolean(body.regenerate);
+
   if (listingId) {
     const result = await generateListingSkus({
       listingId,
       prefix,
       variationSpecifics,
+      regenerate,
     });
 
     return NextResponse.json({
@@ -98,6 +102,16 @@ export async function POST(request: Request) {
       failureCount: result.ok ? 0 : 1,
       results: [result],
     });
+  }
+
+  if (regenerate) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Regenerate is only supported for a single listingId.",
+      },
+      { status: 400 },
+    );
   }
 
   const results = await generateListingSkusBulk({ listingIds, prefix });

@@ -996,11 +996,15 @@ export function ListingVariationsPanel({
     }
   }
 
-  async function generateSkusForIndexes(indexes: number[]) {
+  async function generateSkusForIndexes(
+    indexes: number[],
+    options?: { regenerate?: boolean },
+  ) {
     if (!listing || indexes.length === 0) {
       return;
     }
 
+    const regenerate = Boolean(options?.regenerate);
     const variationSpecifics = indexes
       .map((index) => listing.variations[index]?.specifics.trim())
       .filter((specifics): specifics is string => Boolean(specifics));
@@ -1022,6 +1026,7 @@ export function ListingVariationsPanel({
           listingId,
           prefix: skuPrefix.trim() || "EBAY",
           variationSpecifics,
+          regenerate,
         }),
       });
       const payload = (await response.json()) as GenerateSkuResponse;
@@ -1039,7 +1044,9 @@ export function ListingVariationsPanel({
 
       const skuCount = result.skus?.length ?? 0;
       setSaveMessage(
-        `Generated ${skuCount} SKU${skuCount === 1 ? "" : "s"} and pushed to eBay.`,
+        regenerate
+          ? `Regenerated ${skuCount} SKU${skuCount === 1 ? "" : "s"} and pushed to eBay.`
+          : `Generated ${skuCount} SKU${skuCount === 1 ? "" : "s"} and pushed to eBay.`,
       );
       await load();
     } catch {
@@ -1056,6 +1063,23 @@ export function ListingVariationsPanel({
     }
 
     await generateSkusForIndexes(selectedMissingSkuIndexes);
+  }
+
+  async function regenerateSkusForSelected() {
+    const indexes = [...selectedIndexes].sort((a, b) => a - b);
+    if (!indexes.length) {
+      setSaveError("Select at least one variation to regenerate.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Regenerate SKUs for ${indexes.length} selected variation${indexes.length === 1 ? "" : "s"}?\n\nThis replaces existing SKUs on eBay with new ones using prefix "${skuPrefix.trim() || "EBAY"}".`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await generateSkusForIndexes(indexes, { regenerate: true });
   }
 
   async function generateAllMissingSkus() {
@@ -1533,6 +1557,29 @@ export function ListingVariationsPanel({
                   <Sparkles className="size-4" />
                   Generate SKU for {selectedMissingSkuIndexes.length || 0}{" "}
                   selected
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void regenerateSkusForSelected()}
+              disabled={
+                saving ||
+                savingCosts ||
+                generatingSkus ||
+                selectedIndexes.size === 0
+              }
+            >
+              {generatingSkus ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Regenerating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="size-4" />
+                  Regenerate SKU for {selectedIndexes.size || 0} selected
                 </>
               )}
             </Button>

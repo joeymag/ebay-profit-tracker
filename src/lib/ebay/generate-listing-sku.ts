@@ -24,6 +24,8 @@ export async function generateListingSkus(input: {
   listingId: string;
   prefix?: string;
   variationSpecifics?: string[];
+  /** When true, replace existing SKUs instead of only filling missing ones. */
+  regenerate?: boolean;
 }): Promise<GenerateListingSkuResult> {
   const listingId = input.listingId.trim();
   if (!listingId) {
@@ -31,6 +33,7 @@ export async function generateListingSkus(input: {
   }
 
   const prefix = input.prefix?.trim() || "EBAY";
+  const regenerate = Boolean(input.regenerate);
 
   try {
     const listing = await fetchEbayListingDetails(listingId);
@@ -48,7 +51,8 @@ export async function generateListingSkus(input: {
         continue;
       }
 
-      if (!listingSkuIsMissing(variation.sku, listingId)) {
+      const skuMissing = listingSkuIsMissing(variation.sku, listingId);
+      if (!regenerate && !skuMissing) {
         continue;
       }
 
@@ -86,8 +90,12 @@ export async function generateListingSkus(input: {
         listingId,
         ok: false,
         error: specificsFilter
-          ? "Selected variations already have SKUs."
-          : "This listing already has SKUs on all variations.",
+          ? regenerate
+            ? "No selected variations could be regenerated."
+            : "Selected variations already have SKUs."
+          : regenerate
+            ? "No variations found to regenerate."
+            : "This listing already has SKUs on all variations.",
       };
     }
 
