@@ -147,6 +147,11 @@ function categorizeFee(breakdownType: string): AmazonFeeCategory {
   return "Other Amazon fees";
 }
 
+/** UK fee rows often nest as Commission → Base + Tax (VAT on the fee). */
+function isFeeCompositionType(breakdownType: string): boolean {
+  return /^(base|tax|basetax)$/i.test(breakdownType.trim());
+}
+
 /**
  * Match on breakdownType only — item titles often contain words like "FBA"
  * and must not turn Principal / Tax lines into fees.
@@ -155,7 +160,7 @@ function looksLikeFeeType(breakdownType: string): boolean {
   const type = breakdownType.toLowerCase().trim();
   if (!type) return false;
 
-  // Parent rollups are summed via their children (leaf-only walk).
+  // Rollups — always walk into children (AmazonFees / Expenses / …).
   if (
     /^(amazonfees|expenses|sales|productcharges|shippingcharges|promotions|taxes|tax)$/i.test(
       type,
@@ -165,7 +170,7 @@ function looksLikeFeeType(breakdownType: string): boolean {
   }
 
   if (
-    /principal|ourprice|productcharge|shippingcharge|^tax$|basetax|shippingtax|giftwrap|promotion|discount|^sales$/i.test(
+    /principal|ourprice|productcharge|shippingcharge|^tax$|basetax|shippingtax|giftwrap|promotion|discount|^sales$|^base$/i.test(
       type,
     ) &&
     !/fee|commission/i.test(type)
@@ -178,9 +183,24 @@ function looksLikeFeeType(breakdownType: string): boolean {
   );
 }
 
+function childrenAreFeeComposition(children: Breakdown[]): boolean {
+  return children.every((child) => {
+    const type = child.breakdownType?.trim() || "";
+    if (isFeeCompositionType(type)) return true;
+    // DigitalServicesFee → DigitalServicesFee → Base/Tax
+    const nested = child.breakdowns ?? [];
+    return (
+      looksLikeFeeType(type) &&
+      nested.length > 0 &&
+      childrenAreFeeComposition(nested)
+    );
+  });
+}
+
 /**
  * Amazon nests breakdowns so parents equal the sum of children.
- * Only count leaves to avoid double-counting.
+ * Count fee nodes once; when Commission/FBA/etc. only have Base+Tax children,
+ * take the parent amount (do not sum Base/Tax separately).
  *
  * Amount is expense contribution: Amazon fee deductions are negative in the
  * API, so we negate them (fee -£5 → expense £5). Fee refunds net down.
@@ -198,32 +218,35 @@ function walkBreakdowns(
   if (!breakdowns?.length) return;
 
   for (const breakdown of breakdowns) {
-    const children = breakdown.breakdowns;
-    if (children?.length) {
-      walkBreakdowns(children, context, lines);
-      continue;
-    }
-
     const type = breakdown.breakdownType?.trim() || "Fee";
+    const children = breakdown.breakdowns ?? [];
     const amountRaw = Number(breakdown.breakdownAmount?.currencyAmount);
     const currency =
       breakdown.breakdownAmount?.currencyCode?.trim() ||
       context.currencyFallback;
 
-    if (
-      Number.isFinite(amountRaw) &&
-      amountRaw !== 0 &&
-      looksLikeFeeType(type)
-    ) {
-      lines.push({
-        category: categorizeFee(type),
-        breakdownType: type,
-        description: context.description,
-        postedDate: context.postedDate,
-        orderId: context.orderId,
-        amount: Number((-amountRaw).toFixed(4)),
-        currency,
-      });
+    if (looksLikeFeeType(type)) {
+      const takeHere =
+        children.length === 0 || childrenAreFeeComposition(children);
+
+      if (takeHere) {
+        if (Number.isFinite(amountRaw) && amountRaw !== 0) {
+          lines.push({
+            category: categorizeFee(type),
+            breakdownType: type,
+            description: context.description,
+            postedDate: context.postedDate,
+            orderId: context.orderId,
+            amount: Number((-amountRaw).toFixed(4)),
+            currency,
+          });
+        }
+        continue;
+      }
+    }
+
+    if (children.length) {
+      walkBreakdowns(children, context, lines);
     }
   }
 }
@@ -251,24 +274,26 @@ function extractFeesFromTransaction(
   const lines: AmazonFeeLine[] = [];
 
   const items = transaction.items ?? [];
-  const itemBreakdowns = items.filter((item) => item.breakdowns?.length);
 
-  // Prefer item-level leaves when present — transaction rollups often mirror them.
-  if (itemBreakdowns.length) {
-    for (const item of itemBreakdowns) {
-      walkBreakdowns(
-        item.breakdowns,
-        {
-          postedDate,
-          orderId,
-          description: item.description?.trim() || description,
-          currencyFallback:
-            item.totalAmount?.currencyCode?.trim() || currencyFallback,
-        },
-        lines,
-      );
-    }
-  } else {
+  // Item rows often only carry Principal/Tax. Selling fees (Commission, FBA, …)
+  // usually sit on transaction.breakdowns — so only skip the transaction tree
+  // when the items themselves already produced fee leaves.
+  for (const item of items) {
+    if (!item.breakdowns?.length) continue;
+    walkBreakdowns(
+      item.breakdowns,
+      {
+        postedDate,
+        orderId,
+        description: item.description?.trim() || description,
+        currencyFallback:
+          item.totalAmount?.currencyCode?.trim() || currencyFallback,
+      },
+      lines,
+    );
+  }
+
+  if (!lines.length) {
     walkBreakdowns(
       transaction.breakdowns,
       { postedDate, orderId, description, currencyFallback },
