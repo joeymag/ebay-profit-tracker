@@ -1,6 +1,7 @@
 import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
 import { AMAZON_SUBSCRIPTION_MONTHLY } from "@/lib/orders/amazon-subscription";
+import { PRODUCT_COST_VAT_RATE } from "@/lib/orders/product-cost-vat";
 
 export type AmazonFeeCategory =
   | "Referral / commission"
@@ -36,9 +37,15 @@ export type AmazonMonthlyFeesSummary = {
   postedBefore: string;
   currency: string;
   totalFees: number;
-  /** Sum of revenue on Amazon orders in the app for this month (order date). */
+  /** Sum of order totals for orders placed this month. */
   settledProductSales: number;
-  /** Amazon orders in the app for this month. */
+  /** VAT rate applied on top of sold-for (default 20%). */
+  vatRate: number;
+  /** VAT amount added on top of sold-for. */
+  vatOnSales: number;
+  /** Sold-for plus VAT. */
+  salesIncVat: number;
+  /** Amazon orders placed this month. */
   orderCount: number;
   /** Orders that had no fee rows yet in Finances (too new / not settled). */
   ordersMissingFees: number;
@@ -439,6 +446,9 @@ function summarise(
   ).filter((row) => row.lineCount > 0);
 
   const totalFees = lines.reduce((sum, line) => sum + line.amount, 0);
+  const vatRate = PRODUCT_COST_VAT_RATE;
+  const vatOnSales = Number((settledProductSales * vatRate).toFixed(2));
+  const salesIncVat = Number((settledProductSales + vatOnSales).toFixed(2));
 
   return {
     year,
@@ -449,6 +459,9 @@ function summarise(
     currency,
     totalFees: Number(totalFees.toFixed(2)),
     settledProductSales,
+    vatRate,
+    vatOnSales,
+    salesIncVat,
     orderCount,
     ordersMissingFees,
     categories: categories.map((row) => ({

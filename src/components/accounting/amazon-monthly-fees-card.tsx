@@ -26,6 +26,9 @@ type FeesSummary = {
   currency: string;
   totalFees: number;
   settledProductSales?: number;
+  vatRate?: number;
+  vatOnSales?: number;
+  salesIncVat?: number;
   orderCount?: number;
   ordersMissingFees?: number;
   categories: FeeCategoryTotal[];
@@ -247,6 +250,20 @@ export function AmazonMonthlyFeesCard() {
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">
+                  VAT ({Math.round((summary.vatRate ?? 0.2) * 100)}%)
+                </span>
+                <span className="tabular-nums text-base font-semibold">
+                  {formatMoney(summary.vatOnSales ?? 0, summary.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Sold for + VAT</span>
+                <span className="tabular-nums text-base font-semibold">
+                  {formatMoney(summary.salesIncVat ?? 0, summary.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">Fees paid to Amazon</span>
                 <span className="tabular-nums text-base font-semibold">
                   {formatMoney(summary.totalFees, summary.currency)}
@@ -256,7 +273,8 @@ export function AmazonMonthlyFeesCard() {
                 <span className="font-medium">Left after Amazon fees</span>
                 <span className="tabular-nums text-lg font-semibold">
                   {formatMoney(
-                    (summary.settledProductSales ?? 0) - summary.totalFees,
+                    (summary.salesIncVat ?? summary.settledProductSales ?? 0) -
+                      summary.totalFees,
                     summary.currency,
                   )}
                 </span>

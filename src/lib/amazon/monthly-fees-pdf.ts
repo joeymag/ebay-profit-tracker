@@ -88,7 +88,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(7);
 
-  page.drawText("Amazon seller fees summary", {
+  page.drawText("Amazon sales & fees summary", {
     x: MARGIN_X,
     y,
     size: 18,
@@ -165,6 +165,38 @@ export async function buildAmazonMonthlyFeesPdf(
   );
   y -= mm(6);
 
+  page.drawText(`VAT (${Math.round(summary.vatRate * 100)}%)`, {
+    x: MARGIN_X,
+    y,
+    size: 10,
+    font,
+  });
+  drawRight(
+    page,
+    formatMoney(summary.vatOnSales, summary.currency),
+    MARGIN_X + contentWidth,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(6);
+
+  page.drawText("Sold for + VAT", {
+    x: MARGIN_X,
+    y,
+    size: 10,
+    font,
+  });
+  drawRight(
+    page,
+    formatMoney(summary.salesIncVat, summary.currency),
+    MARGIN_X + contentWidth,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(6);
+
   page.drawText("Fees paid to Amazon", {
     x: MARGIN_X,
     y,
@@ -189,10 +221,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   drawRight(
     page,
-    formatMoney(
-      summary.settledProductSales - summary.totalFees,
-      summary.currency,
-    ),
+    formatMoney(summary.salesIncVat - summary.totalFees, summary.currency),
     MARGIN_X + contentWidth,
     y,
     11,
