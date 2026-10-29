@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 
 import { AccountPaymentsTable } from "@/components/accounting/account-payments-table";
+import { AmazonMonthlyFeesCard } from "@/components/accounting/amazon-monthly-fees-card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -463,6 +464,7 @@ export function AccountingPanel() {
           )}
         </CardContent>
       </Card>
+      <AmazonMonthlyFeesCard />
       <AccountPaymentsTable channel="amazon" />
         </>
       ) : null}
