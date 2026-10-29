@@ -119,13 +119,25 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(5);
 
   page.drawText(
-    "Prepared for QuickBooks bookkeeping. Net seller fees from Finances (leaf fee lines only; refunds netted).",
+    "Fees posted/settled this month (Finances). Differs from Business Reports ordered sales.",
     {
       x: MARGIN_X,
       y,
       size: 8,
       font,
       color: rgb(0.4, 0.4, 0.4),
+    },
+  );
+  y -= mm(5);
+
+  page.drawText(
+    `Settled product sales in period: ${formatMoney(summary.settledProductSales, summary.currency)}`,
+    {
+      x: MARGIN_X,
+      y,
+      size: 9,
+      font,
+      color: rgb(0.25, 0.25, 0.25),
     },
   );
   y -= mm(10);

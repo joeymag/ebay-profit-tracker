@@ -35,6 +35,8 @@ export type AmazonMonthlyFeesSummary = {
   postedBefore: string;
   currency: string;
   totalFees: number;
+  /** Product principal from shipment payments posted this month (not Business Reports ordered sales). */
+  settledProductSales: number;
   categories: AmazonFeeCategoryTotal[];
   lines: AmazonFeeLine[];
   transactionCount: number;
@@ -332,6 +334,107 @@ export function extractAmazonFeeLinesForTest(
   return extractFeesFromTransaction(transaction);
 }
 
+function statusRank(status: string | undefined): number {
+  switch (status?.trim().toUpperCase()) {
+    case "RELEASED":
+      return 3;
+    case "DEFERRED_RELEASED":
+      return 2;
+    case "DEFERRED":
+      return 0;
+    default:
+      return 1;
+  }
+}
+
+function transactionOrderId(transaction: AmazonTransaction): string | null {
+  return (
+    transaction.relatedIdentifiers
+      ?.find((item) => item.relatedIdentifierName === "ORDER_ID")
+      ?.relatedIdentifierValue?.trim() || null
+  );
+}
+
+/**
+ * Same order often appears as DEFERRED_RELEASED then again as RELEASED with
+ * identical Commission — keep one shipment/refund row per order.
+ */
+function dedupeFinanceTransactions(
+  transactions: AmazonTransaction[],
+): AmazonTransaction[] {
+  const keyed = new Map<string, AmazonTransaction>();
+  const passthrough: AmazonTransaction[] = [];
+
+  for (const transaction of transactions) {
+    if (statusRank(transaction.transactionStatus) === 0) continue;
+
+    const type = transaction.transactionType?.trim() || "";
+    const orderId = transactionOrderId(transaction);
+    const dedupeType = type === "Shipment" || type === "Refund";
+
+    if (!dedupeType || !orderId) {
+      passthrough.push(transaction);
+      continue;
+    }
+
+    const key = `${type}:${orderId}`;
+    const existing = keyed.get(key);
+    if (!existing) {
+      keyed.set(key, transaction);
+      continue;
+    }
+
+    const nextRank = statusRank(transaction.transactionStatus);
+    const prevRank = statusRank(existing.transactionStatus);
+    if (nextRank > prevRank) {
+      keyed.set(key, transaction);
+    } else if (
+      nextRank === prevRank &&
+      (transaction.postedDate || "") > (existing.postedDate || "")
+    ) {
+      keyed.set(key, transaction);
+    }
+  }
+
+  return [...keyed.values(), ...passthrough];
+}
+
+function sumSettledProductSales(transactions: AmazonTransaction[]): number {
+  let total = 0;
+
+  const addPrincipal = (breakdowns: Breakdown[] | undefined) => {
+    if (!breakdowns?.length) return;
+    for (const breakdown of breakdowns) {
+      const children = breakdown.breakdowns ?? [];
+      if (children.length) {
+        addPrincipal(children);
+        continue;
+      }
+      const type = breakdown.breakdownType?.trim() || "";
+      const amount = Number(breakdown.breakdownAmount?.currencyAmount);
+      if (
+        Number.isFinite(amount) &&
+        /^(OurPricePrincipal|Principal)$/i.test(type)
+      ) {
+        total += amount;
+      }
+    }
+  };
+
+  for (const transaction of transactions) {
+    if (transaction.transactionType?.trim() !== "Shipment") continue;
+    let fromItems = 0;
+    const before = total;
+    for (const item of transaction.items ?? []) {
+      addPrincipal(item.breakdowns);
+    }
+    fromItems = total - before;
+    if (!fromItems) addPrincipal(transaction.breakdowns);
+  }
+
+  return Number(total.toFixed(2));
+}
+
 function summarise(
   year: number,
   month: number,
@@ -340,6 +443,7 @@ function summarise(
   postedBefore: Date,
   lines: AmazonFeeLine[],
   transactionCount: number,
+  settledProductSales: number,
 ): AmazonMonthlyFeesSummary {
   const currency = lines[0]?.currency || "GBP";
   const byCategory = new Map<AmazonFeeCategory, AmazonFeeCategoryTotal>();
@@ -373,6 +477,7 @@ function summarise(
     postedBefore: postedBefore.toISOString(),
     currency,
     totalFees: Number(totalFees.toFixed(2)),
+    settledProductSales,
     categories: categories.map((row) => ({
       ...row,
       amount: Number(row.amount.toFixed(2)),
@@ -403,8 +508,7 @@ export async function fetchAmazonMonthlyFees(
     );
   }
 
-  const feeLines: AmazonFeeLine[] = [];
-  let transactionCount = 0;
+  const collected: AmazonTransaction[] = [];
   let nextToken: string | undefined;
 
   for (let page = 0; page < 40; page += 1) {
@@ -437,15 +541,15 @@ export async function fetchAmazonMonthlyFees(
       });
     }
 
-    const transactions = data.payload?.transactions ?? data.transactions ?? [];
-    transactionCount += transactions.length;
-    for (const transaction of transactions) {
-      feeLines.push(...extractFeesFromTransaction(transaction));
-    }
-
+    collected.push(...(data.payload?.transactions ?? data.transactions ?? []));
     nextToken = data.payload?.nextToken ?? data.nextToken;
     if (!nextToken) break;
   }
+
+  const transactions = dedupeFinanceTransactions(collected);
+  const feeLines = transactions.flatMap((transaction) =>
+    extractFeesFromTransaction(transaction),
+  );
 
   return summarise(
     year,
@@ -454,7 +558,8 @@ export async function fetchAmazonMonthlyFees(
     postedAfter,
     postedBefore,
     feeLines,
-    transactionCount,
+    collected.length,
+    sumSettledProductSales(transactions),
   );
 }
 

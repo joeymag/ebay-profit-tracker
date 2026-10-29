@@ -25,6 +25,7 @@ type FeesSummary = {
   label: string;
   currency: string;
   totalFees: number;
+  settledProductSales?: number;
   categories: FeeCategoryTotal[];
   transactionCount: number;
   feeLineCount: number;
@@ -135,8 +136,9 @@ export function AmazonMonthlyFeesCard() {
       <CardHeader>
         <CardTitle>Monthly Amazon fees (QuickBooks)</CardTitle>
         <CardDescription>
-          Pull seller fees for a calendar month from Amazon Finances, then
-          download a PDF expense summary for QuickBooks.
+          Fees Amazon posted/settled in the month (Finances API) — not the same
+          as Business Reports “ordered product sales”. Use this for VAT / QuickBooks
+          expense of fees paid that month.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -239,6 +241,14 @@ export function AmazonMonthlyFeesCard() {
               {summary.feeLineCount === 1 ? "" : "s"} from{" "}
               {summary.transactionCount} finance transaction
               {summary.transactionCount === 1 ? "" : "s"}
+              {typeof summary.settledProductSales === "number" ? (
+                <>
+                  {" "}
+                  · settled product sales{" "}
+                  {formatMoney(summary.settledProductSales, summary.currency)}{" "}
+                  (order-date Business Reports will differ)
+                </>
+              ) : null}
             </p>
             <div className="space-y-1.5">
               {summary.categories.map((row) => (
