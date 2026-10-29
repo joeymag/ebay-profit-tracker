@@ -232,23 +232,37 @@ export function AmazonMonthlyFeesCard() {
 
         {summary ? (
           <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-4">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className="text-sm font-medium">{summary.label}</p>
-              <p className="text-xl font-semibold tabular-nums">
-                {formatMoney(summary.totalFees, summary.currency)}
-              </p>
+            <p className="text-sm font-medium">{summary.label}</p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">
+                  Sold for
+                  <span className="ml-2 text-xs">
+                    ({summary.orderCount ?? 0} order
+                    {(summary.orderCount ?? 0) === 1 ? "" : "s"})
+                  </span>
+                </span>
+                <span className="tabular-nums text-base font-semibold">
+                  {formatMoney(summary.settledProductSales ?? 0, summary.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Fees paid to Amazon</span>
+                <span className="tabular-nums text-base font-semibold">
+                  {formatMoney(summary.totalFees, summary.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-2 text-sm">
+                <span className="font-medium">Left after Amazon fees</span>
+                <span className="tabular-nums text-lg font-semibold">
+                  {formatMoney(
+                    (summary.settledProductSales ?? 0) - summary.totalFees,
+                    summary.currency,
+                  )}
+                </span>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              {summary.orderCount ?? 0} Amazon order
-              {(summary.orderCount ?? 0) === 1 ? "" : "s"} placed
-              {typeof summary.settledProductSales === "number" ? (
-                <>
-                  {" "}
-                  · sales{" "}
-                  {formatMoney(summary.settledProductSales, summary.currency)}
-                </>
-              ) : null}
-              {" · "}
               {summary.feeLineCount} fee line
               {summary.feeLineCount === 1 ? "" : "s"}
               {(summary.ordersMissingFees ?? 0) > 0 ? (
@@ -259,6 +273,9 @@ export function AmazonMonthlyFeesCard() {
               ) : null}
             </p>
             <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                Fee breakdown
+              </p>
               {summary.categories.map((row) => (
                 <div
                   key={row.category}

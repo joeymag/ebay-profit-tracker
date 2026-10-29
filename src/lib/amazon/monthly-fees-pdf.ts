@@ -128,17 +128,75 @@ export async function buildAmazonMonthlyFeesPdf(
       color: rgb(0.4, 0.4, 0.4),
     },
   );
-  y -= mm(5);
+  y -= mm(10);
+
+  page.drawLine({
+    start: { x: MARGIN_X, y },
+    end: { x: MARGIN_X + contentWidth, y },
+    thickness: 1,
+    color: rgb(0.8, 0.8, 0.8),
+  });
+  y -= mm(8);
+
+  page.drawText("Month summary", {
+    x: MARGIN_X,
+    y,
+    size: 12,
+    font: bold,
+  });
+  y -= mm(7);
 
   page.drawText(
-    `Orders placed: ${summary.orderCount} · Ordered product sales: ${formatMoney(summary.settledProductSales, summary.currency)}`,
+    `Sold for (${summary.orderCount} order${summary.orderCount === 1 ? "" : "s"})`,
     {
       x: MARGIN_X,
       y,
-      size: 9,
+      size: 10,
       font,
-      color: rgb(0.25, 0.25, 0.25),
     },
+  );
+  drawRight(
+    page,
+    formatMoney(summary.settledProductSales, summary.currency),
+    MARGIN_X + contentWidth,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(6);
+
+  page.drawText("Fees paid to Amazon", {
+    x: MARGIN_X,
+    y,
+    size: 10,
+    font,
+  });
+  drawRight(
+    page,
+    formatMoney(summary.totalFees, summary.currency),
+    MARGIN_X + contentWidth,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(6);
+
+  page.drawText("Left after Amazon fees", {
+    x: MARGIN_X,
+    y,
+    size: 11,
+    font: bold,
+  });
+  drawRight(
+    page,
+    formatMoney(
+      summary.settledProductSales - summary.totalFees,
+      summary.currency,
+    ),
+    MARGIN_X + contentWidth,
+    y,
+    11,
+    bold,
   );
   y -= mm(10);
 
@@ -150,7 +208,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(8);
 
-  page.drawText("Category totals", {
+  page.drawText("Fee breakdown", {
     x: MARGIN_X,
     y,
     size: 12,
