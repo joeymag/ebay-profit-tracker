@@ -37,14 +37,17 @@ export async function amazonFetch<T = unknown>(
     }
   }
 
+  const method = options.method ?? "GET";
+  const hasBody = options.body != null;
   const response = await fetch(url, {
-    method: options.method ?? "GET",
+    method,
     headers: {
       "x-amz-access-token": accessToken,
-      "Content-Type": "application/json",
       "User-Agent": config.userAgent,
+      // Amazon can 400 GET requests that include Content-Type / Content-Length.
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
     },
-    body: options.body == null ? undefined : JSON.stringify(options.body),
+    body: hasBody ? JSON.stringify(options.body) : undefined,
   });
 
   const text = await response.text();

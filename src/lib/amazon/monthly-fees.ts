@@ -601,6 +601,18 @@ async function listAmazonOrdersPlacedInMonth(
 ): Promise<AppAmazonOrder[]> {
   const { marketplaceId } = getAmazonConfig();
   const { postedAfter, postedBefore } = monthBounds(year, month);
+
+  // Orders API: CreatedBefore must be at least ~2 minutes before "now"
+  // (current / incomplete months otherwise 400 InvalidInput).
+  const safeBefore = new Date(
+    Math.min(postedBefore.getTime(), Date.now() - 3 * 60 * 1000),
+  );
+  if (safeBefore <= postedAfter) {
+    throw new Error(
+      "That month is too recent to pull yet. Try again in a few minutes, or pick a previous month.",
+    );
+  }
+
   const seen = new Set<string>();
   const orders: AppAmazonOrder[] = [];
   let nextToken: string | undefined;
@@ -612,7 +624,7 @@ async function listAmazonOrdersPlacedInMonth(
       query: {
         MarketplaceIds: marketplaceId,
         CreatedAfter: postedAfter.toISOString(),
-        CreatedBefore: postedBefore.toISOString(),
+        CreatedBefore: safeBefore.toISOString(),
         MaxResultsPerPage: "50",
         NextToken: nextToken,
       },

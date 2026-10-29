@@ -73,10 +73,26 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, summary });
   } catch (error) {
     if (error instanceof AmazonApiError) {
+      let amazonMessage = "";
+      try {
+        const parsed = JSON.parse(error.body) as {
+          errors?: Array<{ message?: string; code?: string }>;
+        };
+        amazonMessage =
+          parsed.errors
+            ?.map((item) => item.message || item.code)
+            .filter(Boolean)
+            .join("; ") || "";
+      } catch {
+        amazonMessage = "";
+      }
+
       return NextResponse.json(
         {
           ok: false,
-          error: error.message,
+          error: amazonMessage
+            ? `${error.message}: ${amazonMessage}`
+            : error.message,
           details: error.body?.slice(0, 400),
         },
         { status: 502 },
