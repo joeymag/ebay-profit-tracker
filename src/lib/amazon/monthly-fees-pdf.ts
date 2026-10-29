@@ -119,7 +119,7 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(5);
 
   page.drawText(
-    "Prepared for QuickBooks bookkeeping. Amounts are Amazon fee deductions from Finances API.",
+    "Prepared for QuickBooks bookkeeping. Net seller fees from Finances (leaf fee lines only; refunds netted).",
     {
       x: MARGIN_X,
       y,

@@ -16,6 +16,7 @@ export type AmazonFeeLine = {
   description: string;
   postedDate: string;
   orderId: string | null;
+  /** Expense contribution: Amazon fee deduction (-£5) becomes +£5. Refunds net down. */
   amount: number;
   currency: string;
 };
@@ -116,56 +117,74 @@ function monthBounds(year: number, month: number): {
   return { postedAfter, postedBefore, label };
 }
 
-function categorizeFee(breakdownType: string, description: string): AmazonFeeCategory {
-  const haystack = `${breakdownType} ${description}`.toLowerCase();
+function categorizeFee(breakdownType: string): AmazonFeeCategory {
+  const type = breakdownType.toLowerCase();
 
   if (
     /commission|referral|sellingfees|variableclosing|fixedclosing|peritemfee/.test(
-      haystack,
+      type,
     )
   ) {
     return "Referral / commission";
   }
   if (
-    /fba|fulfilichannel|fulfillment|fulfilichannel|weighthandling|pick.?pack|outbound/.test(
-      haystack,
-    )
+    /fba|multichannel|fulfillment|weighthandling|pick.?pack|outbound/.test(type)
   ) {
     return "FBA fulfilment";
   }
-  if (/storage|agedinventory|long.?term/.test(haystack)) {
+  if (/storage|agedinventory|long.?term/.test(type)) {
     return "Storage";
   }
-  if (
-    /sponsor|advertis|costofadvertising|sbv|sb_|sp_|sd_|coupon/.test(haystack)
-  ) {
+  if (/sponsor|advertis|costofadvertising|sbv|sb_|sp_|sd_|coupon/.test(type)) {
     return "Advertising";
   }
-  if (/subscription|pro.?merchant|selling.?plan/.test(haystack)) {
+  if (/subscription|pro.?merchant|selling.?plan/.test(type)) {
     return "Selling subscription";
   }
-  if (/refund.*admin|refundcommission|return.?shipping/.test(haystack)) {
+  if (/refund.*admin|refundcommission|return.?shipping/.test(type)) {
     return "Refund administration";
   }
   return "Other Amazon fees";
 }
 
-function looksLikeFee(breakdownType: string, description: string): boolean {
-  const haystack = `${breakdownType} ${description}`.toLowerCase();
-  if (!haystack.trim()) return false;
+/**
+ * Match on breakdownType only — item titles often contain words like "FBA"
+ * and must not turn Principal / Tax lines into fees.
+ */
+function looksLikeFeeType(breakdownType: string): boolean {
+  const type = breakdownType.toLowerCase().trim();
+  if (!type) return false;
+
+  // Parent rollups are summed via their children (leaf-only walk).
   if (
-    /principal|ourprice|productcharges|shippingcharge|tax|giftwrap|promotion|discount|sales/.test(
-      haystack,
-    ) &&
-    !/fee|commission|fba|storage|sponsor|subscription/.test(haystack)
+    /^(amazonfees|expenses|sales|productcharges|shippingcharges|promotions|taxes|tax)$/i.test(
+      type,
+    )
   ) {
     return false;
   }
-  return /fee|commission|fba|storage|sponsor|advertis|subscription|closingfee|refundcommission|servicefee/.test(
-    haystack,
+
+  if (
+    /principal|ourprice|productcharge|shippingcharge|^tax$|basetax|shippingtax|giftwrap|promotion|discount|^sales$/i.test(
+      type,
+    ) &&
+    !/fee|commission/i.test(type)
+  ) {
+    return false;
+  }
+
+  return /fee|commission|fba|storage|sponsor|advertis|subscription|closingfee|refundcommission|servicefee|csba/i.test(
+    type,
   );
 }
 
+/**
+ * Amazon nests breakdowns so parents equal the sum of children.
+ * Only count leaves to avoid double-counting.
+ *
+ * Amount is expense contribution: Amazon fee deductions are negative in the
+ * API, so we negate them (fee -£5 → expense £5). Fee refunds net down.
+ */
 function walkBreakdowns(
   breakdowns: Breakdown[] | undefined,
   context: {
@@ -179,6 +198,12 @@ function walkBreakdowns(
   if (!breakdowns?.length) return;
 
   for (const breakdown of breakdowns) {
+    const children = breakdown.breakdowns;
+    if (children?.length) {
+      walkBreakdowns(children, context, lines);
+      continue;
+    }
+
     const type = breakdown.breakdownType?.trim() || "Fee";
     const amountRaw = Number(breakdown.breakdownAmount?.currencyAmount);
     const currency =
@@ -188,20 +213,18 @@ function walkBreakdowns(
     if (
       Number.isFinite(amountRaw) &&
       amountRaw !== 0 &&
-      looksLikeFee(type, context.description)
+      looksLikeFeeType(type)
     ) {
       lines.push({
-        category: categorizeFee(type, context.description),
+        category: categorizeFee(type),
         breakdownType: type,
         description: context.description,
         postedDate: context.postedDate,
         orderId: context.orderId,
-        amount: Math.abs(amountRaw),
+        amount: Number((-amountRaw).toFixed(4)),
         currency,
       });
     }
-
-    walkBreakdowns(breakdown.breakdowns, context, lines);
   }
 }
 
@@ -210,6 +233,10 @@ function extractFeesFromTransaction(
 ): AmazonFeeLine[] {
   const postedDate = transaction.postedDate?.trim();
   if (!postedDate) return [];
+
+  // Deferred rows later reappear as RELEASED / DEFERRED_RELEASED — skip them.
+  const status = transaction.transactionStatus?.trim().toUpperCase();
+  if (status === "DEFERRED") return [];
 
   const description =
     transaction.description?.trim() ||
@@ -223,22 +250,28 @@ function extractFeesFromTransaction(
     transaction.totalAmount?.currencyCode?.trim() || "GBP";
   const lines: AmazonFeeLine[] = [];
 
-  walkBreakdowns(
-    transaction.breakdowns,
-    { postedDate, orderId, description, currencyFallback },
-    lines,
-  );
+  const items = transaction.items ?? [];
+  const itemBreakdowns = items.filter((item) => item.breakdowns?.length);
 
-  for (const item of transaction.items ?? []) {
+  // Prefer item-level leaves when present — transaction rollups often mirror them.
+  if (itemBreakdowns.length) {
+    for (const item of itemBreakdowns) {
+      walkBreakdowns(
+        item.breakdowns,
+        {
+          postedDate,
+          orderId,
+          description: item.description?.trim() || description,
+          currencyFallback:
+            item.totalAmount?.currencyCode?.trim() || currencyFallback,
+        },
+        lines,
+      );
+    }
+  } else {
     walkBreakdowns(
-      item.breakdowns,
-      {
-        postedDate,
-        orderId,
-        description: item.description?.trim() || description,
-        currencyFallback:
-          item.totalAmount?.currencyCode?.trim() || currencyFallback,
-      },
+      transaction.breakdowns,
+      { postedDate, orderId, description, currencyFallback },
       lines,
     );
   }
@@ -250,21 +283,28 @@ function extractFeesFromTransaction(
     if (
       Number.isFinite(total) &&
       total !== 0 &&
-      looksLikeFee(type, description)
+      looksLikeFeeType(type || description)
     ) {
       lines.push({
-        category: categorizeFee(type, description),
+        category: categorizeFee(type || description),
         breakdownType: type || "Fee",
         description,
         postedDate,
         orderId,
-        amount: Math.abs(total),
+        amount: Number((-total).toFixed(4)),
         currency: currencyFallback,
       });
     }
   }
 
   return lines;
+}
+
+/** Exported for unit checks / local diagnostics. */
+export function extractAmazonFeeLinesForTest(
+  transaction: AmazonTransaction,
+): AmazonFeeLine[] {
+  return extractFeesFromTransaction(transaction);
 }
 
 function summarise(
@@ -296,7 +336,7 @@ function summarise(
 
   const categories = CATEGORY_ORDER.map(
     (category) => byCategory.get(category)!,
-  ).filter((row) => row.lineCount > 0 || row.amount > 0);
+  ).filter((row) => row.lineCount > 0);
 
   const totalFees = lines.reduce((sum, line) => sum + line.amount, 0);
 
