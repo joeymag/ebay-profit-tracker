@@ -28,7 +28,7 @@ type FeesSummary = {
   settledProductSales?: number;
   vatRate?: number;
   vatOnSales?: number;
-  salesIncVat?: number;
+  salesExVat?: number;
   sellingFeesExVat?: number;
   vatOnSellingFees?: number;
   subscriptionExVat?: number;
@@ -243,7 +243,7 @@ export function AmazonMonthlyFeesCard() {
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">
-                  Sold for
+                  Sold for (inc VAT)
                   <span className="ml-2 text-xs">
                     ({summary.orderCount ?? 0} order
                     {(summary.orderCount ?? 0) === 1 ? "" : "s"})
@@ -255,16 +255,16 @@ export function AmazonMonthlyFeesCard() {
               </div>
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">
-                  VAT ({Math.round((summary.vatRate ?? 0.2) * 100)}%)
+                  of which VAT ({Math.round((summary.vatRate ?? 0.2) * 100)}%)
                 </span>
                 <span className="tabular-nums text-base font-semibold">
                   {formatMoney(summary.vatOnSales ?? 0, summary.currency)}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Sold for + VAT</span>
+                <span className="text-muted-foreground">Sold for (ex VAT)</span>
                 <span className="tabular-nums text-base font-semibold">
-                  {formatMoney(summary.salesIncVat ?? 0, summary.currency)}
+                  {formatMoney(summary.salesExVat ?? 0, summary.currency)}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm">
@@ -277,8 +277,7 @@ export function AmazonMonthlyFeesCard() {
                 <span className="font-medium">Left after Amazon fees</span>
                 <span className="tabular-nums text-lg font-semibold">
                   {formatMoney(
-                    (summary.salesIncVat ?? summary.settledProductSales ?? 0) -
-                      summary.totalFees,
+                    (summary.settledProductSales ?? 0) - summary.totalFees,
                     summary.currency,
                   )}
                 </span>

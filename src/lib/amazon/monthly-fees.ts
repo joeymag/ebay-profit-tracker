@@ -41,14 +41,14 @@ export type AmazonMonthlyFeesSummary = {
   postedBefore: string;
   currency: string;
   totalFees: number;
-  /** Sum of order totals for orders placed this month. */
+  /** Sum of order totals for orders placed this month (already includes VAT). */
   settledProductSales: number;
-  /** VAT rate applied on top of sold-for (default 20%). */
+  /** VAT rate used to split inclusive sales / fees (default 20%). */
   vatRate: number;
-  /** VAT amount added on top of sold-for. */
+  /** VAT already included in sold-for (sales × rate / (1 + rate)). */
   vatOnSales: number;
-  /** Sold-for plus VAT. */
-  salesIncVat: number;
+  /** Sold-for excluding VAT. */
+  salesExVat: number;
   /** Selling fees (ex subscription) excluding VAT. */
   sellingFeesExVat: number;
   /** VAT paid on selling fees (commission, digital services, etc.). */
@@ -521,8 +521,11 @@ function summarise(
 
   const totalFees = lines.reduce((sum, line) => sum + line.amount, 0);
   const vatRate = PRODUCT_COST_VAT_RATE;
-  const vatOnSales = Number((settledProductSales * vatRate).toFixed(2));
-  const salesIncVat = Number((settledProductSales + vatOnSales).toFixed(2));
+  // Order totals / Business Reports sales are VAT-inclusive — extract, don't add.
+  const vatOnSales = Number(
+    ((settledProductSales * vatRate) / (1 + vatRate)).toFixed(2),
+  );
+  const salesExVat = Number((settledProductSales - vatOnSales).toFixed(2));
 
   const subscriptionLines = lines.filter(
     (line) => line.category === "Selling subscription",
@@ -555,7 +558,7 @@ function summarise(
     settledProductSales,
     vatRate,
     vatOnSales,
-    salesIncVat,
+    salesExVat,
     sellingFeesExVat,
     vatOnSellingFees,
     subscriptionExVat,

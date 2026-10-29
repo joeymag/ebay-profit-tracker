@@ -147,7 +147,7 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(7);
 
   page.drawText(
-    `Sold for (${summary.orderCount} order${summary.orderCount === 1 ? "" : "s"})`,
+    `Sold for inc VAT (${summary.orderCount} order${summary.orderCount === 1 ? "" : "s"})`,
     {
       x: MARGIN_X,
       y,
@@ -165,12 +165,15 @@ export async function buildAmazonMonthlyFeesPdf(
   );
   y -= mm(6);
 
-  page.drawText(`VAT (${Math.round(summary.vatRate * 100)}%)`, {
-    x: MARGIN_X,
-    y,
-    size: 10,
-    font,
-  });
+  page.drawText(
+    `of which VAT (${Math.round(summary.vatRate * 100)}%)`,
+    {
+      x: MARGIN_X,
+      y,
+      size: 10,
+      font,
+    },
+  );
   drawRight(
     page,
     formatMoney(summary.vatOnSales, summary.currency),
@@ -181,7 +184,7 @@ export async function buildAmazonMonthlyFeesPdf(
   );
   y -= mm(6);
 
-  page.drawText("Sold for + VAT", {
+  page.drawText("Sold for (ex VAT)", {
     x: MARGIN_X,
     y,
     size: 10,
@@ -189,7 +192,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   drawRight(
     page,
-    formatMoney(summary.salesIncVat, summary.currency),
+    formatMoney(summary.salesExVat, summary.currency),
     MARGIN_X + contentWidth,
     y,
     10,
@@ -221,7 +224,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   drawRight(
     page,
-    formatMoney(summary.salesIncVat - summary.totalFees, summary.currency),
+    formatMoney(summary.settledProductSales - summary.totalFees, summary.currency),
     MARGIN_X + contentWidth,
     y,
     11,
