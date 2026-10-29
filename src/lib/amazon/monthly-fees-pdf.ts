@@ -119,7 +119,7 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(5);
 
   page.drawText(
-    "Fees posted/settled this month (Finances). Differs from Business Reports ordered sales.",
+    "Based on Amazon orders placed this month (same orders that come into the app), plus subscription.",
     {
       x: MARGIN_X,
       y,
@@ -131,7 +131,7 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(5);
 
   page.drawText(
-    `Settled product sales in period: ${formatMoney(summary.settledProductSales, summary.currency)}`,
+    `Orders placed: ${summary.orderCount} · Ordered product sales: ${formatMoney(summary.settledProductSales, summary.currency)}`,
     {
       x: MARGIN_X,
       y,

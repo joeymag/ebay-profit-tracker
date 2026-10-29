@@ -1,5 +1,6 @@
 import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import { AMAZON_SUBSCRIPTION_MONTHLY } from "@/lib/orders/amazon-subscription";
 
 export type AmazonFeeCategory =
   | "Referral / commission"
@@ -35,8 +36,12 @@ export type AmazonMonthlyFeesSummary = {
   postedBefore: string;
   currency: string;
   totalFees: number;
-  /** Product principal from shipment payments posted this month (not Business Reports ordered sales). */
+  /** Sum of revenue on Amazon orders in the app for this month (order date). */
   settledProductSales: number;
+  /** Amazon orders in the app for this month. */
+  orderCount: number;
+  /** Orders that had no fee rows yet in Finances (too new / not settled). */
+  ordersMissingFees: number;
   categories: AmazonFeeCategoryTotal[];
   lines: AmazonFeeLine[];
   transactionCount: number;
@@ -399,42 +404,6 @@ function dedupeFinanceTransactions(
   return [...keyed.values(), ...passthrough];
 }
 
-function sumSettledProductSales(transactions: AmazonTransaction[]): number {
-  let total = 0;
-
-  const addPrincipal = (breakdowns: Breakdown[] | undefined) => {
-    if (!breakdowns?.length) return;
-    for (const breakdown of breakdowns) {
-      const children = breakdown.breakdowns ?? [];
-      if (children.length) {
-        addPrincipal(children);
-        continue;
-      }
-      const type = breakdown.breakdownType?.trim() || "";
-      const amount = Number(breakdown.breakdownAmount?.currencyAmount);
-      if (
-        Number.isFinite(amount) &&
-        /^(OurPricePrincipal|Principal)$/i.test(type)
-      ) {
-        total += amount;
-      }
-    }
-  };
-
-  for (const transaction of transactions) {
-    if (transaction.transactionType?.trim() !== "Shipment") continue;
-    let fromItems = 0;
-    const before = total;
-    for (const item of transaction.items ?? []) {
-      addPrincipal(item.breakdowns);
-    }
-    fromItems = total - before;
-    if (!fromItems) addPrincipal(transaction.breakdowns);
-  }
-
-  return Number(total.toFixed(2));
-}
-
 function summarise(
   year: number,
   month: number,
@@ -444,6 +413,8 @@ function summarise(
   lines: AmazonFeeLine[],
   transactionCount: number,
   settledProductSales: number,
+  orderCount: number,
+  ordersMissingFees: number,
 ): AmazonMonthlyFeesSummary {
   const currency = lines[0]?.currency || "GBP";
   const byCategory = new Map<AmazonFeeCategory, AmazonFeeCategoryTotal>();
@@ -478,6 +449,8 @@ function summarise(
     currency,
     totalFees: Number(totalFees.toFixed(2)),
     settledProductSales,
+    orderCount,
+    ordersMissingFees,
     categories: categories.map((row) => ({
       ...row,
       amount: Number(row.amount.toFixed(2)),
@@ -488,40 +461,85 @@ function summarise(
   };
 }
 
+type AppAmazonOrder = {
+  amazonOrderId: string;
+  revenue: number;
+};
+
+type AmazonOrdersListResponse = {
+  payload?: {
+    Orders?: Array<{
+      AmazonOrderId?: string;
+      OrderStatus?: string;
+      PurchaseDate?: string;
+      OrderTotal?: { CurrencyCode?: string; Amount?: string };
+    }>;
+    NextToken?: string;
+  };
+};
+
 /**
- * Pull Amazon seller fees for a calendar month via Finances listTransactions.
+ * Orders placed in the calendar month — same set that flows into the app.
  */
-export async function fetchAmazonMonthlyFees(
+async function listAmazonOrdersPlacedInMonth(
   year: number,
   month: number,
-): Promise<AmazonMonthlyFeesSummary> {
+): Promise<AppAmazonOrder[]> {
   const { marketplaceId } = getAmazonConfig();
-  const { postedAfter, postedBefore, label } = monthBounds(year, month);
+  const { postedAfter, postedBefore } = monthBounds(year, month);
+  const seen = new Set<string>();
+  const orders: AppAmazonOrder[] = [];
+  let nextToken: string | undefined;
 
-  // Amazon rejects postedBefore within ~2 minutes of "now".
-  const safeBefore = new Date(
-    Math.min(postedBefore.getTime(), Date.now() - 3 * 60 * 1000),
-  );
-  if (safeBefore <= postedAfter) {
-    throw new Error(
-      "That month is too recent to pull yet. Try again in a few minutes, or pick a previous month.",
-    );
+  for (let page = 0; page < 20; page += 1) {
+    if (page > 0) await wait(400);
+    const data = await amazonFetch<AmazonOrdersListResponse>({
+      path: "/orders/v0/orders",
+      query: {
+        MarketplaceIds: marketplaceId,
+        CreatedAfter: postedAfter.toISOString(),
+        CreatedBefore: postedBefore.toISOString(),
+        MaxResultsPerPage: "50",
+        NextToken: nextToken,
+      },
+    });
+
+    for (const order of data.payload?.Orders ?? []) {
+      const amazonOrderId = order.AmazonOrderId?.trim();
+      if (!amazonOrderId || seen.has(amazonOrderId)) continue;
+      if ((order.OrderStatus || "").toUpperCase() === "CANCELED") continue;
+      seen.add(amazonOrderId);
+      const revenue = Number(order.OrderTotal?.Amount);
+      orders.push({
+        amazonOrderId,
+        revenue: Number.isFinite(revenue) ? revenue : 0,
+      });
+    }
+
+    nextToken = data.payload?.NextToken;
+    if (!nextToken) break;
   }
 
+  return orders;
+}
+
+async function listTransactionsForOrder(
+  orderId: string,
+  marketplaceId: string,
+): Promise<AmazonTransaction[]> {
   const collected: AmazonTransaction[] = [];
   let nextToken: string | undefined;
 
-  for (let page = 0; page < 40; page += 1) {
+  for (let page = 0; page < 10; page += 1) {
     if (page > 0) await wait(500);
-
     let data: TransactionsResponse;
     try {
       data = await amazonFetch<TransactionsResponse>({
         path: "/finances/2024-06-19/transactions",
         query: {
-          postedAfter: postedAfter.toISOString(),
-          postedBefore: safeBefore.toISOString(),
           marketplaceId,
+          relatedIdentifierName: "ORDER_ID",
+          relatedIdentifierValue: orderId,
           nextToken,
         },
       });
@@ -533,9 +551,9 @@ export async function fetchAmazonMonthlyFees(
       data = await amazonFetch<TransactionsResponse>({
         path: "/finances/2024-06-19/transactions",
         query: {
-          postedAfter: postedAfter.toISOString(),
-          postedBefore: safeBefore.toISOString(),
           marketplaceId,
+          relatedIdentifierName: "ORDER_ID",
+          relatedIdentifierValue: orderId,
           nextToken,
         },
       });
@@ -546,9 +564,104 @@ export async function fetchAmazonMonthlyFees(
     if (!nextToken) break;
   }
 
+  return collected;
+}
+
+async function fetchMonthSubscriptionFee(
+  year: number,
+  month: number,
+  marketplaceId: string,
+): Promise<AmazonFeeLine[]> {
+  const { postedAfter, postedBefore } = monthBounds(year, month);
+  const safeBefore = new Date(
+    Math.min(postedBefore.getTime(), Date.now() - 3 * 60 * 1000),
+  );
+  if (safeBefore <= postedAfter) return [];
+
+  const collected: AmazonTransaction[] = [];
+  let nextToken: string | undefined;
+  for (let page = 0; page < 10; page += 1) {
+    if (page > 0) await wait(500);
+    const data = await amazonFetch<TransactionsResponse>({
+      path: "/finances/2024-06-19/transactions",
+      query: {
+        postedAfter: postedAfter.toISOString(),
+        postedBefore: safeBefore.toISOString(),
+        marketplaceId,
+        nextToken,
+      },
+    });
+    collected.push(...(data.payload?.transactions ?? data.transactions ?? []));
+    nextToken = data.payload?.nextToken ?? data.nextToken;
+    if (!nextToken) break;
+  }
+
+  const lines = dedupeFinanceTransactions(collected)
+    .flatMap((transaction) => extractFeesFromTransaction(transaction))
+    .filter((line) => line.category === "Selling subscription");
+
+  if (lines.length) return lines;
+
+  // Fallback if Amazon has not posted the subscription row yet.
+  return [
+    {
+      category: "Selling subscription",
+      breakdownType: "SubscriptionFee",
+      description: "Subscription (configured monthly rate)",
+      postedDate: postedAfter.toISOString(),
+      orderId: null,
+      amount: AMAZON_SUBSCRIPTION_MONTHLY,
+      currency: "GBP",
+    },
+  ];
+}
+
+/**
+ * Fees for Amazon orders placed in the calendar month (same orders that come
+ * into the app). Looks up each order’s Finances rows by ORDER_ID, then adds
+ * the month’s selling subscription.
+ */
+export async function fetchAmazonMonthlyFees(
+  year: number,
+  month: number,
+): Promise<AmazonMonthlyFeesSummary> {
+  const { marketplaceId } = getAmazonConfig();
+  const { postedAfter, postedBefore, label } = monthBounds(year, month);
+  const appOrders = await listAmazonOrdersPlacedInMonth(year, month);
+
+  const collected: AmazonTransaction[] = [];
+  let ordersMissingFees = 0;
+
+  for (let index = 0; index < appOrders.length; index += 1) {
+    if (index > 0) await wait(2100); // Finances listTransactions ~0.5 rps
+    const order = appOrders[index]!;
+    const txs = await listTransactionsForOrder(order.amazonOrderId, marketplaceId);
+    const feeLines = dedupeFinanceTransactions(txs).flatMap((transaction) =>
+      extractFeesFromTransaction(transaction),
+    );
+    if (!feeLines.length) ordersMissingFees += 1;
+    collected.push(...txs);
+  }
+
+  await wait(2100);
+  const subscriptionLines = await fetchMonthSubscriptionFee(
+    year,
+    month,
+    marketplaceId,
+  );
+
   const transactions = dedupeFinanceTransactions(collected);
-  const feeLines = transactions.flatMap((transaction) =>
+  const orderFeeLines = transactions.flatMap((transaction) =>
     extractFeesFromTransaction(transaction),
+  );
+  // Drop any subscription that somehow appeared on an order txn; we add month fee once.
+  const feeLines = [
+    ...orderFeeLines.filter((line) => line.category !== "Selling subscription"),
+    ...subscriptionLines,
+  ];
+
+  const orderedSales = Number(
+    appOrders.reduce((sum, order) => sum + order.revenue, 0).toFixed(2),
   );
 
   return summarise(
@@ -559,7 +672,9 @@ export async function fetchAmazonMonthlyFees(
     postedBefore,
     feeLines,
     collected.length,
-    sumSettledProductSales(transactions),
+    orderedSales,
+    appOrders.length,
+    ordersMissingFees,
   );
 }
 

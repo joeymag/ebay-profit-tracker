@@ -26,6 +26,8 @@ type FeesSummary = {
   currency: string;
   totalFees: number;
   settledProductSales?: number;
+  orderCount?: number;
+  ordersMissingFees?: number;
   categories: FeeCategoryTotal[];
   transactionCount: number;
   feeLineCount: number;
@@ -136,9 +138,9 @@ export function AmazonMonthlyFeesCard() {
       <CardHeader>
         <CardTitle>Monthly Amazon fees (QuickBooks)</CardTitle>
         <CardDescription>
-          Fees Amazon posted/settled in the month (Finances API) — not the same
-          as Business Reports “ordered product sales”. Use this for VAT / QuickBooks
-          expense of fees paid that month.
+          Starts from Amazon orders placed that month (the same ones that come
+          into this app), looks up each order’s real fees, then adds the
+          selling subscription.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -237,16 +239,22 @@ export function AmazonMonthlyFeesCard() {
               </p>
             </div>
             <p className="text-xs text-muted-foreground">
-              {summary.feeLineCount} fee line
-              {summary.feeLineCount === 1 ? "" : "s"} from{" "}
-              {summary.transactionCount} finance transaction
-              {summary.transactionCount === 1 ? "" : "s"}
+              {summary.orderCount ?? 0} Amazon order
+              {(summary.orderCount ?? 0) === 1 ? "" : "s"} placed
               {typeof summary.settledProductSales === "number" ? (
                 <>
                   {" "}
-                  · settled product sales{" "}
-                  {formatMoney(summary.settledProductSales, summary.currency)}{" "}
-                  (order-date Business Reports will differ)
+                  · sales{" "}
+                  {formatMoney(summary.settledProductSales, summary.currency)}
+                </>
+              ) : null}
+              {" · "}
+              {summary.feeLineCount} fee line
+              {summary.feeLineCount === 1 ? "" : "s"}
+              {(summary.ordersMissingFees ?? 0) > 0 ? (
+                <>
+                  {" · "}
+                  {summary.ordersMissingFees} still waiting on Amazon fee data
                 </>
               ) : null}
             </p>
