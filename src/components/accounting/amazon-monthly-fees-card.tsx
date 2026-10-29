@@ -283,81 +283,90 @@ export function AmazonMonthlyFeesCard() {
                 </span>
               </div>
             </div>
-            <div className="space-y-1.5 border-t border-border/60 pt-3">
+            <div className="space-y-2 border-t border-border/60 pt-3">
               <p className="text-xs font-medium text-muted-foreground">
-                VAT paid on Amazon charges
+                Fees for QuickBooks (2 lines)
               </p>
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">
-                  VAT on selling fees
-                  <span className="ml-2 text-xs">
-                    (ex VAT{" "}
-                    {formatMoney(
-                      summary.sellingFeesExVat ?? 0,
-                      summary.currency,
-                    )}
-                    )
-                  </span>
-                </span>
-                <span className="tabular-nums font-medium">
-                  {formatMoney(summary.vatOnSellingFees ?? 0, summary.currency)}
-                </span>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[28rem] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-muted-foreground">
+                      <th className="pb-1.5 font-medium">Type</th>
+                      <th className="pb-1.5 text-right font-medium">Net</th>
+                      <th className="pb-1.5 text-right font-medium">VAT %</th>
+                      <th className="pb-1.5 text-right font-medium">Tax</th>
+                      <th className="pb-1.5 text-right font-medium">Gross</th>
+                    </tr>
+                  </thead>
+                  <tbody className="tabular-nums">
+                    <tr>
+                      <td className="py-1 text-muted-foreground">
+                        Referral / commission
+                      </td>
+                      <td className="py-1 text-right font-medium">
+                        {formatMoney(
+                          summary.sellingFeesExVat ?? 0,
+                          summary.currency,
+                        )}
+                      </td>
+                      <td className="py-1 text-right text-muted-foreground">
+                        {Math.round((summary.vatRate ?? 0.2) * 100)}
+                      </td>
+                      <td className="py-1 text-right font-medium">
+                        {formatMoney(
+                          summary.vatOnSellingFees ?? 0,
+                          summary.currency,
+                        )}
+                      </td>
+                      <td className="py-1 text-right font-semibold">
+                        {formatMoney(
+                          (summary.sellingFeesExVat ?? 0) +
+                            (summary.vatOnSellingFees ?? 0),
+                          summary.currency,
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 text-muted-foreground">
+                        Selling subscription
+                      </td>
+                      <td className="py-1 text-right font-medium">
+                        {formatMoney(
+                          summary.subscriptionExVat ?? 0,
+                          summary.currency,
+                        )}
+                      </td>
+                      <td className="py-1 text-right text-muted-foreground">
+                        {Math.round((summary.vatRate ?? 0.2) * 100)}
+                      </td>
+                      <td className="py-1 text-right font-medium">
+                        {formatMoney(
+                          summary.vatOnSubscription ?? 0,
+                          summary.currency,
+                        )}
+                      </td>
+                      <td className="py-1 text-right font-semibold">
+                        {formatMoney(
+                          (summary.subscriptionExVat ?? 0) +
+                            (summary.vatOnSubscription ?? 0),
+                          summary.currency,
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">
-                  VAT on subscription
-                  <span className="ml-2 text-xs">
-                    (ex VAT{" "}
-                    {formatMoney(
-                      summary.subscriptionExVat ?? 0,
-                      summary.currency,
-                    )}
-                    )
-                  </span>
-                </span>
-                <span className="tabular-nums font-medium">
-                  {formatMoney(summary.vatOnSubscription ?? 0, summary.currency)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-medium">Total VAT on fees + subscription</span>
-                <span className="tabular-nums font-semibold">
-                  {formatMoney(
-                    (summary.vatOnSellingFees ?? 0) +
-                      (summary.vatOnSubscription ?? 0),
-                    summary.currency,
-                  )}
-                </span>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {summary.feeLineCount} fee line
-              {summary.feeLineCount === 1 ? "" : "s"}
-              {(summary.ordersMissingFees ?? 0) > 0 ? (
-                <>
-                  {" · "}
-                  {summary.ordersMissingFees} still waiting on Amazon fee data
-                </>
-              ) : null}
-            </p>
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground">
-                Fee breakdown (inc VAT)
+              <p className="text-xs text-muted-foreground">
+                Commission + digital services fee are combined into Referral /
+                commission.
+                {(summary.ordersMissingFees ?? 0) > 0 ? (
+                  <>
+                    {" "}
+                    · {summary.ordersMissingFees} still waiting on Amazon fee
+                    data
+                  </>
+                ) : null}
               </p>
-              {summary.categories.map((row) => (
-                <div
-                  key={row.category}
-                  className="flex items-center justify-between gap-3 text-sm"
-                >
-                  <span className="text-muted-foreground">
-                    {row.category}
-                    <span className="ml-2 text-xs">({row.lineCount})</span>
-                  </span>
-                  <span className="tabular-nums font-medium">
-                    {formatMoney(row.amount, summary.currency)}
-                  </span>
-                </div>
-              ))}
             </div>
           </div>
         ) : (

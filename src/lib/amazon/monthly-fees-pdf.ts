@@ -44,6 +44,7 @@ function drawRight(
   y: number,
   size: number,
   font: PDFFont,
+  color = rgb(0.1, 0.1, 0.1),
 ) {
   const width = font.widthOfTextAtSize(text, size);
   page.drawText(text, {
@@ -51,12 +52,45 @@ function drawRight(
     y,
     size,
     font,
-    color: rgb(0.1, 0.1, 0.1),
+    color,
   });
+}
+
+type InvoiceFeeRow = {
+  type: string;
+  net: number;
+  vatRatePct: number;
+  tax: number;
+  gross: number;
+};
+
+function invoiceFeeRows(summary: AmazonMonthlyFeesSummary): InvoiceFeeRow[] {
+  const vatRatePct = Math.round(summary.vatRate * 100);
+  return [
+    {
+      type: "Referral / commission",
+      net: summary.sellingFeesExVat,
+      vatRatePct,
+      tax: summary.vatOnSellingFees,
+      gross: Number(
+        (summary.sellingFeesExVat + summary.vatOnSellingFees).toFixed(2),
+      ),
+    },
+    {
+      type: "Selling subscription",
+      net: summary.subscriptionExVat,
+      vatRatePct,
+      tax: summary.vatOnSubscription,
+      gross: Number(
+        (summary.subscriptionExVat + summary.vatOnSubscription).toFixed(2),
+      ),
+    },
+  ];
 }
 
 /**
  * Simple expense summary PDF for attaching / entering Amazon fees in QuickBooks.
+ * Fee table mirrors eBay tax invoice style: Type / Net / VAT % / Tax.
  */
 export async function buildAmazonMonthlyFeesPdf(
   summary: AmazonMonthlyFeesSummary,
@@ -69,6 +103,11 @@ export async function buildAmazonMonthlyFeesPdf(
   let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   let y = PAGE_HEIGHT - MARGIN_TOP;
   const contentWidth = PAGE_WIDTH - MARGIN_X * 2;
+  const colType = MARGIN_X;
+  const colNet = MARGIN_X + contentWidth - mm(90);
+  const colVat = MARGIN_X + contentWidth - mm(60);
+  const colTax = MARGIN_X + contentWidth - mm(30);
+  const colGross = MARGIN_X + contentWidth;
 
   const ensureSpace = (needed: number) => {
     if (y - needed < mm(18)) {
@@ -107,7 +146,7 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(5);
 
   page.drawText(
-    `Posted ${formatDate(summary.postedAfter)} – ${formatDate(summary.postedBefore)} (UTC)`,
+    `Orders placed ${formatDate(summary.postedAfter)} – ${formatDate(summary.postedBefore)} (UTC)`,
     {
       x: MARGIN_X,
       y,
@@ -119,7 +158,7 @@ export async function buildAmazonMonthlyFeesPdf(
   y -= mm(5);
 
   page.drawText(
-    "Based on Amazon orders placed this month (same orders that come into the app), plus subscription.",
+    "Tax invoice style summary for QuickBooks. Selling fees combine commission + digital services fee.",
     {
       x: MARGIN_X,
       y,
@@ -158,7 +197,7 @@ export async function buildAmazonMonthlyFeesPdf(
   drawRight(
     page,
     formatMoney(summary.settledProductSales, summary.currency),
-    MARGIN_X + contentWidth,
+    colGross,
     y,
     10,
     bold,
@@ -177,7 +216,7 @@ export async function buildAmazonMonthlyFeesPdf(
   drawRight(
     page,
     formatMoney(summary.vatOnSales, summary.currency),
-    MARGIN_X + contentWidth,
+    colGross,
     y,
     10,
     bold,
@@ -193,7 +232,7 @@ export async function buildAmazonMonthlyFeesPdf(
   drawRight(
     page,
     formatMoney(summary.salesExVat, summary.currency),
-    MARGIN_X + contentWidth,
+    colGross,
     y,
     10,
     bold,
@@ -209,7 +248,7 @@ export async function buildAmazonMonthlyFeesPdf(
   drawRight(
     page,
     formatMoney(summary.totalFees, summary.currency),
-    MARGIN_X + contentWidth,
+    colGross,
     y,
     10,
     bold,
@@ -224,102 +263,16 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   drawRight(
     page,
-    formatMoney(summary.settledProductSales - summary.totalFees, summary.currency),
-    MARGIN_X + contentWidth,
-    y,
-    11,
-    bold,
-  );
-  y -= mm(10);
-
-  page.drawLine({
-    start: { x: MARGIN_X, y },
-    end: { x: MARGIN_X + contentWidth, y },
-    thickness: 1,
-    color: rgb(0.8, 0.8, 0.8),
-  });
-  y -= mm(8);
-
-  page.drawText("VAT paid on Amazon charges", {
-    x: MARGIN_X,
-    y,
-    size: 12,
-    font: bold,
-  });
-  y -= mm(7);
-
-  page.drawText("VAT on selling fees", {
-    x: MARGIN_X,
-    y,
-    size: 10,
-    font,
-  });
-  drawRight(
-    page,
-    formatMoney(summary.vatOnSellingFees, summary.currency),
-    MARGIN_X + contentWidth,
-    y,
-    10,
-    bold,
-  );
-  y -= mm(5);
-  page.drawText(
-    `Selling fees ex VAT: ${formatMoney(summary.sellingFeesExVat, summary.currency)}`,
-    {
-      x: MARGIN_X,
-      y,
-      size: 8,
-      font,
-      color: rgb(0.4, 0.4, 0.4),
-    },
-  );
-  y -= mm(6);
-
-  page.drawText("VAT on subscription", {
-    x: MARGIN_X,
-    y,
-    size: 10,
-    font,
-  });
-  drawRight(
-    page,
-    formatMoney(summary.vatOnSubscription, summary.currency),
-    MARGIN_X + contentWidth,
-    y,
-    10,
-    bold,
-  );
-  y -= mm(5);
-  page.drawText(
-    `Subscription ex VAT: ${formatMoney(summary.subscriptionExVat, summary.currency)}`,
-    {
-      x: MARGIN_X,
-      y,
-      size: 8,
-      font,
-      color: rgb(0.4, 0.4, 0.4),
-    },
-  );
-  y -= mm(6);
-
-  page.drawText("Total VAT on fees + subscription", {
-    x: MARGIN_X,
-    y,
-    size: 11,
-    font: bold,
-  });
-  drawRight(
-    page,
     formatMoney(
-      summary.vatOnSellingFees + summary.vatOnSubscription,
+      summary.settledProductSales - summary.totalFees,
       summary.currency,
     ),
-    MARGIN_X + contentWidth,
+    colGross,
     y,
     11,
     bold,
   );
-  y -= mm(10);
+  y -= mm(12);
 
   page.drawLine({
     start: { x: MARGIN_X, y },
@@ -329,7 +282,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(8);
 
-  page.drawText("Fee breakdown (inc VAT)", {
+  page.drawText("Fees in GBP (£)", {
     x: MARGIN_X,
     y,
     size: 12,
@@ -337,45 +290,58 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(7);
 
-  page.drawText("Category", {
-    x: MARGIN_X,
+  const headerColor = rgb(0.35, 0.35, 0.35);
+  page.drawText("Type", {
+    x: colType,
     y,
     size: 9,
     font: bold,
-    color: rgb(0.35, 0.35, 0.35),
+    color: headerColor,
   });
-  drawRight(page, "Lines", MARGIN_X + contentWidth - mm(40), y, 9, bold);
-  drawRight(page, "Amount", MARGIN_X + contentWidth, y, 9, bold);
+  drawRight(page, "Net", colNet, y, 9, bold, headerColor);
+  drawRight(page, "VAT (%)", colVat, y, 9, bold, headerColor);
+  drawRight(page, "Tax amount", colTax, y, 9, bold, headerColor);
+  drawRight(page, "Gross", colGross, y, 9, bold, headerColor);
   y -= mm(5);
 
-  for (const row of summary.categories) {
-    ensureSpace(mm(7));
-    page.drawText(row.category, {
-      x: MARGIN_X,
+  const rows = invoiceFeeRows(summary);
+  for (const row of rows) {
+    ensureSpace(mm(8));
+    page.drawText(row.type, {
+      x: colType,
       y,
       size: 10,
       font,
     });
     drawRight(
       page,
-      String(row.lineCount),
-      MARGIN_X + contentWidth - mm(40),
+      formatMoney(row.net, summary.currency),
+      colNet,
+      y,
+      10,
+      font,
+    );
+    drawRight(page, row.vatRatePct.toFixed(2), colVat, y, 10, font);
+    drawRight(
+      page,
+      formatMoney(row.tax, summary.currency),
+      colTax,
       y,
       10,
       font,
     );
     drawRight(
       page,
-      formatMoney(row.amount, summary.currency),
-      MARGIN_X + contentWidth,
+      formatMoney(row.gross, summary.currency),
+      colGross,
       y,
       10,
-      font,
+      bold,
     );
-    y -= mm(6);
+    y -= mm(7);
   }
 
-  y -= mm(2);
+  y -= mm(1);
   page.drawLine({
     start: { x: MARGIN_X, y },
     end: { x: MARGIN_X + contentWidth, y },
@@ -384,24 +350,80 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(7);
 
-  page.drawText("Total Amazon fees", {
+  const netTotal = Number(
+    (summary.sellingFeesExVat + summary.subscriptionExVat).toFixed(2),
+  );
+  const taxTotal = Number(
+    (summary.vatOnSellingFees + summary.vatOnSubscription).toFixed(2),
+  );
+
+  page.drawText("Subtotal", {
+    x: colType,
+    y,
+    size: 10,
+    font: bold,
+  });
+  drawRight(
+    page,
+    formatMoney(netTotal, summary.currency),
+    colNet,
+    y,
+    10,
+    bold,
+  );
+  drawRight(page, "-", colVat, y, 10, font, headerColor);
+  drawRight(
+    page,
+    formatMoney(taxTotal, summary.currency),
+    colTax,
+    y,
+    10,
+    bold,
+  );
+  drawRight(
+    page,
+    formatMoney(summary.totalFees, summary.currency),
+    colGross,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(8);
+
+  page.drawText("Total tax in GBP", {
     x: MARGIN_X,
     y,
-    size: 12,
+    size: 10,
+    font,
+  });
+  drawRight(
+    page,
+    formatMoney(taxTotal, summary.currency),
+    colGross,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(6);
+
+  page.drawText("Total current invoice in GBP", {
+    x: MARGIN_X,
+    y,
+    size: 11,
     font: bold,
   });
   drawRight(
     page,
     formatMoney(summary.totalFees, summary.currency),
-    MARGIN_X + contentWidth,
+    colGross,
     y,
-    12,
+    11,
     bold,
   );
-  y -= mm(10);
+  y -= mm(12);
 
   page.drawText(
-    `Source: ${summary.transactionCount} Amazon finance transaction(s), ${summary.feeLineCount} fee line(s).`,
+    `VAT at ${Math.round(summary.vatRate * 100)} %   ·   Total taxable amount: ${formatMoney(netTotal, summary.currency)}`,
     {
       x: MARGIN_X,
       y,
@@ -410,81 +432,8 @@ export async function buildAmazonMonthlyFeesPdf(
       color: rgb(0.4, 0.4, 0.4),
     },
   );
-  y -= mm(12);
+  y -= mm(10);
 
-  // Detail appendix (first ~80 lines to keep PDF short)
-  const detailLines = summary.lines.slice(0, 80);
-  if (detailLines.length) {
-    ensureSpace(mm(20));
-    page.drawText("Fee line detail (sample)", {
-      x: MARGIN_X,
-      y,
-      size: 12,
-      font: bold,
-    });
-    y -= mm(6);
-
-    page.drawText("Date", {
-      x: MARGIN_X,
-      y,
-      size: 8,
-      font: bold,
-      color: rgb(0.35, 0.35, 0.35),
-    });
-    page.drawText("Category / type", {
-      x: MARGIN_X + mm(28),
-      y,
-      size: 8,
-      font: bold,
-      color: rgb(0.35, 0.35, 0.35),
-    });
-    drawRight(page, "Amount", MARGIN_X + contentWidth, y, 8, bold);
-    y -= mm(5);
-
-    for (const line of detailLines) {
-      ensureSpace(mm(8));
-      page.drawText(formatDate(line.postedDate), {
-        x: MARGIN_X,
-        y,
-        size: 8,
-        font,
-      });
-      const label = `${line.category} · ${line.breakdownType}`.slice(0, 55);
-      page.drawText(label, {
-        x: MARGIN_X + mm(28),
-        y,
-        size: 8,
-        font,
-      });
-      drawRight(
-        page,
-        formatMoney(line.amount, line.currency || summary.currency),
-        MARGIN_X + contentWidth,
-        y,
-        8,
-        font,
-      );
-      y -= mm(4.5);
-    }
-
-    if (summary.lines.length > detailLines.length) {
-      y -= mm(3);
-      ensureSpace(mm(6));
-      page.drawText(
-        `Showing ${detailLines.length} of ${summary.lines.length} fee lines.`,
-        {
-          x: MARGIN_X,
-          y,
-          size: 8,
-          font,
-          color: rgb(0.4, 0.4, 0.4),
-        },
-      );
-    }
-  }
-
-  y -= mm(14);
-  ensureSpace(mm(16));
   page.drawText("QuickBooks tip", {
     x: MARGIN_X,
     y,
@@ -493,7 +442,7 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(5);
   page.drawText(
-    "Enter one expense (or journal) for Total Amazon fees, or split by category above.",
+    "Enter two expense lines: Referral / commission, and Selling subscription (net + VAT).",
     {
       x: MARGIN_X,
       y,
