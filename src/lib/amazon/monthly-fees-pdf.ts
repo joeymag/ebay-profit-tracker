@@ -197,7 +197,7 @@ export async function buildAmazonMonthlyFeesPdf(
   );
   y -= mm(6);
 
-  page.drawText("Fees paid to Amazon", {
+  page.drawText("Fees paid to Amazon (inc VAT)", {
     x: MARGIN_X,
     y,
     size: 10,
@@ -237,7 +237,96 @@ export async function buildAmazonMonthlyFeesPdf(
   });
   y -= mm(8);
 
-  page.drawText("Fee breakdown", {
+  page.drawText("VAT paid on Amazon charges", {
+    x: MARGIN_X,
+    y,
+    size: 12,
+    font: bold,
+  });
+  y -= mm(7);
+
+  page.drawText("VAT on selling fees", {
+    x: MARGIN_X,
+    y,
+    size: 10,
+    font,
+  });
+  drawRight(
+    page,
+    formatMoney(summary.vatOnSellingFees, summary.currency),
+    MARGIN_X + contentWidth,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(5);
+  page.drawText(
+    `Selling fees ex VAT: ${formatMoney(summary.sellingFeesExVat, summary.currency)}`,
+    {
+      x: MARGIN_X,
+      y,
+      size: 8,
+      font,
+      color: rgb(0.4, 0.4, 0.4),
+    },
+  );
+  y -= mm(6);
+
+  page.drawText("VAT on subscription", {
+    x: MARGIN_X,
+    y,
+    size: 10,
+    font,
+  });
+  drawRight(
+    page,
+    formatMoney(summary.vatOnSubscription, summary.currency),
+    MARGIN_X + contentWidth,
+    y,
+    10,
+    bold,
+  );
+  y -= mm(5);
+  page.drawText(
+    `Subscription ex VAT: ${formatMoney(summary.subscriptionExVat, summary.currency)}`,
+    {
+      x: MARGIN_X,
+      y,
+      size: 8,
+      font,
+      color: rgb(0.4, 0.4, 0.4),
+    },
+  );
+  y -= mm(6);
+
+  page.drawText("Total VAT on fees + subscription", {
+    x: MARGIN_X,
+    y,
+    size: 11,
+    font: bold,
+  });
+  drawRight(
+    page,
+    formatMoney(
+      summary.vatOnSellingFees + summary.vatOnSubscription,
+      summary.currency,
+    ),
+    MARGIN_X + contentWidth,
+    y,
+    11,
+    bold,
+  );
+  y -= mm(10);
+
+  page.drawLine({
+    start: { x: MARGIN_X, y },
+    end: { x: MARGIN_X + contentWidth, y },
+    thickness: 1,
+    color: rgb(0.8, 0.8, 0.8),
+  });
+  y -= mm(8);
+
+  page.drawText("Fee breakdown (inc VAT)", {
     x: MARGIN_X,
     y,
     size: 12,

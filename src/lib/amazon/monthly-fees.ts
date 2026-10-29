@@ -18,8 +18,12 @@ export type AmazonFeeLine = {
   description: string;
   postedDate: string;
   orderId: string | null;
-  /** Expense contribution: Amazon fee deduction (-£5) becomes +£5. Refunds net down. */
+  /** Gross expense contribution (inc VAT where Amazon split Base/Tax). */
   amount: number;
+  /** Fee amount excluding VAT. */
+  netAmount: number;
+  /** VAT Amazon charged on this fee line. */
+  vatAmount: number;
   currency: string;
 };
 
@@ -45,6 +49,14 @@ export type AmazonMonthlyFeesSummary = {
   vatOnSales: number;
   /** Sold-for plus VAT. */
   salesIncVat: number;
+  /** Selling fees (ex subscription) excluding VAT. */
+  sellingFeesExVat: number;
+  /** VAT paid on selling fees (commission, digital services, etc.). */
+  vatOnSellingFees: number;
+  /** Subscription excluding VAT. */
+  subscriptionExVat: number;
+  /** VAT paid on the selling subscription. */
+  vatOnSubscription: number;
   /** Amazon orders placed this month. */
   orderCount: number;
   /** Orders that had no fee rows yet in Finances (too new / not settled). */
@@ -211,6 +223,47 @@ function childrenAreFeeComposition(children: Breakdown[]): boolean {
   });
 }
 
+/** Split Base/Tax leaves under a fee node into net + VAT (expense signs). */
+function splitFeeCompositionAmounts(children: Breakdown[]): {
+  netAmount: number;
+  vatAmount: number;
+} {
+  let netAmount = 0;
+  let vatAmount = 0;
+
+  const walk = (rows: Breakdown[]) => {
+    for (const row of rows) {
+      const nested = row.breakdowns ?? [];
+      if (nested.length) {
+        walk(nested);
+        continue;
+      }
+      const type = row.breakdownType?.trim() || "";
+      const raw = Number(row.breakdownAmount?.currencyAmount);
+      if (!Number.isFinite(raw) || raw === 0) continue;
+      const expense = -raw;
+      if (/^tax$/i.test(type)) vatAmount += expense;
+      else if (/^(base|basetax)$/i.test(type)) netAmount += expense;
+    }
+  };
+
+  walk(children);
+  return {
+    netAmount: Number(netAmount.toFixed(4)),
+    vatAmount: Number(vatAmount.toFixed(4)),
+  };
+}
+
+/** When Amazon does not split Base/Tax, treat amount as VAT-inclusive. */
+function inferVatSplit(
+  grossAmount: number,
+  vatRate = PRODUCT_COST_VAT_RATE,
+): { netAmount: number; vatAmount: number } {
+  const vatAmount = Number(((grossAmount * vatRate) / (1 + vatRate)).toFixed(4));
+  const netAmount = Number((grossAmount - vatAmount).toFixed(4));
+  return { netAmount, vatAmount };
+}
+
 /**
  * Amazon nests breakdowns so parents equal the sum of children.
  * Count fee nodes once; when Commission/FBA/etc. only have Base+Tax children,
@@ -245,13 +298,30 @@ function walkBreakdowns(
 
       if (takeHere) {
         if (Number.isFinite(amountRaw) && amountRaw !== 0) {
+          const amount = Number((-amountRaw).toFixed(4));
+          let netAmount = 0;
+          let vatAmount = 0;
+          if (children.length > 0) {
+            const split = splitFeeCompositionAmounts(children);
+            if (split.netAmount !== 0 || split.vatAmount !== 0) {
+              netAmount = split.netAmount;
+              vatAmount = split.vatAmount;
+            } else {
+              ({ netAmount, vatAmount } = inferVatSplit(amount));
+            }
+          } else {
+            ({ netAmount, vatAmount } = inferVatSplit(amount));
+          }
+
           lines.push({
             category: categorizeFee(type),
             breakdownType: type,
             description: context.description,
             postedDate: context.postedDate,
             orderId: context.orderId,
-            amount: Number((-amountRaw).toFixed(4)),
+            amount,
+            netAmount: Number(netAmount.toFixed(4)),
+            vatAmount: Number(vatAmount.toFixed(4)),
             currency,
           });
         }
@@ -324,13 +394,17 @@ function extractFeesFromTransaction(
       total !== 0 &&
       looksLikeFeeType(type || description)
     ) {
+      const amount = Number((-total).toFixed(4));
+      const { netAmount, vatAmount } = inferVatSplit(amount);
       lines.push({
         category: categorizeFee(type || description),
         breakdownType: type || "Fee",
         description,
         postedDate,
         orderId,
-        amount: Number((-total).toFixed(4)),
+        amount,
+        netAmount,
+        vatAmount,
         currency: currencyFallback,
       });
     }
@@ -450,6 +524,26 @@ function summarise(
   const vatOnSales = Number((settledProductSales * vatRate).toFixed(2));
   const salesIncVat = Number((settledProductSales + vatOnSales).toFixed(2));
 
+  const subscriptionLines = lines.filter(
+    (line) => line.category === "Selling subscription",
+  );
+  const sellingFeeLines = lines.filter(
+    (line) => line.category !== "Selling subscription",
+  );
+
+  const sellingFeesExVat = Number(
+    sellingFeeLines.reduce((sum, line) => sum + line.netAmount, 0).toFixed(2),
+  );
+  const vatOnSellingFees = Number(
+    sellingFeeLines.reduce((sum, line) => sum + line.vatAmount, 0).toFixed(2),
+  );
+  const subscriptionExVat = Number(
+    subscriptionLines.reduce((sum, line) => sum + line.netAmount, 0).toFixed(2),
+  );
+  const vatOnSubscription = Number(
+    subscriptionLines.reduce((sum, line) => sum + line.vatAmount, 0).toFixed(2),
+  );
+
   return {
     year,
     month,
@@ -462,6 +556,10 @@ function summarise(
     vatRate,
     vatOnSales,
     salesIncVat,
+    sellingFeesExVat,
+    vatOnSellingFees,
+    subscriptionExVat,
+    vatOnSubscription,
     orderCount,
     ordersMissingFees,
     categories: categories.map((row) => ({
@@ -616,6 +714,8 @@ async function fetchMonthSubscriptionFee(
   if (lines.length) return lines;
 
   // Fallback if Amazon has not posted the subscription row yet.
+  const amount = AMAZON_SUBSCRIPTION_MONTHLY;
+  const { netAmount, vatAmount } = inferVatSplit(amount);
   return [
     {
       category: "Selling subscription",
@@ -623,7 +723,9 @@ async function fetchMonthSubscriptionFee(
       description: "Subscription (configured monthly rate)",
       postedDate: postedAfter.toISOString(),
       orderId: null,
-      amount: AMAZON_SUBSCRIPTION_MONTHLY,
+      amount,
+      netAmount,
+      vatAmount,
       currency: "GBP",
     },
   ];

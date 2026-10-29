@@ -29,6 +29,10 @@ type FeesSummary = {
   vatRate?: number;
   vatOnSales?: number;
   salesIncVat?: number;
+  sellingFeesExVat?: number;
+  vatOnSellingFees?: number;
+  subscriptionExVat?: number;
+  vatOnSubscription?: number;
   orderCount?: number;
   ordersMissingFees?: number;
   categories: FeeCategoryTotal[];
@@ -280,6 +284,53 @@ export function AmazonMonthlyFeesCard() {
                 </span>
               </div>
             </div>
+            <div className="space-y-1.5 border-t border-border/60 pt-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                VAT paid on Amazon charges
+              </p>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">
+                  VAT on selling fees
+                  <span className="ml-2 text-xs">
+                    (ex VAT{" "}
+                    {formatMoney(
+                      summary.sellingFeesExVat ?? 0,
+                      summary.currency,
+                    )}
+                    )
+                  </span>
+                </span>
+                <span className="tabular-nums font-medium">
+                  {formatMoney(summary.vatOnSellingFees ?? 0, summary.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">
+                  VAT on subscription
+                  <span className="ml-2 text-xs">
+                    (ex VAT{" "}
+                    {formatMoney(
+                      summary.subscriptionExVat ?? 0,
+                      summary.currency,
+                    )}
+                    )
+                  </span>
+                </span>
+                <span className="tabular-nums font-medium">
+                  {formatMoney(summary.vatOnSubscription ?? 0, summary.currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium">Total VAT on fees + subscription</span>
+                <span className="tabular-nums font-semibold">
+                  {formatMoney(
+                    (summary.vatOnSellingFees ?? 0) +
+                      (summary.vatOnSubscription ?? 0),
+                    summary.currency,
+                  )}
+                </span>
+              </div>
+            </div>
             <p className="text-xs text-muted-foreground">
               {summary.feeLineCount} fee line
               {summary.feeLineCount === 1 ? "" : "s"}
@@ -292,7 +343,7 @@ export function AmazonMonthlyFeesCard() {
             </p>
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">
-                Fee breakdown
+                Fee breakdown (inc VAT)
               </p>
               {summary.categories.map((row) => (
                 <div
