@@ -1,4 +1,5 @@
 import { AtRiskDeliveriesTable } from "@/components/late-deliveries/at-risk-deliveries-table";
+import { EbaySellerStandardsCard } from "@/components/late-deliveries/ebay-seller-standards-card";
 import { LateDeliveriesTable } from "@/components/late-deliveries/late-deliveries-table";
 import { DateRangeFilterBar } from "@/components/filters/date-range-filter-bar";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
@@ -33,6 +34,8 @@ export default async function LateDeliveriesPage({
         description={`${atRiskOrders.length} open at risk/overdue · ${lateOrders.length} delivered late · ${rangeLabel.toLowerCase()}`}
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
+        <EbaySellerStandardsCard />
+
         <div className="surface-card flex flex-col gap-4 p-5">
           <p className="text-sm text-muted-foreground">
             Open orders use eBay&apos;s promised deliver-by date to flag{" "}
@@ -42,6 +45,8 @@ export default async function LateDeliveriesPage({
             (eBay deliver-by when known, otherwise more than{" "}
             {EBAY_ON_TIME_DELIVERY_DAYS} calendar days), filtered by{" "}
             <span className="font-medium text-foreground">delivery date</span>.
+            Official Defects / late shipment rates are in the seller standards
+            card above.
           </p>
           <DateRangeFilterBar />
         </div>
