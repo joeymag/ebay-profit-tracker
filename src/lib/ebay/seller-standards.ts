@@ -60,10 +60,10 @@ type StandardsProfileApi = {
   evaluationReason?: string | null;
   metrics?: Array<{
     metricKey?: string;
-    value?: string;
+    value?: string | number | boolean | null;
     benchmark?: {
-      rating?: string;
-      metadata?: { average?: string };
+      rating?: string | number | null;
+      metadata?: { average?: string | number | null };
     };
   }>;
   program?: string;
@@ -85,10 +85,10 @@ type CustomerServiceMetricResponse = {
     dimension?: { name?: string; value?: string };
     metrics?: Array<{
       metricKey?: string;
-      value?: string;
+      value?: string | number | boolean | null;
       benchmark?: {
-        rating?: string;
-        metadata?: { average?: string };
+        rating?: string | number | null;
+        metadata?: { average?: string | number | null };
       };
     }>;
   }>;
@@ -115,8 +115,21 @@ function titleCaseKey(key: string): string {
     .join(" ");
 }
 
+/** eBay sometimes returns numbers/booleans where docs say string. */
+function asTrimmedString(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
+}
+
 function normalizeLevel(value: string | undefined): EbayStandardsLevel {
-  const upper = value?.trim().toUpperCase();
+  const upper = asTrimmedString(value)?.toUpperCase();
   if (
     upper === "TOP_RATED" ||
     upper === "ABOVE_STANDARD" ||
@@ -127,35 +140,38 @@ function normalizeLevel(value: string | undefined): EbayStandardsLevel {
   return "UNKNOWN";
 }
 
-function parseNumeric(value: string | null | undefined): number | null {
+function parseNumeric(value: unknown): number | null {
   if (value == null || value === "") return null;
-  const parsed = Number(value);
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  const parsed = Number(asTrimmedString(value));
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 function mapMetric(
   metric: NonNullable<StandardsProfileApi["metrics"]>[number],
 ): EbayStandardsMetric {
-  const key = metric.metricKey?.trim() || "UNKNOWN";
-  const value = metric.value?.trim() || null;
+  const key = asTrimmedString(metric.metricKey) || "UNKNOWN";
+  const value = asTrimmedString(metric.value);
   return {
     key,
     label: METRIC_LABELS[key] ?? titleCaseKey(key),
     value,
-    numericValue: parseNumeric(value),
-    rating: metric.benchmark?.rating?.trim() || null,
-    peerAverage: metric.benchmark?.metadata?.average?.trim() || null,
+    numericValue: parseNumeric(metric.value ?? value),
+    rating: asTrimmedString(metric.benchmark?.rating),
+    peerAverage: asTrimmedString(metric.benchmark?.metadata?.average),
   };
 }
 
 function mapProfile(profile: StandardsProfileApi): EbayStandardsProfileSummary {
   return {
-    program: profile.program?.trim() || "UNKNOWN",
-    cycleType: profile.cycle?.cycleType?.trim() || null,
-    evaluationDate: profile.cycle?.evaluationDate?.trim() || null,
-    evaluationMonth: profile.cycle?.evaluationMonth?.trim() || null,
+    program: asTrimmedString(profile.program) || "UNKNOWN",
+    cycleType: asTrimmedString(profile.cycle?.cycleType),
+    evaluationDate: asTrimmedString(profile.cycle?.evaluationDate),
+    evaluationMonth: asTrimmedString(profile.cycle?.evaluationMonth),
     standardsLevel: normalizeLevel(profile.standardsLevel),
-    evaluationReason: profile.evaluationReason?.trim() || null,
+    evaluationReason: asTrimmedString(profile.evaluationReason),
     metrics: (profile.metrics ?? []).map(mapMetric),
   };
 }
@@ -199,11 +215,16 @@ function summarizeCustomerServiceMetric(
   response: CustomerServiceMetricResponse,
 ): EbayCustomerServiceMetricSummary {
   const metrics = response.dimensionMetrics?.[0]?.metrics ?? [];
-  const byKey = new Map(
-    metrics
-      .filter((metric) => metric.metricKey)
-      .map((metric) => [metric.metricKey!.toUpperCase(), metric]),
-  );
+  const byKey = new Map<
+    string,
+    NonNullable<
+      NonNullable<CustomerServiceMetricResponse["dimensionMetrics"]>[number]["metrics"]
+    >[number]
+  >();
+  for (const metric of metrics) {
+    const key = asTrimmedString(metric.metricKey)?.toUpperCase();
+    if (key) byKey.set(key, metric);
+  }
 
   const rateMetric = byKey.get("RATE");
   const countMetric = byKey.get("COUNT");
@@ -216,14 +237,14 @@ function summarizeCustomerServiceMetric(
         ? "Item not as described"
         : "Item not received",
     evaluationType,
-    marketplaceId: response.marketplaceId?.trim() || null,
-    cycleStart: response.evaluationCycle?.startDate?.trim() || null,
-    cycleEnd: response.evaluationCycle?.endDate?.trim() || null,
+    marketplaceId: asTrimmedString(response.marketplaceId),
+    cycleStart: asTrimmedString(response.evaluationCycle?.startDate),
+    cycleEnd: asTrimmedString(response.evaluationCycle?.endDate),
     transactionCount: parseNumeric(txnMetric?.value ?? null),
     defectCount: parseNumeric(countMetric?.value ?? null),
     rate: parseNumeric(rateMetric?.value ?? null),
-    rating: rateMetric?.benchmark?.rating?.trim() || null,
-    peerAverage: rateMetric?.benchmark?.metadata?.average?.trim() || null,
+    rating: asTrimmedString(rateMetric?.benchmark?.rating),
+    peerAverage: asTrimmedString(rateMetric?.benchmark?.metadata?.average),
   };
 }
 
