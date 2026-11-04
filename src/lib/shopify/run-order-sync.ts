@@ -10,6 +10,7 @@ import { enrichOrdersWithEbayPostageAndTracking } from "@/lib/ebay/ebay-postage-
 import { enrichOrdersWithLineItemImages } from "@/lib/shopify/line-item-images";
 import { enrichOrdersWithPostageAndTracking } from "@/lib/shopify/postage-enrichment";
 import { getLastOrderSyncCompletedAt } from "@/lib/shopify/sync-state";
+import { dispatchShopifyFromTemuTracking } from "@/lib/orders/sync-dispatch";
 import {
   enrichOrdersWithTemuTracking,
   syncTemuTrackingFromDatabase,
@@ -247,6 +248,7 @@ export async function runOrderSync(
 
   // Backfill Temu tracking from Supabase rows (covers past orders outside this Shopify batch).
   let temuTrackingUpdated = 0;
+  let temuShopifyDispatched = 0;
   try {
     const temuSync = await syncTemuTrackingFromDatabase({
       days: mode === "full" ? 120 : QUICK_POSTAGE_RECENT_DAYS,
@@ -264,6 +266,19 @@ export async function runOrderSync(
     }
   } catch (error) {
     console.error("[run-order-sync] Temu tracking database sync failed:", error);
+  }
+
+  try {
+    const temuDispatch = await dispatchShopifyFromTemuTracking();
+    temuShopifyDispatched = temuDispatch.fulfilled;
+    if (temuDispatch.errors.length > 0) {
+      console.error(
+        "[run-order-sync] Temu Shopify dispatch errors:",
+        temuDispatch.errors,
+      );
+    }
+  } catch (error) {
+    console.error("[run-order-sync] Temu Shopify dispatch failed:", error);
   }
 
   const shouldRecalculate =
@@ -288,15 +303,17 @@ export async function runOrderSync(
     removedCancelled,
     updatedSince,
     hint:
-      temuTrackingUpdated > 0
-        ? `Filled Temu tracking/label cost on ${temuTrackingUpdated} past order(s).`
-        : mode === "quick" && !incremental
-          ? labelLookups > 0
-            ? `Checked ${labelLookups} recent order(s) for Shopify postage labels.`
-            : "Quick sync finished. Auto-sync applies postage when new labels are bought."
-          : incremental
-            ? "Auto-sync imports changed Shopify orders and applies postage when a shipping label was purchased."
-            : undefined,
+      temuShopifyDispatched > 0
+        ? `Marked ${temuShopifyDispatched} Temu order(s) dispatched in Shopify with tracking.`
+        : temuTrackingUpdated > 0
+          ? `Filled Temu tracking/label cost on ${temuTrackingUpdated} past order(s).`
+          : mode === "quick" && !incremental
+            ? labelLookups > 0
+              ? `Checked ${labelLookups} recent order(s) for Shopify postage labels.`
+              : "Quick sync finished. Auto-sync applies postage when new labels are bought."
+            : incremental
+              ? "Auto-sync imports changed Shopify orders and applies postage when a shipping label was purchased."
+              : undefined,
   };
 }
 

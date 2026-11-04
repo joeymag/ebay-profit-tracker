@@ -10,6 +10,7 @@ import {
 import { geocodePendingOrders } from "@/lib/geocoding/geocode";
 import {
   dispatchShopifyFromEbayPostage,
+  dispatchShopifyFromTemuTracking,
   pushShopifyTrackingToMarketplaces,
 } from "@/lib/orders/sync-dispatch";
 import { syncEbayFeesFromFinancesApi } from "@/lib/ebay/sync-fees";
@@ -41,6 +42,7 @@ async function runAutoSync(): Promise<void> {
       JSON.stringify({
         created: imported.created,
         temuCreated: imported.temuCreated,
+        temuDispatched: imported.temuDispatched,
         skipped: imported.skipped,
         addressesUpdated: imported.addressesUpdated,
         cancelled: imported.cancelled,
@@ -74,6 +76,16 @@ async function runAutoSync(): Promise<void> {
     );
   } catch (error) {
     console.error("[cron/sync-orders] Temu tracking sync failed:", error);
+  }
+
+  try {
+    const temuDispatched = await dispatchShopifyFromTemuTracking();
+    console.info(
+      "[cron/sync-orders] Temu Shopify dispatch",
+      JSON.stringify(temuDispatched),
+    );
+  } catch (error) {
+    console.error("[cron/sync-orders] Temu Shopify dispatch failed:", error);
   }
 
   const refreshToken = await getStoredEbayRefreshToken();

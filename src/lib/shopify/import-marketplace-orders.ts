@@ -23,6 +23,7 @@ import {
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 import { cancelShopifyMarketplaceOrder } from "@/lib/shopify/cancel-marketplace-order";
 import { fillShopifyOrderAddress } from "@/lib/shopify/fill-order-address";
+import { fulfillShopifyOrderWithTracking } from "@/lib/shopify/fulfill-order";
 import { shopifyAdminGraphql } from "@/lib/shopify/graphql";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
@@ -33,6 +34,7 @@ export type MarketplaceImportResult = {
   ebayCreated: number;
   amazonCreated: number;
   temuCreated: number;
+  temuDispatched: number;
   unmatchedSkus: string[];
   addressesUpdated: number;
   cancelled: number;
@@ -45,11 +47,40 @@ const EMPTY: MarketplaceImportResult = {
   ebayCreated: 0,
   amazonCreated: 0,
   temuCreated: 0,
+  temuDispatched: 0,
   unmatchedSkus: [],
   addressesUpdated: 0,
   cancelled: 0,
   errors: [],
 };
+
+function shopifyNumericId(gid: string): number | null {
+  const match = gid.match(/\/Order\/(\d+)\s*$/);
+  if (!match?.[1]) return null;
+  const id = Number(match[1]);
+  return Number.isFinite(id) ? id : null;
+}
+
+function shopifyCarrierName(carrier: string | null | undefined): string | undefined {
+  const raw = carrier?.trim();
+  if (!raw) return undefined;
+  const lower = raw.toLowerCase();
+  if (lower.includes("evri") || lower.includes("hermes")) return "Evri";
+  if (lower.includes("royal mail")) return "Royal Mail";
+  if (lower.includes("yodel")) return "Yodel";
+  if (lower.includes("dpd")) return "DPD";
+  if (lower.includes("ups")) return "UPS";
+  if (lower.includes("fedex")) return "FedEx";
+  if (lower.includes("dhl")) return "DHL Express";
+  return raw;
+}
+
+/** Amazon stay connected for fees/accounting; order → Shopify import can be turned off. */
+function isAmazonOrderImportEnabled(): boolean {
+  const raw = process.env.AMAZON_ORDER_IMPORT_ENABLED?.trim().toLowerCase();
+  if (!raw) return true;
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+}
 
 function splitName(name: string | null): { firstName: string; lastName: string } {
   const parts = name?.trim().split(/\s+/).filter(Boolean) ?? [];
@@ -158,7 +189,9 @@ function money(amount: number, currency: string) {
   };
 }
 
-async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
+async function createShopifyOrder(
+  sale: MarketplaceSale,
+): Promise<{ unmatched: string[]; shopifyId: number }> {
   const unmatched: string[] = [];
   const lineItems = [];
   for (const line of sale.lines) {
@@ -293,7 +326,26 @@ async function createShopifyOrder(sale: MarketplaceSale): Promise<string[]> {
   if (errors.length > 0 || !data.orderCreate.order) {
     throw new Error(errors.join("; ") || "Shopify did not create the order.");
   }
-  return unmatched;
+  const shopifyId = shopifyNumericId(data.orderCreate.order.id);
+  if (shopifyId == null) {
+    throw new Error("Shopify returned an order id that could not be parsed.");
+  }
+  return { unmatched, shopifyId };
+}
+
+async function fulfillImportedTemuOrder(
+  sale: MarketplaceSale,
+  shopifyId: number,
+): Promise<boolean> {
+  const trackingNumber = sale.trackingNumbers?.find((number) => number.trim());
+  if (!trackingNumber) return false;
+  const result = await fulfillShopifyOrderWithTracking({
+    shopifyOrderId: shopifyId,
+    trackingNumber: trackingNumber.trim(),
+    trackingCompany: shopifyCarrierName(sale.shippingCarrier),
+    notifyCustomer: false,
+  });
+  return result === "fulfilled";
 }
 
 export async function importMarketplaceOrders(options?: {
@@ -335,7 +387,7 @@ export async function importMarketplaceOrders(options?: {
     }
   }
 
-  if (await getStoredAmazonRefreshToken()) {
+  if (isAmazonOrderImportEnabled() && (await getStoredAmazonRefreshToken())) {
     try {
       const amazon = await fetchRecentAmazonSales(days);
       sales.push(...amazon.sales);
@@ -359,12 +411,24 @@ export async function importMarketplaceOrders(options?: {
         result.skipped += 1;
         continue;
       }
-      const unmatched = await createShopifyOrder(sale);
+      const { unmatched, shopifyId } = await createShopifyOrder(sale);
       result.created += 1;
       if (sale.channel === "eBay") result.ebayCreated += 1;
       else if (sale.channel === "Amazon") result.amazonCreated += 1;
       else result.temuCreated += 1;
       result.unmatchedSkus.push(...unmatched);
+
+      if (sale.channel === "Temu" && (sale.trackingNumbers?.length ?? 0) > 0) {
+        try {
+          if (await fulfillImportedTemuOrder(sale, shopifyId)) {
+            result.temuDispatched += 1;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Fulfillment failed.";
+          result.errors.push(`Temu ${sale.orderId}: Shopify dispatch failed — ${message}`);
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Create failed.";
       if (/access denied|write_orders/i.test(message)) {
@@ -423,7 +487,7 @@ export async function importMarketplaceOrders(options?: {
     }
   }
 
-  if (await getStoredAmazonRefreshToken()) {
+  if (isAmazonOrderImportEnabled() && (await getStoredAmazonRefreshToken())) {
     try {
       const cancelledIds = await fetchRecentAmazonCancelledIds(cancelDays);
       await cancelImportedOrders("Amazon", cancelledIds, result);

@@ -3,6 +3,7 @@ import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { temuCall, temuCallFlat, temuCallValues, TemuApiError } from "@/lib/temu/client";
 import type { TemuCredentials } from "@/lib/temu/config";
+import { fetchTemuShipmentTracking } from "@/lib/temu/shipment-tracking";
 import { getStoredTemuCredentials } from "@/lib/temu/token-store";
 
 type TemuMoney = { amount?: number; currency?: string };
@@ -273,11 +274,12 @@ async function toSale(
   const status = parent?.parentOrderStatus;
   if (!orderId || status == null || !IMPORT_STATUSES.has(status)) return null;
 
-  const [shipping, amount] = await Promise.all([
+  const [shipping, amount, shipment] = await Promise.all([
     temuCallFlat<TemuShipping>(credentials, "bg.order.shippinginfo.v2.get", {
       parentOrderSn: orderId,
     }),
     loadOrderAmount(credentials, orderId),
+    fetchTemuShipmentTracking(credentials, orderId).catch(() => null),
   ]);
 
   const amountBySn = new Map(
@@ -388,6 +390,9 @@ async function toSale(
   const currency = parentCurrency(amount) || "GBP";
   const createdSeconds = parent?.parentOrderTime;
 
+  const trackingNumbers = shipment?.trackingNumbers ?? [];
+  const shippingCarrier = shipment?.carrier?.trim() || null;
+
   return {
     channel: "Temu",
     orderId,
@@ -414,6 +419,8 @@ async function toSale(
         }
       : null,
     lines,
+    ...(trackingNumbers.length > 0 ? { trackingNumbers } : {}),
+    ...(shippingCarrier ? { shippingCarrier } : {}),
   };
 }
 

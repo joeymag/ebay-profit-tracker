@@ -27,7 +27,7 @@ export function DeleteOrderButton({
     const confirmed = window.confirm(
       cancelled
         ? `Remove cancelled order ${orderNumber} from the profit tracker?\n\nIt will not re-import on the next sync.`
-        : `Remove ${orderNumber} from the profit tracker?\n\nUse this if the order was cancelled or removed in Shopify but still appears here. It will not re-import on sync.`,
+        : `Remove ${orderNumber} from the profit tracker?\n\nUse this for duplicates, cancelled orders, or anything that should not count in profit. It will not come back on sync, and this does not cancel it in Shopify.`,
     );
 
     if (!confirmed) {

@@ -37,4 +37,7 @@ export type MarketplaceSale = {
   shipping: number;
   address: MarketplaceAddress | null;
   lines: MarketplaceLine[];
+  /** Present when the marketplace already issued a label (e.g. Temu buy-shipping). */
+  trackingNumbers?: string[];
+  shippingCarrier?: string | null;
 };

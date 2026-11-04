@@ -95,6 +95,7 @@ export async function POST(request: Request) {
       marketplaceSkipped: importedFromMarkets.skipped,
       marketplaceAddressesUpdated: importedFromMarkets.addressesUpdated,
       marketplaceCancelled: importedFromMarkets.cancelled,
+      marketplaceTemuDispatched: importedFromMarkets.temuDispatched,
       marketplaceErrors: importedFromMarkets.errors.slice(0, 3),
       unmatchedSkus: importedFromMarkets.unmatchedSkus.slice(0, 8),
     });

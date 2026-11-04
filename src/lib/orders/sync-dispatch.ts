@@ -14,6 +14,7 @@ type DispatchRow = {
   shopify_id: number;
   ebay_order_id: string | null;
   amazon_order_id: string | null;
+  temu_order_id?: string | null;
   tracking_numbers: string[] | null;
   tracking_url: string | null;
   shipping_carrier: string | null;
@@ -23,6 +24,20 @@ type DispatchRow = {
 
 function isFulfilled(status: string | null): boolean {
   return status?.trim().toLowerCase() === "fulfilled";
+}
+
+function shopifyCarrierName(carrier: string | null | undefined): string | undefined {
+  const raw = carrier?.trim();
+  if (!raw) return undefined;
+  const lower = raw.toLowerCase();
+  if (lower.includes("evri") || lower.includes("hermes")) return "Evri";
+  if (lower.includes("royal mail")) return "Royal Mail";
+  if (lower.includes("yodel")) return "Yodel";
+  if (lower.includes("dpd")) return "DPD";
+  if (lower.includes("ups")) return "UPS";
+  if (lower.includes("fedex")) return "FedEx";
+  if (lower.includes("dhl")) return "DHL Express";
+  return raw;
 }
 
 async function rememberLabelTracking(input: {
@@ -157,9 +172,70 @@ export async function dispatchShopifyFromEbayPostage(): Promise<{
         shopifyOrderId: row.shopify_id,
         trackingNumber,
         trackingUrl: row.tracking_url,
-        trackingCompany: row.shipping_carrier,
+        trackingCompany: shopifyCarrierName(row.shipping_carrier),
         notifyCustomer: false,
       });
+      if (result === "fulfilled") fulfilled += 1;
+    } catch (err) {
+      errors.push(
+        err instanceof Error ? err.message : `Shopify ${row.shopify_id} failed.`,
+      );
+    }
+  }
+
+  return { fulfilled, errors: errors.slice(0, 3) };
+}
+
+/** Temu buy-shipping already has tracking: mark the Shopify order dispatched. */
+export async function dispatchShopifyFromTemuTracking(): Promise<{
+  fulfilled: number;
+  errors: string[];
+}> {
+  if (!isSupabaseConfigured()) {
+    return { fulfilled: 0, errors: [] };
+  }
+
+  const since = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString();
+  const supabase = createSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("orders")
+    .select(
+      "shopify_id, ebay_order_id, amazon_order_id, temu_order_id, tracking_numbers, tracking_url, shipping_carrier, fulfillment_status, tags",
+    )
+    .gte("created_at", since)
+    .ilike("tags", "%temu%")
+    .order("created_at", { ascending: true })
+    .limit(MAX_ORDERS);
+
+  if (error || !data) {
+    return { fulfilled: 0, errors: [error?.message || "Could not load Temu orders."] };
+  }
+
+  let fulfilled = 0;
+  const errors: string[] = [];
+  const rows = data.filter(
+    (row) =>
+      !isFulfilled(row.fulfillment_status) &&
+      (row.tracking_numbers ?? []).some((number) => number.trim()),
+  );
+
+  for (const row of rows.slice(0, MAX_ORDERS)) {
+    const trackingNumber = row.tracking_numbers?.find((number) => number.trim());
+    if (!trackingNumber) continue;
+    try {
+      const result = await fulfillShopifyOrderWithTracking({
+        shopifyOrderId: row.shopify_id,
+        trackingNumber,
+        trackingUrl: row.tracking_url,
+        trackingCompany: shopifyCarrierName(row.shipping_carrier),
+        notifyCustomer: false,
+      });
+      if (result === "fulfilled" || result === "already") {
+        await supabase
+          .from("orders")
+          .update({ fulfillment_status: "fulfilled" })
+          .eq("shopify_id", row.shopify_id);
+      }
       if (result === "fulfilled") fulfilled += 1;
     } catch (err) {
       errors.push(

@@ -455,6 +455,23 @@ async function buildStockSkuLookup(match: VariantBySkuNode): Promise<StockSkuLoo
   };
 }
 
+async function lookupVariants(
+  query: string,
+  matches: (node: VariantBySkuNode) => boolean,
+): Promise<StockSkuLookup[]> {
+  const data = await shopifyAdminGraphql<VariantBySkuResponse>(VARIANT_BY_SKU_QUERY, {
+    query,
+  });
+
+  const lookups: StockSkuLookup[] = [];
+  for (const edge of data.productVariants.edges) {
+    if (!matches(edge.node)) continue;
+    const lookup = await buildStockSkuLookup(edge.node);
+    if (lookup) lookups.push(lookup);
+  }
+  return lookups;
+}
+
 /** All Shopify variants that share a SKU (duplicate listings). */
 export async function lookupAllStockBySku(rawSku: string): Promise<StockSkuLookup[]> {
   const sku = rawSku.trim();
@@ -462,23 +479,28 @@ export async function lookupAllStockBySku(rawSku: string): Promise<StockSkuLooku
     return [];
   }
 
-  const data = await shopifyAdminGraphql<VariantBySkuResponse>(VARIANT_BY_SKU_QUERY, {
-    query: `sku:${escapeSkuQuery(sku)}`,
-  });
+  return lookupVariants(
+    `sku:${escapeSkuQuery(sku)}`,
+    (node) => node.sku?.trim().toLowerCase() === sku.toLowerCase(),
+  );
+}
 
-  const matches = data.productVariants.edges
-    .map((edge) => edge.node)
-    .filter((node) => node.sku?.trim().toLowerCase() === sku.toLowerCase());
-
-  const lookups: StockSkuLookup[] = [];
-  for (const match of matches) {
-    const lookup = await buildStockSkuLookup(match);
-    if (lookup) {
-      lookups.push(lookup);
-    }
+/** SKU first, then the Shopify barcode. Used when a scanner reads either value. */
+export async function lookupAllStockByCode(rawCode: string): Promise<StockSkuLookup[]> {
+  const code = rawCode.trim();
+  if (!code) {
+    return [];
   }
 
-  return lookups;
+  const bySku = await lookupAllStockBySku(code);
+  if (bySku.length > 0) {
+    return bySku;
+  }
+
+  return lookupVariants(
+    `barcode:"${escapeSkuQuery(code)}"`,
+    (node) => node.barcode?.trim().toLowerCase() === code.toLowerCase(),
+  );
 }
 
 export async function lookupStockBySku(rawSku: string): Promise<StockSkuLookup | null> {
