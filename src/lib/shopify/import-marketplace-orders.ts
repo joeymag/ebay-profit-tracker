@@ -75,11 +75,15 @@ function shopifyCarrierName(carrier: string | null | undefined): string | undefi
   return raw;
 }
 
-/** Amazon stay connected for fees/accounting; order → Shopify import can be turned off. */
+/**
+ * Amazon order import is off unless explicitly enabled.
+ * The Orders API does not return full customer addresses, so new Amazon
+ * orders are not created or cancelled in Shopify. Fees, listings, and the
+ * repricer stay connected. Set AMAZON_ORDER_IMPORT_ENABLED=true to turn it back on.
+ */
 function isAmazonOrderImportEnabled(): boolean {
   const raw = process.env.AMAZON_ORDER_IMPORT_ENABLED?.trim().toLowerCase();
-  if (!raw) return true;
-  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
 }
 
 function splitName(name: string | null): { firstName: string; lastName: string } {
