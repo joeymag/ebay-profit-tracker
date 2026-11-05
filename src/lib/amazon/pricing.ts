@@ -130,6 +130,7 @@ function snapshotFromOffers(
     storedSellerId && buyBoxWinner?.SellerId === storedSellerId,
   );
 
+  const offerCount = summary?.TotalOfferCount ?? offers.length;
   let youHaveBuyBox: boolean | null = null;
   if (weAreMarkedWinner || winnerIsUs) {
     youHaveBuyBox = true;
@@ -144,13 +145,16 @@ function snapshotFromOffers(
   } else if (yourOffer && !storedSellerId) {
     // Without a known seller ID, only trust an offer that Amazon marks as winner.
     youHaveBuyBox = yourOffer.IsBuyBoxWinner === true;
+  } else if (offerCount <= 1 && buyBoxPrice != null && offers.length <= 1) {
+    // Sole offer on the listing: that offer is ours, even if Amazon omits the winner flag.
+    youHaveBuyBox = true;
   }
 
   return {
     sku,
     buyBoxPrice,
     lowestPrice,
-    offerCount: summary?.TotalOfferCount ?? offers.length,
+    offerCount,
     yourOfferPrice:
       moneyAmount(yourOffer?.ListingPrice) ??
       (typeof yourListedPrice === "number" ? yourListedPrice : null),
@@ -208,6 +212,40 @@ export async function writeCompetitiveCache(
   }
 }
 
+async function fetchListingOffersBatch(
+  skus: string[],
+): Promise<Map<string, ListingOffersResponse | null>> {
+  const map = new Map<string, ListingOffersResponse | null>();
+  if (skus.length === 0) return map;
+
+  const { marketplaceId } = getAmazonConfig();
+  const data = await amazonFetch<{
+    responses?: Array<{
+      status?: { statusCode?: number };
+      body?: ListingOffersResponse;
+    }>;
+  }>({
+    method: "POST",
+    path: "/batches/products/pricing/v0/listingOffers",
+    body: {
+      requests: skus.map((sku) => ({
+        uri: `/products/pricing/v0/listings/${encodeURIComponent(sku)}/offers`,
+        method: "GET",
+        MarketplaceId: marketplaceId,
+        ItemCondition: "New",
+      })),
+    },
+  });
+
+  const responses = data.responses ?? [];
+  skus.forEach((sku, index) => {
+    const response = responses[index];
+    const status = response?.status?.statusCode ?? 0;
+    map.set(sku, status >= 200 && status < 300 && response?.body ? response.body : null);
+  });
+  return map;
+}
+
 export async function getCompetitiveSnapshot(
   sku: string,
   yourListedPrice?: number | null,
@@ -260,33 +298,31 @@ export async function getCompetitiveSnapshotsBatch(input: {
     else missing.push(sku);
   }
 
-  const concurrency = Math.max(1, Math.min(input.concurrency ?? 4, 6));
   const storedSellerId = await resolveStoredSellerId();
   const fresh: AmazonCompetitiveSnapshot[] = [];
 
-  for (let i = 0; i < missing.length; i += concurrency) {
-    const chunk = missing.slice(i, i + concurrency);
-    const parts = await Promise.all(
-      chunk.map(async (sku) => {
-        try {
-          const data = await fetchListingOffers(sku);
-          const snapshot = snapshotFromOffers(
-            sku,
-            data,
-            input.priceBySku?.get(sku) ?? null,
-            storedSellerId,
-          );
-          return snapshot;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    for (let j = 0; j < chunk.length; j += 1) {
-      const sku = chunk[j]!;
-      const snap = parts[j] ?? null;
-      result.set(sku, snap);
-      if (snap) fresh.push(snap);
+  for (let i = 0; i < missing.length; i += 20) {
+    const chunk = missing.slice(i, i + 20);
+    let offersBySku = new Map<string, ListingOffersResponse | null>();
+    try {
+      offersBySku = await fetchListingOffersBatch(chunk);
+    } catch {
+      offersBySku = new Map(chunk.map((sku) => [sku, null]));
+    }
+    for (const sku of chunk) {
+      const data = offersBySku.get(sku);
+      if (!data) {
+        result.set(sku, null);
+        continue;
+      }
+      const snapshot = snapshotFromOffers(
+        sku,
+        data,
+        input.priceBySku?.get(sku) ?? null,
+        storedSellerId,
+      );
+      result.set(sku, snapshot);
+      fresh.push(snapshot);
     }
   }
 

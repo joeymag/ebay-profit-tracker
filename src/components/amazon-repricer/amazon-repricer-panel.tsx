@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, Search } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
@@ -59,8 +59,8 @@ const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
 type BuyBoxFilter = "all" | "in" | "out" | "unknown";
 type ChangedFilter = "all" | "changed" | "unchanged";
 
-const PAGE_SIZE = 25;
-const ENRICH_CHUNK = 8;
+const PAGE_SIZE = 20;
+const ENRICH_CHUNK = 20;
 
 function formatWhen(iso: string): string {
   const date = new Date(iso);
@@ -147,11 +147,13 @@ export function AmazonRepricerPanel() {
   const [page, setPage] = useState(1);
   const [showHistory, setShowHistory] = useState(false);
   const [failedSkus, setFailedSkus] = useState<Record<string, string>>({});
-  const enrichAbortRef = useRef<AbortController | null>(null);
   const rowsRef = useRef(rows);
   const draftsRef = useRef(drafts);
   const pagedRef = useRef<RepricerRow[]>([]);
   const failedSkusRef = useRef(failedSkus);
+  const competitiveCacheRef = useRef(new Map<string, AmazonCompetitiveSnapshot>());
+  const inflightSkusRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
   rowsRef.current = rows;
   draftsRef.current = drafts;
   failedSkusRef.current = failedSkus;
@@ -180,13 +182,16 @@ export function AmazonRepricerPanel() {
     listings: RepricerRow[],
     options?: { bypassCache?: boolean },
   ) => {
-    const skus = listings.map((row) => row.sku).filter(Boolean);
+    const skus = listings
+      .map((row) => row.sku)
+      .filter((sku) => {
+        if (!sku || inflightSkusRef.current.has(sku)) return false;
+        if (options?.bypassCache) return true;
+        return !competitiveCacheRef.current.has(sku);
+      });
     if (skus.length === 0) return;
 
-    enrichAbortRef.current?.abort();
-    const abort = new AbortController();
-    enrichAbortRef.current = abort;
-
+    for (const sku of skus) inflightSkusRef.current.add(sku);
     setEnriching(true);
     setEnrichProgress({ done: 0, total: skus.length });
     const priceBySku = Object.fromEntries(
@@ -195,7 +200,6 @@ export function AmazonRepricerPanel() {
 
     try {
       for (let i = 0; i < skus.length; i += ENRICH_CHUNK) {
-        if (abort.signal.aborted) return;
         const chunk = skus.slice(i, i + ENRICH_CHUNK);
         const res = await fetch("/api/amazon/repricer/competitive", {
           method: "POST",
@@ -205,12 +209,12 @@ export function AmazonRepricerPanel() {
             prices: priceBySku,
             bypassCache: options?.bypassCache === true,
           }),
-          signal: abort.signal,
         });
         let json: CompetitiveBatchResponse;
         try {
           json = (await res.json()) as CompetitiveBatchResponse;
         } catch {
+          if (!mountedRef.current) return;
           const message = `Buy Box check failed (HTTP ${res.status}).`;
           setFailedSkus((prev) => {
             const next = { ...prev };
@@ -220,6 +224,7 @@ export function AmazonRepricerPanel() {
           setEnrichProgress({ done: i + chunk.length, total: skus.length });
           continue;
         }
+        if (!mountedRef.current) return;
         if (!json.ok) {
           const message = json.error || "Could not load Buy Box data.";
           setFailedSkus((prev) => {
@@ -232,36 +237,52 @@ export function AmazonRepricerPanel() {
         }
 
         const bySku = new Map(json.suggestions.map((s) => [s.sku, s]));
-        startTransition(() => {
-          setRows((prev) =>
-            prev.map((row) => {
-              const suggestion = bySku.get(row.sku);
-              if (!suggestion) return row;
-              return {
-                ...row,
-                competitive: suggestion.competitive,
-                suggestedPrice: suggestion.suggestedPrice,
-                reason: suggestion.reason,
-                rule: newerRule(row.rule, suggestion.rule),
-              };
-            }),
-          );
-          setFailedSkus((prev) => {
-            const next = { ...prev };
-            for (const sku of chunk) {
-              const suggestion = bySku.get(sku);
-              if (suggestion?.competitive) delete next[sku];
-              else next[sku] = suggestion?.reason || "Could not load Buy Box data.";
-            }
-            return next;
-          });
-          setEnrichProgress({ done: i + chunk.length, total: skus.length });
+        for (const suggestion of json.suggestions) {
+          if (suggestion.competitive) {
+            competitiveCacheRef.current.set(suggestion.sku, suggestion.competitive);
+          }
+        }
+        setRows((prev) =>
+          prev.map((row) => {
+            const suggestion = bySku.get(row.sku);
+            const cached = competitiveCacheRef.current.get(row.sku) ?? null;
+            if (!suggestion && !cached) return row;
+            return {
+              ...row,
+              competitive: suggestion?.competitive ?? cached,
+              suggestedPrice: suggestion?.suggestedPrice ?? row.suggestedPrice,
+              reason: suggestion?.reason ?? row.reason,
+              rule: newerRule(row.rule, suggestion?.rule ?? null),
+            };
+          }),
+        );
+        setFailedSkus((prev) => {
+          const next = { ...prev };
+          for (const sku of chunk) {
+            const suggestion = bySku.get(sku);
+            if (suggestion?.competitive) delete next[sku];
+            else next[sku] = suggestion?.reason || "Could not load Buy Box data.";
+          }
+          return next;
         });
+        setEnrichProgress({ done: i + chunk.length, total: skus.length });
       }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+    } catch {
+      if (!mountedRef.current) return;
+      setFailedSkus((prev) => {
+        const next = { ...prev };
+        for (const sku of skus) {
+          if (!competitiveCacheRef.current.has(sku)) {
+            next[sku] = "Could not load Buy Box data.";
+          }
+        }
+        return next;
+      });
     } finally {
-      if (!abort.signal.aborted) setEnriching(false);
+      for (const sku of skus) inflightSkusRef.current.delete(sku);
+      if (mountedRef.current && inflightSkusRef.current.size === 0) {
+        setEnriching(false);
+      }
     }
   }, []);
 
@@ -274,7 +295,7 @@ export function AmazonRepricerPanel() {
     setEnrichProgress({ done: 0, total: 0 });
     setPage(1);
     setFailedSkus({});
-    enrichAbortRef.current?.abort();
+    if (options?.bypassCache) competitiveCacheRef.current.clear();
     try {
       const res = await fetch("/api/amazon/repricer");
       let json: RepricerResponse;
@@ -300,8 +321,12 @@ export function AmazonRepricerPanel() {
       );
       const merged = json.rows.map((row) => {
         const existing = previousBySku.get(row.sku);
+        const cached = options?.bypassCache
+          ? null
+          : competitiveCacheRef.current.get(row.sku) ?? existing?.competitive ?? null;
         return {
           ...row,
+          competitive: cached,
           rule: newerRule(existing?.rule ?? null, row.rule),
         };
       });
@@ -334,8 +359,14 @@ export function AmazonRepricerPanel() {
   }, [enrichCompetitive, loadHistory]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     void load();
-    return () => enrichAbortRef.current?.abort();
   }, [load]);
 
   const filtered = useMemo(() => {
@@ -380,9 +411,25 @@ export function AmazonRepricerPanel() {
 
   useEffect(() => {
     if (loading) return;
-    const missing = pagedRef.current.filter(
+    const pageRows = pagedRef.current;
+    const cachedOnPage = pageRows.some(
+      (row) => row.sku && row.competitive == null && competitiveCacheRef.current.has(row.sku),
+    );
+    if (cachedOnPage) {
+      setRows((prev) =>
+        prev.map((row) => {
+          if (row.competitive) return row;
+          const cached = competitiveCacheRef.current.get(row.sku);
+          return cached ? { ...row, competitive: cached } : row;
+        }),
+      );
+    }
+    const missing = pageRows.filter(
       (row) =>
-        row.sku && row.competitive == null && !failedSkusRef.current[row.sku],
+        row.sku &&
+        row.competitive == null &&
+        !competitiveCacheRef.current.has(row.sku) &&
+        !failedSkusRef.current[row.sku],
     );
     if (missing.length === 0) return;
     void enrichCompetitive(missing);
