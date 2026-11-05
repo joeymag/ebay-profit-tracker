@@ -60,7 +60,7 @@ type BuyBoxFilter = "all" | "in" | "out" | "unknown";
 type ChangedFilter = "all" | "changed" | "unchanged";
 
 const PAGE_SIZE = 25;
-const ENRICH_CHUNK = 16;
+const ENRICH_CHUNK = 8;
 
 function formatWhen(iso: string): string {
   const date = new Date(iso);
@@ -146,11 +146,15 @@ export function AmazonRepricerPanel() {
   const [message, setMessage] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [showHistory, setShowHistory] = useState(false);
+  const [failedSkus, setFailedSkus] = useState<Record<string, string>>({});
   const enrichAbortRef = useRef<AbortController | null>(null);
   const rowsRef = useRef(rows);
   const draftsRef = useRef(drafts);
+  const pagedRef = useRef<RepricerRow[]>([]);
+  const failedSkusRef = useRef(failedSkus);
   rowsRef.current = rows;
   draftsRef.current = drafts;
+  failedSkusRef.current = failedSkus;
 
   const loadHistory = useCallback(async () => {
     try {
@@ -207,10 +211,22 @@ export function AmazonRepricerPanel() {
         try {
           json = (await res.json()) as CompetitiveBatchResponse;
         } catch {
+          const message = `Buy Box check failed (HTTP ${res.status}).`;
+          setFailedSkus((prev) => {
+            const next = { ...prev };
+            for (const sku of chunk) next[sku] = message;
+            return next;
+          });
           setEnrichProgress({ done: i + chunk.length, total: skus.length });
           continue;
         }
         if (!json.ok) {
+          const message = json.error || "Could not load Buy Box data.";
+          setFailedSkus((prev) => {
+            const next = { ...prev };
+            for (const sku of chunk) next[sku] = message;
+            return next;
+          });
           setEnrichProgress({ done: i + chunk.length, total: skus.length });
           continue;
         }
@@ -230,6 +246,15 @@ export function AmazonRepricerPanel() {
               };
             }),
           );
+          setFailedSkus((prev) => {
+            const next = { ...prev };
+            for (const sku of chunk) {
+              const suggestion = bySku.get(sku);
+              if (suggestion?.competitive) delete next[sku];
+              else next[sku] = suggestion?.reason || "Could not load Buy Box data.";
+            }
+            return next;
+          });
           setEnrichProgress({ done: i + chunk.length, total: skus.length });
         });
       }
@@ -248,6 +273,7 @@ export function AmazonRepricerPanel() {
     setEnriching(false);
     setEnrichProgress({ done: 0, total: 0 });
     setPage(1);
+    setFailedSkus({});
     enrichAbortRef.current?.abort();
     try {
       const res = await fetch("/api/amazon/repricer");
@@ -297,9 +323,6 @@ export function AmazonRepricerPanel() {
         ),
       );
       setLoading(false);
-      void enrichCompetitive(json.rows, {
-        bypassCache: options?.bypassCache === true,
-      });
       void loadHistory();
       return;
     } catch {
@@ -351,6 +374,19 @@ export function AmazonRepricerPanel() {
   useEffect(() => {
     setPage(1);
   }, [search, buyBoxFilter, changedFilter]);
+
+  const pageSkuKey = paged.map((row) => row.sku).join("\n");
+  pagedRef.current = paged;
+
+  useEffect(() => {
+    if (loading) return;
+    const missing = pagedRef.current.filter(
+      (row) =>
+        row.sku && row.competitive == null && !failedSkusRef.current[row.sku],
+    );
+    if (missing.length === 0) return;
+    void enrichCompetitive(missing);
+  }, [loading, pageSkuKey, enrichCompetitive]);
 
   function updateDraft(sku: string, patch: Partial<DraftRule>) {
     setDrafts((prev) => ({
@@ -790,20 +826,36 @@ export function AmazonRepricerPanel() {
                       ) : null}
                       {row.competitive?.youHaveBuyBox ? (
                         <Badge className="bg-green-600">Buy Box</Badge>
-                      ) : row.competitive &&
+                      ) : row.competitive?.youHaveBuyBox === false &&
                         row.price != null &&
                         row.competitive.lowestPrice != null &&
                         Math.abs(row.price - row.competitive.lowestPrice) <
-                          0.015 &&
-                        row.competitive.youHaveBuyBox === false ? (
-                        <Badge variant="outline" title="Lowest price, but Amazon Featured Offer is another seller">
+                          0.015 ? (
+                        <Badge
+                          variant="outline"
+                          title="Lowest price, but Amazon Featured Offer is another seller"
+                        >
                           Lowest · no Buy Box
                         </Badge>
+                      ) : row.competitive?.youHaveBuyBox === false ? (
+                        <Badge
+                          variant="outline"
+                          title="Amazon Featured Offer is another seller"
+                        >
+                          No Buy Box
+                        </Badge>
                       ) : row.competitive == null ? (
-                        <span className="text-[10px] text-muted-foreground">
-                          Checking…
+                        <span
+                          className="text-[10px] text-muted-foreground"
+                          title={failedSkus[row.sku]}
+                        >
+                          {failedSkus[row.sku] ? "Couldn't check" : "Checking…"}
                         </span>
-                      ) : null}
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">
+                          Buy Box unknown
+                        </span>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>
