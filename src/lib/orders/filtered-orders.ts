@@ -1,9 +1,5 @@
 import type { StoredOrder } from "@/lib/orders/types";
 import {
-  amazonSubscriptionForRange,
-  amazonSubscriptionHint,
-} from "@/lib/orders/amazon-subscription";
-import {
   filterOrdersByChannel,
   getSalesChannel,
   getSalesChannelFilterLabel,
@@ -107,8 +103,6 @@ export function summarizeOrders(
   orders: StoredOrder[],
   currency: string,
   range: DateRangeKey,
-  allOrders: StoredOrder[] = orders,
-  channel: SalesChannelFilter = "all",
 ) {
   const revenue = orders.reduce((sum, o) => sum + o.revenue, 0);
   const productCost = orders.reduce(
@@ -142,13 +136,8 @@ export function summarizeOrders(
     (sum, o) => sum + (o.cost ?? 0),
     0,
   );
-  const amazonSubscription =
-    channel === "all" || channel === "Amazon"
-      ? amazonSubscriptionForRange(range, allOrders)
-      : 0;
-  const totalCost = orderCosts + amazonSubscription;
-  const profit =
-    orders.reduce((sum, o) => sum + (o.profit ?? 0), 0) - amazonSubscription;
+  const totalCost = orderCosts;
+  const profit = orders.reduce((sum, o) => sum + (o.profit ?? 0), 0);
   const ordersWithPostage = orders.filter(
     (o) => o.shippingLabelCost != null && o.shippingLabelCost > 0,
   ).length;
@@ -178,8 +167,6 @@ export function summarizeOrders(
     ebayOrdersWithSellingFee: ebayFees.ebayOrdersWithSellingFee,
     ebayOrdersWithAdsFee: ebayFees.ebayOrdersWithAdsFee,
     ebayOrdersWithActualFees: ebayFees.ebayOrdersWithActualFees,
-    amazonSubscription,
-    amazonSubscriptionHint: amazonSubscriptionHint(range, amazonSubscription),
     orderCosts,
     totalCost,
     profit,

@@ -35,9 +35,7 @@ export function OrdersFilterSummary({
   const profitHint =
     ordersWithProfit < orderCount
       ? `Profit only counts ${ordersWithProfit} of ${orderCount} order(s) with all costs entered`
-      : summary.amazonSubscription
-        ? "After costs & Amazon subscription"
-        : "Revenue minus product, postage & platform fees";
+      : "Revenue minus product, postage & platform fees";
 
   const ebayFeesHint =
     ebayOrdersWithActualFees > 0

@@ -41,7 +41,6 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const params = await searchParams;
   const {
     orders,
-    allOrders,
     syncedAt,
     range,
     channel,
@@ -59,7 +58,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const autoSyncStatus = await getAutoSyncStatus();
 
   const currency = orders[0]?.currency ?? "GBP";
-  const summary = summarizeOrders(orders, currency, range, allOrders, channel);
+  const summary = summarizeOrders(orders, currency, range);
   const profitLabel = getFilteredProfitLabel(range, channel, product);
   const ordersWithFullCosts = orders.filter(
     (o) => !isOrderCostsIncomplete(o),

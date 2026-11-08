@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import type { summarizeOrders } from "@/lib/orders/filtered-orders";
-import { formatAmazonSubscriptionLabel } from "@/lib/orders/amazon-subscription";
 import { formatAmazonFeeLabel } from "@/lib/orders/platform-fees";
 import { cn } from "@/lib/utils";
 
@@ -93,14 +92,12 @@ export function CostBreakdownCard({
     ebayOrders,
     ebayOrdersWithAdsFee,
     ebayOrdersWithActualFees,
-    amazonSubscription,
     totalCost,
     profit,
   } = summary;
 
   const hasCostData =
     summary.ordersWithProfit > 0 ||
-    summary.amazonSubscription > 0 ||
     ebaySellingFees > 0 ||
     ebayAdsFees > 0;
 
@@ -167,21 +164,10 @@ export function CostBreakdownCard({
           },
         ]
       : []),
-    ...(amazonSubscription > 0
-      ? [
-          {
-            label: formatAmazonSubscriptionLabel(),
-            amount: amazonSubscription,
-            hint: summary.amazonSubscriptionHint,
-            barClass: "bg-amber-600",
-            emphasize: "cost" as const,
-          },
-        ]
-      : []),
     {
       label: "Total costs",
       amount: totalCost,
-      hint: "Product cost + postage + eBay/Amazon fees + subscription",
+      hint: "Product cost + postage + eBay/Amazon fees",
       barClass: "bg-orange-500",
       emphasize: "cost",
     },
@@ -281,16 +267,6 @@ export function CostBreakdownCard({
                     <dt className="text-muted-foreground">{formatAmazonFeeLabel()}</dt>
                     <dd className="tabular-nums">
                       −{formatMoney(amazonPlatformFee, currency)}
-                    </dd>
-                  </div>
-                ) : null}
-                {amazonSubscription > 0 ? (
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-muted-foreground">
-                      {formatAmazonSubscriptionLabel()}
-                    </dt>
-                    <dd className="tabular-nums">
-                      −{formatMoney(amazonSubscription, currency)}
                     </dd>
                   </div>
                 ) : null}

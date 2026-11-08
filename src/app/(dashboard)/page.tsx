@@ -48,7 +48,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const channelStats = aggregateChannelStats(orders);
   const carrierStats = aggregateCarrierPostageStats(orders);
   const dailySummary = aggregateDailyChannelPerformance(orders, range);
-  const summary = summarizeOrders(orders, currency, range, allOrders, channel);
+  const summary = summarizeOrders(orders, currency, range);
   const onTimeDelivery = summarizeOnTimeDelivery(allOrders, range, channel);
   const locationStats = aggregateOrderLocations(orders);
   const ordersWithAddress = countOrdersWithAddress(orders);
@@ -77,11 +77,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         orders.length && (summary.totalCost > 0 || summary.revenue > 0)
           ? formatMoney(summary.profit, currency)
           : "—",
-      hint: summary.amazonSubscription
-        ? "After product, postage, Amazon fees & subscription"
-        : summary.ordersWithProductCost
-          ? "Revenue minus postage and product cost"
-          : "Add unit costs on the Products page",
+      hint: summary.ordersWithProductCost
+        ? "Revenue minus postage and product cost"
+        : "Add unit costs on the Products page",
       icon: PiggyBank,
       accent: "profit" as const,
     },
