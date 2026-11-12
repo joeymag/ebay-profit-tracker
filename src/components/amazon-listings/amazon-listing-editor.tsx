@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  CircleHelp,
   Loader2,
   RefreshCw,
   Save,
@@ -26,8 +27,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { AmazonListingContent } from "@/lib/amazon/listing-editor";
 import { cn } from "@/lib/utils";
+
+const AMAZON_TITLE_MAX_CHARS = 190;
 
 type DetailResponse =
   | {
@@ -544,13 +553,57 @@ export function AmazonListingEditor({
         <div className="space-y-8">
           <section className="space-y-5">
             <div className="space-y-2">
-              <FieldLabel htmlFor="amazon-title">Title</FieldLabel>
+              <div className="flex items-center gap-1.5">
+                <FieldLabel htmlFor="amazon-title">Title</FieldLabel>
+                <TooltipProvider delay={200}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      aria-label="Amazon title format guide"
+                    >
+                      <CircleHelp className="size-4" />
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="start"
+                      sideOffset={8}
+                      className="max-w-[min(36rem,calc(100vw-2rem))] border border-border bg-background p-2 text-foreground shadow-lg"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- static public guide image */}
+                      <img
+                        src="/amazon/title-format-guide.png"
+                        alt="Amazon title format: Brand Name + Top Phrase - Keywords 1, Keywords 2, Keywords 3, under 190 characters"
+                        className="h-auto w-full max-w-xl rounded-sm"
+                      />
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <Input
                 id="amazon-title"
                 value={draft.title}
                 onChange={(event) => updateDraft({ title: event.target.value })}
-                className="h-10 text-base md:text-sm"
+                aria-invalid={draft.title.length > AMAZON_TITLE_MAX_CHARS}
+                className={cn(
+                  "h-10 text-base md:text-sm",
+                  draft.title.length > AMAZON_TITLE_MAX_CHARS &&
+                    "border-destructive focus-visible:border-destructive focus-visible:ring-destructive/30",
+                )}
               />
+              <p
+                className={cn(
+                  "text-xs",
+                  draft.title.length > AMAZON_TITLE_MAX_CHARS
+                    ? "font-medium text-destructive"
+                    : "text-muted-foreground",
+                )}
+              >
+                {draft.title.length}/{AMAZON_TITLE_MAX_CHARS} characters
+                {draft.title.length > AMAZON_TITLE_MAX_CHARS
+                  ? ` — ${draft.title.length - AMAZON_TITLE_MAX_CHARS} over limit`
+                  : ""}
+              </p>
             </div>
 
             <div className="space-y-2">
