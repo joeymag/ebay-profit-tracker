@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
-import { fetchAmazonListings } from "@/lib/amazon/listings";
+import { listAmazonListingFamilies } from "@/lib/amazon/listing-editor";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 import { getSkuCostSnapshots } from "@/lib/products/listing-costs";
 
@@ -34,36 +34,49 @@ export async function GET(request: Request) {
     );
   }
 
-  const forceRefresh =
-    new URL(request.url).searchParams.get("refresh") === "1";
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get("refresh") === "1";
+  const skipRelationships = url.searchParams.get("relationships") === "0";
 
   try {
-    // Default to cache / recent DONE report so the page does not 504.
-    // Use ?refresh=1 only when you can wait (local/dev or after warm).
-    const result = await fetchAmazonListings({
+    const result = await listAmazonListingFamilies({
       forceRefresh,
       fast: !forceRefresh,
+      includeRelationships: !skipRelationships,
     });
-    let listings = result.listings.map((listing) => ({
-      ...listing,
-      unitCost: null as number | null,
-      defaultPostage: null as number | null,
-    }));
+
+    const costBySku = new Map<
+      string,
+      { unitCost: number | null; defaultPostage: number | null }
+    >();
     try {
       const costs = await getSkuCostSnapshots(
-        listings.map((listing) => listing.sku),
+        result.listings.map((listing) => listing.sku),
         { inferPostageFromOrders: false },
       );
-      listings = listings.map((listing) => ({
-        ...listing,
-        unitCost: listing.sku ? (costs.get(listing.sku)?.unitCost ?? null) : null,
-        defaultPostage: listing.sku
-          ? (costs.get(listing.sku)?.defaultPostage ?? null)
-          : null,
-      }));
+      for (const listing of result.listings) {
+        if (!listing.sku) continue;
+        costBySku.set(listing.sku, {
+          unitCost: costs.get(listing.sku)?.unitCost ?? null,
+          defaultPostage: costs.get(listing.sku)?.defaultPostage ?? null,
+        });
+      }
     } catch {
       // Listings still load if the cost catalog is unavailable.
     }
+
+    const withCosts = <T extends { sku: string }>(row: T) => ({
+      ...row,
+      unitCost: costBySku.get(row.sku)?.unitCost ?? null,
+      defaultPostage: costBySku.get(row.sku)?.defaultPostage ?? null,
+    });
+
+    const listings = result.listings.map(withCosts);
+    const families = result.families.map((family) => ({
+      ...family,
+      members: family.members.map(withCosts),
+    }));
+
     return NextResponse.json({
       ok: true,
       env: config.env,
@@ -71,6 +84,9 @@ export async function GET(request: Request) {
       marketplaceId: result.marketplaceId,
       count: listings.length,
       listings,
+      families,
+      familyCount: families.length,
+      relationshipsLoaded: result.relationshipsLoaded,
       fetchedAt: result.fetchedAt,
       cached: result.cached,
     });
