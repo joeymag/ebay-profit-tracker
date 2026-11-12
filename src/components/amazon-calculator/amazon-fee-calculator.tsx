@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Store } from "lucide-react";
+import { Package, Store, Warehouse } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import {
@@ -15,8 +15,10 @@ import { formatMoney } from "@/lib/format";
 import {
   calculateAmazonItemProfit,
   formatAmazonFeeLabel,
+  formatAmazonFulfilmentCostLabel,
   formatProductCostVatLabel,
   PRODUCT_COST_VAT_RATE,
+  type AmazonFulfilmentType,
 } from "@/lib/orders/amazon-profit-calculator";
 import { cn } from "@/lib/utils";
 
@@ -105,40 +107,93 @@ function MoneyField({
 }
 
 export function AmazonFeeCalculatorPanel() {
+  const [fulfilmentType, setFulfilmentType] =
+    useState<AmazonFulfilmentType>("FBM");
   const [sellPrice, setSellPrice] = useState("");
   const [productCost, setProductCost] = useState("");
-  const [postage, setPostage] = useState("");
+  const [fulfilmentCost, setFulfilmentCost] = useState("");
 
   const result = useMemo(() => {
     const sell = parseMoney(sellPrice);
     const cost = parseMoney(productCost);
-    const post = parseMoney(postage);
+    const fulfilment = parseMoney(fulfilmentCost);
 
-    if (sell == null || cost == null || post == null) {
+    if (sell == null || cost == null || fulfilment == null) {
       return null;
     }
 
     return calculateAmazonItemProfit({
       sellPrice: sell,
       productCostExVat: cost,
-      postage: post,
+      fulfilmentCost: fulfilment,
+      fulfilmentType,
     });
-  }, [sellPrice, productCost, postage]);
+  }, [sellPrice, productCost, fulfilmentCost, fulfilmentType]);
 
-  const hasInput = sellPrice.trim() || productCost.trim() || postage.trim();
+  const hasInput =
+    sellPrice.trim() || productCost.trim() || fulfilmentCost.trim();
+  const fulfilmentLabel = formatAmazonFulfilmentCostLabel(fulfilmentType);
+  const isFba = fulfilmentType === "FBA";
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card className="surface-card">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Store className="size-5 text-amber-600 dark:text-amber-400" />
-            Item details
-          </CardTitle>
-          <CardDescription>
-            18.5% marketplace fee on sell price. Product cost is ex-VAT plus{" "}
-            {(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}% VAT on top.
-          </CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                {isFba ? (
+                  <Warehouse className="size-5 text-amber-600 dark:text-amber-400" />
+                ) : (
+                  <Store className="size-5 text-amber-600 dark:text-amber-400" />
+                )}
+                Item details
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                18.5% marketplace fee on sell price. Product cost is ex-VAT plus{" "}
+                {(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}% VAT on top.
+                {isFba
+                  ? " Uses Amazon’s FBA fulfilment fee instead of your own postage."
+                  : " Uses the postage you pay to ship yourself."}
+              </CardDescription>
+            </div>
+            <div
+              className="flex rounded-lg border border-border/60 bg-muted/30 p-1"
+              role="tablist"
+              aria-label="Fulfilment type"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!isFba}
+                onClick={() => setFulfilmentType("FBM")}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  !isFba
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Package className="size-3.5" />
+                FBM
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isFba}
+                onClick={() => setFulfilmentType("FBA")}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  isFba
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Warehouse className="size-3.5" />
+                FBA
+              </button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="grid gap-5 sm:grid-cols-2">
           <MoneyField
@@ -158,12 +213,16 @@ export function AmazonFeeCalculatorPanel() {
             placeholder="7.00"
           />
           <MoneyField
-            id="amazon-postage"
-            label="Postage cost"
-            hint="Label / shipping you pay"
-            value={postage}
-            onChange={setPostage}
-            placeholder="2.80"
+            id="amazon-fulfilment-cost"
+            label={fulfilmentLabel}
+            hint={
+              isFba
+                ? "Per-unit fee from Amazon Seller Central / Revenue Calculator"
+                : "Label / shipping you pay"
+            }
+            value={fulfilmentCost}
+            onChange={setFulfilmentCost}
+            placeholder={isFba ? "3.22" : "2.80"}
           />
         </CardContent>
       </Card>
@@ -173,9 +232,9 @@ export function AmazonFeeCalculatorPanel() {
           <CardTitle>Profit breakdown</CardTitle>
           <CardDescription>
             {result
-              ? "Estimated profit after all costs"
+              ? `Estimated ${isFba ? "FBA" : "FBM"} profit after all costs`
               : hasInput
-                ? "Fill in sell price, product cost, and postage to see profit"
+                ? `Fill in sell price, product cost, and ${fulfilmentLabel.toLowerCase()} to see profit`
                 : "Enter values on the left to calculate"}
           </CardDescription>
         </CardHeader>
@@ -184,7 +243,7 @@ export function AmazonFeeCalculatorPanel() {
             <div className="space-y-6">
               <div className="rounded-xl border border-border/60 bg-muted/25 p-5">
                 <p className="text-sm font-medium text-muted-foreground">
-                  Your profit
+                  Your profit · {isFba ? "Fulfilment by Amazon" : "Fulfilment by Merchant"}
                 </p>
                 <p
                   className={cn(
@@ -219,8 +278,8 @@ export function AmazonFeeCalculatorPanel() {
                   negative
                 />
                 <BreakdownRow
-                  label="Postage"
-                  value={`− ${formatMoney(result.postage, CURRENCY)}`}
+                  label={fulfilmentLabel}
+                  value={`− ${formatMoney(result.fulfilmentCost, CURRENCY)}`}
                   negative
                 />
                 <BreakdownRow
@@ -234,12 +293,17 @@ export function AmazonFeeCalculatorPanel() {
                   emphasize
                 />
               </div>
+              {isFba ? (
+                <p className="text-xs text-muted-foreground">
+                  Does not include monthly FBA storage or inbound placement fees.
+                </p>
+              ) : null}
             </div>
           ) : (
             <div className="flex min-h-[16rem] items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/15 px-6 text-center text-sm text-muted-foreground">
               {hasInput
-                ? "Enter sell price, product cost, and postage with valid numbers."
-                : "Start with sell price, product cost, and postage."}
+                ? `Enter sell price, product cost, and ${fulfilmentLabel.toLowerCase()} with valid numbers.`
+                : `Start with sell price, product cost, and ${fulfilmentLabel.toLowerCase()}.`}
             </div>
           )}
         </CardContent>

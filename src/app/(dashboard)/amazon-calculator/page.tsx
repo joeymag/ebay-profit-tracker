@@ -6,7 +6,7 @@ export default function AmazonFeeCalculatorPage() {
     <>
       <DashboardHeader
         title="Amazon fee calculator"
-        description="Work out profit per item before you list — uses the same fee rules as your Amazon orders"
+        description="Work out profit per item before you list — switch between Fulfilment by Merchant and Fulfilment by Amazon"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <AmazonFeeCalculatorPanel />
