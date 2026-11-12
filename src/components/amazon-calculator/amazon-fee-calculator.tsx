@@ -13,6 +13,10 @@ import {
 } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import {
+  getLowPriceFbaUkOption,
+  listLowPriceFbaUkOptions,
+} from "@/lib/amazon/low-price-fba-fees";
+import {
   calculateAmazonItemProfit,
   formatAmazonFeeLabel,
   formatAmazonFulfilmentCostLabel,
@@ -23,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const CURRENCY = "GBP";
+const FBA_UK_OPTIONS = listLowPriceFbaUkOptions();
 
 function parseMoney(value: string): number | null {
   const trimmed = value.trim();
@@ -112,11 +117,19 @@ export function AmazonFeeCalculatorPanel() {
   const [sellPrice, setSellPrice] = useState("");
   const [productCost, setProductCost] = useState("");
   const [fulfilmentCost, setFulfilmentCost] = useState("");
+  const [fbaBandId, setFbaBandId] = useState("");
+
+  const isFba = fulfilmentType === "FBA";
+  const fbaOption = isFba && fbaBandId ? getLowPriceFbaUkOption(fbaBandId) : null;
+
+  const effectiveFulfilmentCost = isFba
+    ? (fbaOption?.feeGbp ?? null)
+    : parseMoney(fulfilmentCost);
 
   const result = useMemo(() => {
     const sell = parseMoney(sellPrice);
     const cost = parseMoney(productCost);
-    const fulfilment = parseMoney(fulfilmentCost);
+    const fulfilment = effectiveFulfilmentCost;
 
     if (sell == null || cost == null || fulfilment == null) {
       return null;
@@ -128,12 +141,13 @@ export function AmazonFeeCalculatorPanel() {
       fulfilmentCost: fulfilment,
       fulfilmentType,
     });
-  }, [sellPrice, productCost, fulfilmentCost, fulfilmentType]);
+  }, [sellPrice, productCost, effectiveFulfilmentCost, fulfilmentType]);
 
-  const hasInput =
-    sellPrice.trim() || productCost.trim() || fulfilmentCost.trim();
+  const hasInput = isFba
+    ? Boolean(sellPrice.trim() || productCost.trim() || fbaBandId)
+    : Boolean(sellPrice.trim() || productCost.trim() || fulfilmentCost.trim());
+
   const fulfilmentLabel = formatAmazonFulfilmentCostLabel(fulfilmentType);
-  const isFba = fulfilmentType === "FBA";
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -153,7 +167,7 @@ export function AmazonFeeCalculatorPanel() {
                 18.5% marketplace fee on sell price. Product cost is ex-VAT plus{" "}
                 {(PRODUCT_COST_VAT_RATE * 100).toFixed(0)}% VAT on top.
                 {isFba
-                  ? " Uses Amazon’s FBA fulfilment fee instead of your own postage."
+                  ? " Pick Amazon’s Low-price FBA UK postage band from the list."
                   : " Uses the postage you pay to ship yourself."}
               </CardDescription>
             </div>
@@ -212,18 +226,55 @@ export function AmazonFeeCalculatorPanel() {
             onChange={setProductCost}
             placeholder="7.00"
           />
-          <MoneyField
-            id="amazon-fulfilment-cost"
-            label={fulfilmentLabel}
-            hint={
-              isFba
-                ? "Per-unit fee from Amazon Seller Central / Revenue Calculator"
-                : "Label / shipping you pay"
-            }
-            value={fulfilmentCost}
-            onChange={setFulfilmentCost}
-            placeholder={isFba ? "3.22" : "2.80"}
-          />
+
+          {isFba ? (
+            <div className="space-y-2 sm:col-span-2">
+              <label
+                htmlFor="amazon-fba-band"
+                className="text-sm font-medium leading-none"
+              >
+                Amazon postage band
+              </label>
+              <select
+                id="amazon-fba-band"
+                className="flex h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground [color-scheme:light]"
+                value={fbaBandId}
+                onChange={(event) => setFbaBandId(event.target.value)}
+              >
+                <option value="" className="bg-white text-zinc-900">
+                  Select size tier and weight…
+                </option>
+                {FBA_UK_OPTIONS.map((option) => (
+                  <option
+                    key={option.id}
+                    value={option.id}
+                    className="bg-white text-zinc-900"
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {fbaOption ? (
+                <p className="text-xs text-muted-foreground">
+                  Max size {optionSizeLabel(fbaOption)} · Low-price FBA UK ·{" "}
+                  {formatMoney(fbaOption.feeGbp, CURRENCY)} postage
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Choose the matching Amazon Low-price FBA size and weight band.
+                </p>
+              )}
+            </div>
+          ) : (
+            <MoneyField
+              id="amazon-fulfilment-cost"
+              label={fulfilmentLabel}
+              hint="Label / shipping you pay"
+              value={fulfilmentCost}
+              onChange={setFulfilmentCost}
+              placeholder="2.80"
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -234,7 +285,9 @@ export function AmazonFeeCalculatorPanel() {
             {result
               ? `Estimated ${isFba ? "FBA" : "FBM"} profit after all costs`
               : hasInput
-                ? `Fill in sell price, product cost, and ${fulfilmentLabel.toLowerCase()} to see profit`
+                ? isFba
+                  ? "Fill in sell price, product cost, and a postage band to see profit"
+                  : "Fill in sell price, product cost, and postage to see profit"
                 : "Enter values on the left to calculate"}
           </CardDescription>
         </CardHeader>
@@ -243,7 +296,8 @@ export function AmazonFeeCalculatorPanel() {
             <div className="space-y-6">
               <div className="rounded-xl border border-border/60 bg-muted/25 p-5">
                 <p className="text-sm font-medium text-muted-foreground">
-                  Your profit · {isFba ? "Fulfilment by Amazon" : "Fulfilment by Merchant"}
+                  Your profit ·{" "}
+                  {isFba ? "Fulfilment by Amazon" : "Fulfilment by Merchant"}
                 </p>
                 <p
                   className={cn(
@@ -278,7 +332,11 @@ export function AmazonFeeCalculatorPanel() {
                   negative
                 />
                 <BreakdownRow
-                  label={fulfilmentLabel}
+                  label={
+                    isFba && fbaOption
+                      ? `Amazon postage (${fbaOption.tierLabel} · ≤ ${fbaOption.maxWeightG} g)`
+                      : fulfilmentLabel
+                  }
                   value={`− ${formatMoney(result.fulfilmentCost, CURRENCY)}`}
                   negative
                 />
@@ -295,19 +353,32 @@ export function AmazonFeeCalculatorPanel() {
               </div>
               {isFba ? (
                 <p className="text-xs text-muted-foreground">
-                  Does not include monthly FBA storage or inbound placement fees.
+                  Uses Low-price FBA UK rates. Does not include monthly storage
+                  or inbound placement fees.
                 </p>
               ) : null}
             </div>
           ) : (
             <div className="flex min-h-[16rem] items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/15 px-6 text-center text-sm text-muted-foreground">
               {hasInput
-                ? `Enter sell price, product cost, and ${fulfilmentLabel.toLowerCase()} with valid numbers.`
-                : `Start with sell price, product cost, and ${fulfilmentLabel.toLowerCase()}.`}
+                ? isFba
+                  ? "Enter sell price, product cost, and choose a postage band."
+                  : "Enter sell price, product cost, and postage with valid numbers."
+                : isFba
+                  ? "Start with sell price, product cost, and an Amazon postage band."
+                  : "Start with sell price, product cost, and postage."}
             </div>
           )}
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function optionSizeLabel(option: {
+  maxLongestCm: number;
+  maxMedianCm: number;
+  maxShortestCm: number;
+}): string {
+  return `≤ ${option.maxLongestCm} × ${option.maxMedianCm} × ${option.maxShortestCm} cm`;
 }
