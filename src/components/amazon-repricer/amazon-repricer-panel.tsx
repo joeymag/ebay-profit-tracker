@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { AmazonListing } from "@/lib/amazon/listings";
+import type { AmazonListing } from "@/lib/amazon/listings-shared";
 import type {
   AmazonRepriceEvent,
   AmazonRepriceRule,

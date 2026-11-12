@@ -1,10 +1,10 @@
 import { amazonFetch } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import { fetchAmazonListings } from "@/lib/amazon/listings";
 import {
   effectiveAmazonListingImageUrl,
-  fetchAmazonListings,
   type AmazonListing,
-} from "@/lib/amazon/listings";
+} from "@/lib/amazon/listings-shared";
 import { resolveAmazonSellerId } from "@/lib/amazon/pricing";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";

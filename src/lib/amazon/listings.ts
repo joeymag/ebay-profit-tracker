@@ -2,23 +2,19 @@ import { gunzipSync } from "zlib";
 
 import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import {
+  effectiveAmazonListingImageUrl,
+  type AmazonListing,
+} from "@/lib/amazon/listings-shared";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
-export type AmazonListing = {
-  listingId: string;
-  sku: string;
-  title: string;
-  asin: string | null;
-  price: number | null;
-  quantity: number | null;
-  imageUrl: string | null;
-  openDate: string | null;
-  fulfillmentChannel: string | null;
-  condition: string | null;
-  productUrl: string | null;
-};
+export type { AmazonListing } from "@/lib/amazon/listings-shared";
+export {
+  effectiveAmazonListingImageUrl,
+  isPlaceholderAmazonImageUrl,
+} from "@/lib/amazon/listings-shared";
 
 type CreateReportResponse = { reportId: string };
 type GetReportResponse = {
@@ -84,32 +80,9 @@ function formatCondition(value: string | undefined): string | null {
   return map[raw] ?? raw;
 }
 
-/**
- * Constructed /images/P/{ASIN}… URLs usually resolve to a tiny transparent GIF
- * nowadays, so they look like “missing” images in the grid. Prefer real report
- * or Listings Items mainImage URLs instead.
- */
-export function isPlaceholderAmazonImageUrl(
-  url: string | null | undefined,
-): boolean {
-  if (!url?.trim()) return true;
-  const trimmed = url.trim();
-  // Classic broken ASIN guess used by older cache rows.
-  if (/\/images\/P\/[A-Z0-9]{10}(\.|$)/i.test(trimmed)) return true;
-  return false;
-}
-
 function amazonImageFromAsin(_asin: string | null): string | null {
   // Do not invent ASIN CDN URLs — they blank out the grid.
   return null;
-}
-
-export function effectiveAmazonListingImageUrl(
-  url: string | null | undefined,
-): string | null {
-  const trimmed = url?.trim() || null;
-  if (!trimmed || isPlaceholderAmazonImageUrl(trimmed)) return null;
-  return trimmed;
 }
 
 function parseTsv(text: string): AmazonListing[] {

@@ -36,7 +36,7 @@ import type { AmazonListingFamily } from "@/lib/amazon/listing-editor";
 import {
   effectiveAmazonListingImageUrl,
   type AmazonListing,
-} from "@/lib/amazon/listings";
+} from "@/lib/amazon/listings-shared";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 

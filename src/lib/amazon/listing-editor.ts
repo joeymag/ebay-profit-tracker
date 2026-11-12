@@ -2,11 +2,11 @@ import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
 import { loadAmazonListingsFromDb } from "@/lib/amazon/amazon-listings-store";
 import { resolveAmazonSellerId } from "@/lib/amazon/pricing";
+import { fetchAmazonListings } from "@/lib/amazon/listings";
 import {
   effectiveAmazonListingImageUrl,
-  fetchAmazonListings,
   type AmazonListing,
-} from "@/lib/amazon/listings";
+} from "@/lib/amazon/listings-shared";
 
 export type AmazonListingImage = {
   role: "main" | `other_${number}`;

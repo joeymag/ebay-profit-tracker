@@ -5,7 +5,7 @@ import type {
   AmazonListingFamilyMember,
   AmazonListingImage,
 } from "@/lib/amazon/listing-editor";
-import type { AmazonListing } from "@/lib/amazon/listings";
+import type { AmazonListing } from "@/lib/amazon/listings-shared";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import type { Database, Json } from "@/lib/supabase/database.types";
