@@ -442,9 +442,12 @@ function ListingCells({
         />
       </TableCell>
       <TableCell>
-        <div className={cn("max-w-[360px]", indented && "pl-4")}>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="line-clamp-2 text-sm font-medium leading-snug">
+        <div className={cn("max-w-[420px]", indented && "pl-4")}>
+          <div className="flex flex-wrap items-start gap-2">
+            <p
+              className="min-w-0 flex-1 whitespace-normal break-words text-sm font-medium leading-snug"
+              title={titleOverride || row.title}
+            >
               {titleOverride || row.title}
             </p>
             {badge ? <Badge variant="outline">{badge}</Badge> : null}
