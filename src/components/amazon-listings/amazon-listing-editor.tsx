@@ -33,7 +33,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { AmazonSeoChecker } from "@/components/amazon-listings/amazon-seo-checker";
 import type { AmazonListingContent } from "@/lib/amazon/listing-editor";
+import {
+  AMAZON_BACKEND_SEARCH_MAX_BYTES,
+  utf8ByteLength,
+} from "@/lib/amazon/seo-checker";
 import { cn } from "@/lib/utils";
 
 const AMAZON_TITLE_MAX_CHARS = 190;
@@ -658,10 +663,44 @@ export function AmazonListingEditor({
                 updateDraft({ genericKeywords: event.target.value })
               }
               rows={2}
-              className={cn(textareaClassName, "min-h-16 resize-y")}
+              aria-invalid={
+                utf8ByteLength(draft.genericKeywords) >
+                AMAZON_BACKEND_SEARCH_MAX_BYTES
+              }
+              className={cn(
+                textareaClassName,
+                "min-h-16 resize-y",
+                utf8ByteLength(draft.genericKeywords) >
+                  AMAZON_BACKEND_SEARCH_MAX_BYTES &&
+                  "border-destructive focus-visible:border-destructive focus-visible:ring-destructive/30",
+              )}
               placeholder="keyword one, keyword two…"
             />
+            <p
+              className={cn(
+                "text-xs",
+                utf8ByteLength(draft.genericKeywords) >
+                  AMAZON_BACKEND_SEARCH_MAX_BYTES
+                  ? "font-medium text-destructive"
+                  : "text-muted-foreground",
+              )}
+            >
+              {utf8ByteLength(draft.genericKeywords)}/
+              {AMAZON_BACKEND_SEARCH_MAX_BYTES} UTF-8 bytes
+              {utf8ByteLength(draft.genericKeywords) >
+              AMAZON_BACKEND_SEARCH_MAX_BYTES
+                ? ` — ${utf8ByteLength(draft.genericKeywords) - AMAZON_BACKEND_SEARCH_MAX_BYTES} over limit`
+                : ""}
+            </p>
           </section>
+
+          <AmazonSeoChecker
+            sku={active.sku}
+            title={draft.title}
+            bulletPoints={draft.bulletPoints}
+            description={draft.description}
+            backendSearchTerms={draft.genericKeywords}
+          />
 
           <section className="space-y-4 border-t border-border/60 pt-8">
             <div className="flex flex-wrap items-end justify-between gap-3">
