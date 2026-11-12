@@ -272,16 +272,21 @@ export function AmazonListingsPanel() {
             </TableHeader>
             <TableBody>
               {families.map((family) => {
-                const children = family.members.filter(
-                  (member) => member.parentage === "child",
-                );
                 const parent =
                   family.members.find((member) => member.parentage === "parent") ??
-                  (children.length ? null : family.members[0] ?? null);
+                  family.members.find(
+                    (member) =>
+                      family.parentSku != null &&
+                      member.sku === family.parentSku,
+                  ) ??
+                  null;
+                const head = parent ?? family.members[0] ?? null;
+                if (!head) return null;
+                const children = family.members.filter(
+                  (member) => member.sku !== head.sku,
+                );
                 const hasChildren = children.length > 0;
                 const isOpen = expanded.has(family.groupId);
-                const head = parent ?? children[0] ?? null;
-                if (!head) return null;
 
                 return (
                   <Fragment key={family.groupId}>
@@ -314,13 +319,7 @@ export function AmazonListingsPanel() {
                             ? `${family.title} · ${children.length} variation${children.length === 1 ? "" : "s"}`
                             : undefined
                         }
-                        badge={
-                          hasChildren
-                            ? "Parent"
-                            : head.parentage === "standalone"
-                              ? null
-                              : null
-                        }
+                        badge={hasChildren ? "Parent" : null}
                         onCostSaved={patchMemberCost}
                       />
                     </TableRow>

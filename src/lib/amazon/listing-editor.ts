@@ -49,6 +49,33 @@ export type AmazonListingContentUpdate = {
 
 type AttributeValue = Record<string, unknown>;
 
+/** Inner VARIATION / PACKAGE_HIERARCHY edge from Listings Items. */
+type ItemRelationship = {
+  type?: string;
+  parentSkus?: string[];
+  childSkus?: string[];
+  variationTheme?:
+    | string[]
+    | {
+        theme?: string;
+        attributes?: string[];
+      };
+};
+
+/**
+ * Amazon nests edges under marketplace wrappers:
+ * relationships: [{ marketplaceId, relationships: [{ type, childSkus, parentSkus }] }]
+ * Older/flat shapes may put childSkus/parentSkus on the top entry — support both.
+ */
+type MarketplaceRelationships = {
+  marketplaceId?: string;
+  type?: string;
+  parentSkus?: string[];
+  childSkus?: string[];
+  variationTheme?: ItemRelationship["variationTheme"];
+  relationships?: ItemRelationship[];
+};
+
 type ListingsItemResponse = {
   sku?: string;
   summaries?: Array<{
@@ -60,13 +87,7 @@ type ListingsItemResponse = {
     mainImage?: { link?: string };
   }>;
   attributes?: Record<string, AttributeValue[] | undefined>;
-  relationships?: Array<{
-    marketplaceId?: string;
-    type?: string;
-    parentSkus?: string[];
-    childSkus?: string[];
-    variationTheme?: string[];
-  }>;
+  relationships?: MarketplaceRelationships[];
 };
 
 type SearchListingsResponse = {
@@ -157,23 +178,139 @@ function imageAttribute(
   ];
 }
 
+function collectRelationshipEdges(
+  item: ListingsItemResponse,
+): ItemRelationship[] {
+  const edges: ItemRelationship[] = [];
+  for (const wrapper of item.relationships ?? []) {
+    const nested = wrapper.relationships;
+    if (Array.isArray(nested) && nested.length > 0) {
+      for (const edge of nested) edges.push(edge);
+      continue;
+    }
+    // Flat / legacy shape on the marketplace entry itself.
+    if (
+      (wrapper.childSkus?.length ?? 0) > 0 ||
+      (wrapper.parentSkus?.length ?? 0) > 0 ||
+      wrapper.type
+    ) {
+      edges.push({
+        type: wrapper.type,
+        parentSkus: wrapper.parentSkus,
+        childSkus: wrapper.childSkus,
+        variationTheme: wrapper.variationTheme,
+      });
+    }
+  }
+  return edges;
+}
+
+function attributeParentSku(
+  attributes: Record<string, AttributeValue[] | undefined> | undefined,
+): string | null {
+  const rows = attributes?.child_parent_sku_relationship;
+  if (!rows?.length) return null;
+  for (const row of rows) {
+    const parent =
+      (typeof row.parent_sku === "string" && row.parent_sku.trim()) ||
+      (typeof row.parentSku === "string" && row.parentSku.trim()) ||
+      "";
+    if (parent) return parent;
+  }
+  return null;
+}
+
+function attributeParentageLevel(
+  attributes: Record<string, AttributeValue[] | undefined> | undefined,
+): "parent" | "child" | null {
+  const raw = firstText(attributes?.parentage_level).trim().toLowerCase();
+  if (raw === "parent") return "parent";
+  if (raw === "child") return "child";
+  return null;
+}
+
 function relationshipMeta(item: ListingsItemResponse): {
   parentSku: string | null;
   childSkus: string[];
   parentage: "parent" | "child" | "standalone";
 } {
-  const rel = item.relationships?.[0];
-  const parentSku = rel?.parentSkus?.[0]?.trim() || null;
-  const childSkus = (rel?.childSkus ?? [])
+  const edges = collectRelationshipEdges(item);
+  // Prefer VARIATION; fall back to any edge that names parents/children.
+  const rel =
+    edges.find((edge) => (edge.type ?? "VARIATION").toUpperCase() === "VARIATION") ??
+    edges[0];
+
+  let parentSku = rel?.parentSkus?.[0]?.trim() || null;
+  let childSkus = (rel?.childSkus ?? [])
     .map((sku) => sku.trim())
     .filter(Boolean);
+
+  if (!parentSku) {
+    parentSku = attributeParentSku(item.attributes);
+  }
+  const level = attributeParentageLevel(item.attributes);
+
   if (parentSku) {
     return { parentSku, childSkus, parentage: "child" };
   }
-  if (childSkus.length > 0) {
+  if (childSkus.length > 0 || level === "parent") {
     return { parentSku: null, childSkus, parentage: "parent" };
   }
+  // parentage_level=child without parent SKU can't be grouped yet.
   return { parentSku: null, childSkus: [], parentage: "standalone" };
+}
+
+function normalizeSkuKey(sku: string): string {
+  return sku.trim().toLowerCase();
+}
+
+/**
+ * Infer parent SKU from common seller patterns:
+ * PARENT + PARENT-RED / PARENT_S / PARENT/M when PARENT also exists (or longest shared stem).
+ */
+function inferFamiliesFromSkuPatterns(
+  skus: string[],
+): Map<string, { parentSku: string | null; parentage: AmazonListingContent["parentage"] }> {
+  const map = new Map<
+    string,
+    { parentSku: string | null; parentage: AmazonListingContent["parentage"] }
+  >();
+  const unique = [...new Set(skus.map((sku) => sku.trim()).filter(Boolean))];
+  if (unique.length < 2) return map;
+
+  const byKey = new Map(unique.map((sku) => [normalizeSkuKey(sku), sku]));
+  const sorted = [...unique].sort((a, b) => a.length - b.length);
+
+  for (const candidate of sorted) {
+    const prefix = normalizeSkuKey(candidate);
+    if (prefix.length < 3) continue;
+    const children: string[] = [];
+    for (const other of unique) {
+      if (other === candidate) continue;
+      const key = normalizeSkuKey(other);
+      if (!key.startsWith(prefix)) continue;
+      const remainder = key.slice(prefix.length);
+      if (/^[-_/\s].+/.test(remainder)) {
+        children.push(byKey.get(key) || other);
+      }
+    }
+    if (children.length === 0) continue;
+    map.set(candidate, { parentSku: null, parentage: "parent" });
+    for (const child of children) {
+      // Prefer the longest matching parent prefix.
+      const existing = map.get(child);
+      if (
+        existing?.parentage === "child" &&
+        existing.parentSku &&
+        existing.parentSku.length >= candidate.length
+      ) {
+        continue;
+      }
+      map.set(child, { parentSku: candidate, parentage: "child" });
+    }
+  }
+
+  return map;
 }
 
 function toContent(
@@ -264,146 +401,334 @@ export async function fetchAmazonListingFamilyBySku(sku: string): Promise<{
   };
 }
 
+type VariationMeta = {
+  parentSku: string | null;
+  parentage: AmazonListingContent["parentage"];
+};
+
+function mergeVariationMeta(
+  map: Map<string, VariationMeta>,
+  sku: string,
+  meta: VariationMeta,
+): void {
+  const key = sku.trim();
+  if (!key) return;
+  const existing = map.get(key);
+  // Prefer explicit parent/child over standalone; keep child→parent links.
+  if (!existing || existing.parentage === "standalone") {
+    map.set(key, meta);
+    return;
+  }
+  if (meta.parentage === "standalone") return;
+  if (meta.parentage === "child" && meta.parentSku) {
+    map.set(key, meta);
+    return;
+  }
+  if (meta.parentage === "parent" && existing.parentage !== "child") {
+    map.set(key, meta);
+  }
+}
+
+function applyItemToVariationMap(
+  map: Map<string, VariationMeta>,
+  item: ListingsItemResponse,
+): void {
+  const sku = item.sku?.trim();
+  if (!sku) return;
+  const meta = relationshipMeta(item);
+  mergeVariationMeta(map, sku, {
+    parentSku: meta.parentSku,
+    parentage: meta.parentage,
+  });
+  if (meta.parentage === "parent") {
+    for (const child of meta.childSkus) {
+      mergeVariationMeta(map, child, { parentSku: sku, parentage: "child" });
+    }
+  }
+  if (meta.parentage === "child" && meta.parentSku) {
+    mergeVariationMeta(map, meta.parentSku, {
+      parentSku: null,
+      parentage: "parent",
+    });
+  }
+}
+
 /**
- * Best-effort parent/child map from Listings Items search (for list grouping).
+ * Parent/child map for the SKUs we actually show (inventory report), via
+ * Listings Items search by SKU identifiers, then a paged catalog sweep.
  */
 export async function fetchAmazonVariationParentMap(
   seedSku?: string,
-): Promise<Map<string, { parentSku: string | null; parentage: AmazonListingContent["parentage"] }>> {
-  const map = new Map<
-    string,
-    { parentSku: string | null; parentage: AmazonListingContent["parentage"] }
-  >();
+  listingSkus: string[] = [],
+): Promise<Map<string, VariationMeta>> {
+  const map = new Map<string, VariationMeta>();
   const { marketplaceId } = getAmazonConfig();
   let sellerId: string;
   try {
-    sellerId = await resolveAmazonSellerId(seedSku);
+    sellerId = await resolveAmazonSellerId(seedSku || listingSkus[0]);
   } catch {
     return map;
   }
 
+  const wanted = [
+    ...new Set(listingSkus.map((sku) => sku.trim()).filter(Boolean)),
+  ];
+  const batchSize = 20;
+  for (let offset = 0; offset < wanted.length; offset += batchSize) {
+    const batch = wanted.slice(offset, offset + batchSize);
+    try {
+      const data = await amazonFetch<SearchListingsResponse>({
+        path: `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}`,
+        query: {
+          marketplaceIds: marketplaceId,
+          identifiers: batch.join(","),
+          identifiersType: "SKU",
+          includedData: "summaries,attributes,relationships",
+          pageSize: String(Math.min(20, batch.length)),
+        },
+      });
+      for (const item of data.items ?? []) {
+        applyItemToVariationMap(map, item);
+      }
+    } catch {
+      // Fall through to paged search / SKU heuristics.
+    }
+  }
+
+  // Catalog sweep fills parents that aren't in the merchant listings report.
   let pageToken: string | undefined;
   for (let page = 0; page < 15; page += 1) {
-    const data = await amazonFetch<SearchListingsResponse>({
-      path: `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}`,
-      query: {
-        marketplaceIds: marketplaceId,
-        includedData: "summaries,relationships",
-        pageSize: "20",
-        ...(pageToken ? { pageToken } : {}),
-      },
-    });
-
-    for (const item of data.items ?? []) {
-      const sku = item.sku?.trim();
-      if (!sku) continue;
-      const meta = relationshipMeta(item);
-      map.set(sku, {
-        parentSku: meta.parentSku,
-        parentage: meta.parentage,
+    try {
+      const data = await amazonFetch<SearchListingsResponse>({
+        path: `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}`,
+        query: {
+          marketplaceIds: marketplaceId,
+          includedData: "summaries,attributes,relationships",
+          pageSize: "20",
+          ...(pageToken ? { pageToken } : {}),
+        },
       });
-      if (meta.parentage === "parent") {
-        for (const child of meta.childSkus) {
-          map.set(child, { parentSku: sku, parentage: "child" });
-        }
-      }
-    }
 
-    pageToken = data.pagination?.nextToken;
-    if (!pageToken) break;
+      for (const item of data.items ?? []) {
+        applyItemToVariationMap(map, item);
+      }
+
+      pageToken = data.pagination?.nextToken;
+      if (!pageToken) break;
+    } catch {
+      break;
+    }
+  }
+
+  // SKU-prefix fallback for report rows Amazon didn't link (or only partially linked).
+  const linked = new Set(
+    [...map.entries()]
+      .filter(
+        ([, meta]) =>
+          meta.parentage === "parent" || meta.parentage === "child",
+      )
+      .map(([sku]) => normalizeSkuKey(sku)),
+  );
+  const unlinked = wanted.filter(
+    (sku) => !linked.has(normalizeSkuKey(sku)),
+  );
+  if (unlinked.length > 1) {
+    for (const [sku, meta] of inferFamiliesFromSkuPatterns([
+      ...unlinked,
+      // Include known parents so PREFIX matching can attach children to them.
+      ...[...map.entries()]
+        .filter(([, meta]) => meta.parentage === "parent")
+        .map(([sku]) => sku),
+    ])) {
+      mergeVariationMeta(map, sku, meta);
+    }
   }
 
   return map;
 }
 
+function resolveListingSku(
+  bySku: Map<string, AmazonListing>,
+  bySkuNormalized: Map<string, AmazonListing>,
+  sku: string,
+): AmazonListing | undefined {
+  return bySku.get(sku) ?? bySkuNormalized.get(normalizeSkuKey(sku));
+}
+
 export function groupAmazonListings(
   listings: AmazonListing[],
-  parentMap?: Map<
-    string,
-    { parentSku: string | null; parentage: AmazonListingContent["parentage"] }
-  >,
+  parentMap?: Map<string, VariationMeta>,
 ): AmazonListingFamily[] {
   const bySku = new Map(listings.map((row) => [row.sku, row]));
+  const bySkuNormalized = new Map(
+    listings.map((row) => [normalizeSkuKey(row.sku), row]),
+  );
   const used = new Set<string>();
   const families: AmazonListingFamily[] = [];
+  const map = parentMap ?? new Map<string, VariationMeta>();
+
+  const metaFor = (sku: string): VariationMeta | undefined => {
+    const direct = map.get(sku);
+    if (direct) return direct;
+    const key = normalizeSkuKey(sku);
+    for (const [mapSku, meta] of map) {
+      if (normalizeSkuKey(mapSku) === key) return meta;
+    }
+    return undefined;
+  };
+
+  const childrenOf = (parentSku: string): string[] => {
+    const parentKey = normalizeSkuKey(parentSku);
+    const children: string[] = [];
+    const seen = new Set<string>();
+    for (const [sku, value] of map.entries()) {
+      if (value.parentage !== "child" || !value.parentSku) continue;
+      if (
+        value.parentSku !== parentSku &&
+        normalizeSkuKey(value.parentSku) !== parentKey
+      ) {
+        continue;
+      }
+      const listing = resolveListingSku(bySku, bySkuNormalized, sku);
+      const childSku = listing?.sku ?? sku;
+      if (seen.has(normalizeSkuKey(childSku))) continue;
+      seen.add(normalizeSkuKey(childSku));
+      children.push(childSku);
+    }
+    return children;
+  };
 
   const membersFor = (skus: string[]): AmazonListingFamilyMember[] => {
     const members: AmazonListingFamilyMember[] = [];
+    const seen = new Set<string>();
     for (const sku of skus) {
-      const listing = bySku.get(sku);
-      if (!listing) continue;
-      const meta = parentMap?.get(sku);
+      const listing = resolveListingSku(bySku, bySkuNormalized, sku);
+      if (!listing || seen.has(listing.sku)) continue;
+      seen.add(listing.sku);
+      const meta = metaFor(listing.sku);
       members.push({
         ...listing,
         parentSku: meta?.parentSku ?? null,
         parentage: meta?.parentage ?? "standalone",
       });
-      used.add(sku);
+      used.add(listing.sku);
+      used.add(normalizeSkuKey(listing.sku));
     }
     return members;
   };
 
-  for (const listing of listings) {
-    if (used.has(listing.sku)) continue;
-    const meta = parentMap?.get(listing.sku);
-    if (!meta || meta.parentage === "standalone") {
-      families.push({
-        groupId: listing.sku || listing.listingId,
+  const pushFamily = (
+    groupId: string,
+    parentSku: string | null,
+    anchor: AmazonListing,
+    memberSkus: string[],
+  ) => {
+    const members = membersFor(memberSkus);
+    if (members.length === 0) return;
+
+    // Inventory reports often omit the parent SKU. Keep the real parent SKU as
+    // the family head so Edit/chevron target the parent, not the first child.
+    if (
+      parentSku &&
+      members.length >= 1 &&
+      !members.some(
+        (member) => normalizeSkuKey(member.sku) === normalizeSkuKey(parentSku),
+      )
+    ) {
+      members.unshift({
+        listingId: parentSku,
+        sku: parentSku,
+        asin: null,
+        title: anchor.title,
+        price: null,
+        quantity: null,
+        fulfillmentChannel: null,
+        condition: null,
+        imageUrl: anchor.imageUrl,
+        openDate: null,
+        productUrl: null,
         parentSku: null,
-        title: listing.title,
-        imageUrl: listing.imageUrl,
-        members: membersFor([listing.sku]),
+        parentage: "parent",
       });
-      continue;
+      used.add(parentSku);
+      used.add(normalizeSkuKey(parentSku));
     }
 
-    if (meta.parentage === "parent") {
-      const children = [...parentMap!.entries()]
-        .filter(([, value]) => value.parentSku === listing.sku)
-        .map(([sku]) => sku);
-      const members = membersFor([listing.sku, ...children]);
-      families.push({
-        groupId: listing.sku,
-        parentSku: listing.sku,
-        title: listing.title,
-        imageUrl: listing.imageUrl,
-        members,
-      });
-      continue;
+    // Ensure at most one parent tag; everyone else under a multi-member group is a child.
+    if (members.length > 1) {
+      let parent =
+        members.find((member) => member.parentage === "parent") ??
+        members.find((member) => member.sku === parentSku) ??
+        null;
+      if (!parent && parentSku) {
+        parent = members.find(
+          (member) => normalizeSkuKey(member.sku) === normalizeSkuKey(parentSku),
+        ) ?? null;
+      }
+      if (!parent) parent = members[0]!;
+      for (const member of members) {
+        if (member.sku === parent.sku) {
+          member.parentage = "parent";
+          member.parentSku = null;
+        } else {
+          member.parentage = "child";
+          member.parentSku = parent.sku;
+        }
+      }
     }
-
-    const parentSku = meta.parentSku;
-    if (parentSku && used.has(parentSku)) continue;
-    if (parentSku && bySku.has(parentSku)) {
-      const parent = bySku.get(parentSku)!;
-      const children = [...parentMap!.entries()]
-        .filter(([, value]) => value.parentSku === parentSku)
-        .map(([sku]) => sku);
-      const members = membersFor([parentSku, ...children]);
-      families.push({
-        groupId: parentSku,
-        parentSku,
-        title: parent.title,
-        imageUrl: parent.imageUrl,
-        members,
-      });
-      continue;
-    }
-
-    // Child without parent row in the report — still group known siblings.
-    const siblings = parentSku
-      ? [...parentMap!.entries()]
-          .filter(([, value]) => value.parentSku === parentSku)
-          .map(([sku]) => sku)
-      : [listing.sku];
-    const members = membersFor(siblings);
     families.push({
-      groupId: parentSku || listing.sku,
-      parentSku,
-      title: listing.title,
-      imageUrl: listing.imageUrl,
+      groupId,
+      parentSku: parentSku,
+      title: anchor.title,
+      imageUrl: anchor.imageUrl,
       members,
     });
+  };
+
+  // 1) Explicit parents first.
+  for (const listing of listings) {
+    if (used.has(listing.sku) || used.has(normalizeSkuKey(listing.sku))) {
+      continue;
+    }
+    const meta = metaFor(listing.sku);
+    if (meta?.parentage !== "parent") continue;
+    const childSkus = childrenOf(listing.sku);
+    pushFamily(listing.sku, listing.sku, listing, [
+      listing.sku,
+      ...childSkus,
+    ]);
+  }
+
+  // 2) Children whose parent may be missing from the report — group siblings.
+  for (const listing of listings) {
+    if (used.has(listing.sku) || used.has(normalizeSkuKey(listing.sku))) {
+      continue;
+    }
+    const meta = metaFor(listing.sku);
+    if (meta?.parentage !== "child" || !meta.parentSku) continue;
+
+    const parentSku = meta.parentSku;
+    if (used.has(parentSku) || used.has(normalizeSkuKey(parentSku))) {
+      // Parent family already created — attach if somehow skipped (shouldn't happen).
+      continue;
+    }
+
+    const parentListing = resolveListingSku(bySku, bySkuNormalized, parentSku);
+    const siblings = childrenOf(parentSku);
+    if (parentListing) {
+      pushFamily(parentSku, parentSku, parentListing, [parentSku, ...siblings]);
+    } else {
+      const members = siblings.length ? siblings : [listing.sku];
+      pushFamily(parentSku, parentSku, listing, members);
+    }
+  }
+
+  // 3) Remaining listings are standalone.
+  for (const listing of listings) {
+    if (used.has(listing.sku) || used.has(normalizeSkuKey(listing.sku))) {
+      continue;
+    }
+    pushFamily(listing.sku || listing.listingId, null, listing, [listing.sku]);
   }
 
   return families.sort((a, b) =>
@@ -429,18 +754,46 @@ export async function listAmazonListingFamilies(options?: {
   const includeRelationships = options?.includeRelationships !== false;
 
   const result = await fetchAmazonListings({ forceRefresh, fast });
-  let parentMap = new Map<
-    string,
-    { parentSku: string | null; parentage: AmazonListingContent["parentage"] }
-  >();
+  let parentMap = new Map<string, VariationMeta>();
   let relationshipsLoaded = false;
+  const listingSkus = result.listings.map((listing) => listing.sku);
   if (includeRelationships) {
     try {
-      parentMap = await fetchAmazonVariationParentMap(result.listings[0]?.sku);
-      relationshipsLoaded = parentMap.size > 0;
+      parentMap = await fetchAmazonVariationParentMap(
+        result.listings[0]?.sku,
+        listingSkus,
+      );
     } catch {
-      relationshipsLoaded = false;
+      parentMap = new Map();
     }
+
+    // Always try SKU-prefix grouping for anything still unlinked (also covers
+    // API/auth failures where the parent map came back empty).
+    const linked = new Set(
+      [...parentMap.entries()]
+        .filter(
+          ([, meta]) =>
+            meta.parentage === "parent" || meta.parentage === "child",
+        )
+        .map(([sku]) => normalizeSkuKey(sku)),
+    );
+    const unlinked = listingSkus.filter(
+      (sku) => sku && !linked.has(normalizeSkuKey(sku)),
+    );
+    if (unlinked.length > 1) {
+      for (const [sku, meta] of inferFamiliesFromSkuPatterns([
+        ...unlinked,
+        ...[...parentMap.entries()]
+          .filter(([, meta]) => meta.parentage === "parent")
+          .map(([sku]) => sku),
+      ])) {
+        mergeVariationMeta(parentMap, sku, meta);
+      }
+    }
+
+    relationshipsLoaded = [...parentMap.values()].some(
+      (meta) => meta.parentage === "parent" || meta.parentage === "child",
+    );
   }
 
   return {
