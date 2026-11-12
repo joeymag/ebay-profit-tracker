@@ -12,6 +12,7 @@ import {
   Search,
 } from "lucide-react";
 
+import { AmazonListingEditor } from "@/components/amazon-listings/amazon-listing-editor";
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { ProductCostInput } from "@/components/products/product-cost-input";
 import { Badge } from "@/components/ui/badge";
@@ -80,10 +81,6 @@ function fulfillmentLabel(channel: string | null): string {
   return channel;
 }
 
-function editHref(sku: string): string {
-  return `/amazon-listings/${encodeURIComponent(sku)}`;
-}
-
 export function AmazonListingsPanel() {
   const [data, setData] = useState<Extract<ListingsResponse, { ok: true }> | null>(
     null,
@@ -94,6 +91,8 @@ export function AmazonListingsPanel() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** Inline editor SKU — keeps the grid page mounted (no route change). */
+  const [editingSku, setEditingSku] = useState<string | null>(null);
 
   const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
@@ -174,6 +173,18 @@ export function AmazonListingsPanel() {
       };
     });
   };
+
+  if (editingSku) {
+    return (
+      <AmazonListingEditor
+        sku={editingSku}
+        onBack={() => {
+          setEditingSku(null);
+          void load(false);
+        }}
+      />
+    );
+  }
 
   if (loading && !data) {
     return (
@@ -311,7 +322,18 @@ export function AmazonListingsPanel() {
 
                 return (
                   <Fragment key={family.groupId}>
-                    <TableRow className={hasChildren ? "bg-muted/20" : undefined}>
+                    <TableRow
+                      className={cn(
+                        "cursor-pointer",
+                        hasChildren ? "bg-muted/20" : undefined,
+                      )}
+                      onClick={() => {
+                        if (hasChildren && !isOpen) {
+                          toggleExpanded(family.groupId);
+                        }
+                        if (headRow.sku) setEditingSku(headRow.sku);
+                      }}
+                    >
                       <TableCell className="pr-0">
                         {hasChildren ? (
                           <button
@@ -323,7 +345,10 @@ export function AmazonListingsPanel() {
                                 : "Expand variations"
                             }
                             className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            onClick={() => toggleExpanded(family.groupId)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleExpanded(family.groupId);
+                            }}
                           >
                             {isOpen ? (
                               <ChevronDown className="size-4" />
@@ -342,6 +367,7 @@ export function AmazonListingsPanel() {
                         }
                         badge={hasChildren ? "Parent" : null}
                         onCostSaved={patchMemberCost}
+                        onEdit={(sku) => setEditingSku(sku)}
                       />
                     </TableRow>
 
@@ -349,7 +375,10 @@ export function AmazonListingsPanel() {
                       ? children.map((child) => (
                           <TableRow
                             key={`${family.groupId}-${child.sku}`}
-                            className="bg-background"
+                            className="cursor-pointer bg-background"
+                            onClick={() => {
+                              if (child.sku) setEditingSku(child.sku);
+                            }}
                           >
                             <TableCell className="pr-0" />
                             <ListingCells
@@ -357,6 +386,7 @@ export function AmazonListingsPanel() {
                               indented
                               badge="Variation"
                               onCostSaved={patchMemberCost}
+                              onEdit={(sku) => setEditingSku(sku)}
                             />
                           </TableRow>
                         ))
@@ -372,8 +402,9 @@ export function AmazonListingsPanel() {
       {data?.fetchedAt ? (
         <p className="text-xs text-muted-foreground">
           Last fetched {new Date(data.fetchedAt).toLocaleString()}
-          {data.cached ? " (from cache)" : ""}. Expand a parent to see child
-          variations. Edit opens title, description, images, and per-child SEO.
+          {data.cached ? " (from cache)" : ""}. Click a listing to edit it here
+          without leaving this page. Pencil opens the same inline editor;
+          `/amazon-listings/[sku]` still works as a direct link.
         </p>
       ) : null}
     </div>
@@ -386,6 +417,7 @@ function ListingCells({
   badge,
   indented,
   onCostSaved,
+  onEdit,
 }: {
   row: ListingRow;
   titleOverride?: string;
@@ -395,6 +427,7 @@ function ListingCells({
     sku: string,
     patch: Partial<Pick<ListingRow, "unitCost" | "defaultPostage">>,
   ) => void;
+  onEdit: (sku: string) => void;
 }) {
   return (
     <>
@@ -428,7 +461,10 @@ function ListingCells({
       <TableCell className="text-right tabular-nums">
         {row.price != null ? formatMoney(row.price) : "—"}
       </TableCell>
-      <TableCell>
+      <TableCell
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
         {row.sku ? (
           <ProductCostInput
             sku={row.sku}
@@ -439,7 +475,10 @@ function ListingCells({
           "—"
         )}
       </TableCell>
-      <TableCell>
+      <TableCell
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
         {row.sku ? (
           <ProductCostInput
             sku={row.sku}
@@ -461,18 +500,18 @@ function ListingCells({
           {fulfillmentLabel(row.fulfillmentChannel)}
         </Badge>
       </TableCell>
-      <TableCell>
+      <TableCell onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center gap-1">
           {row.sku ? (
-            <Link
-              href={editHref(row.sku)}
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "icon-sm" }),
-              )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
               title="Edit listing"
+              onClick={() => onEdit(row.sku)}
             >
               <Pencil className="size-3.5" />
-            </Link>
+            </Button>
           ) : null}
           {row.productUrl ? (
             <a

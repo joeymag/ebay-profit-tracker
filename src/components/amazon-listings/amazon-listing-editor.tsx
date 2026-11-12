@@ -14,11 +14,9 @@ import {
   RefreshCw,
   Save,
   Upload,
-  Warehouse,
 } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -105,13 +103,21 @@ function FieldLabel({
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={htmlFor} className="text-sm font-medium leading-none">
+      <label
+        htmlFor={htmlFor}
+        className="text-sm font-medium tracking-tight text-foreground"
+      >
         {children}
       </label>
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      {hint ? (
+        <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }
+
+const textareaClassName =
+  "flex w-full rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm leading-relaxed outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30";
 
 type UploadResponse =
   | {
@@ -121,7 +127,20 @@ type UploadResponse =
     }
   | { ok: false; error: string };
 
-export function AmazonListingEditor({ sku }: { sku: string }) {
+function parentageLabel(parentage: string): string {
+  if (parentage === "parent") return "Parent";
+  if (parentage === "child") return "Variation";
+  return "Listing";
+}
+
+export function AmazonListingEditor({
+  sku,
+  onBack,
+}: {
+  sku: string;
+  /** When set, Back stays on the current page instead of routing away. */
+  onBack?: () => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -162,7 +181,7 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
       setActiveSku(json.content.sku || sku);
       setSource(json.source ?? null);
       if (refresh) {
-        setMessage("Pulled live data from Amazon and updated the Supabase cache.");
+        setMessage("Updated from Amazon.");
       }
     } catch {
       setError(
@@ -272,8 +291,8 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
       });
       setMessage(
         urls.length === 1
-          ? "Image uploaded. Save to Amazon to apply it."
-          : `${urls.length} images uploaded. Save to Amazon to apply them.`,
+          ? "Image uploaded. Save to apply it on Amazon."
+          : `${urls.length} images uploaded. Save to apply them on Amazon.`,
       );
     } catch {
       setError("Could not reach the Amazon image upload API.");
@@ -316,7 +335,7 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
           .join(" · ") || "";
       setMessage(
         issueText
-          ? `Saved to Amazon (${json.status || "ACCEPTED"}). ${issueText}`
+          ? `Saved (${json.status || "ACCEPTED"}). ${issueText}`
           : `Saved to Amazon (${json.status || "ACCEPTED"}).`,
       );
       await load();
@@ -329,28 +348,59 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
 
   if (loading && !active) {
     return (
-      <div className="flex items-center gap-2 text-muted-foreground">
+      <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        Loading listing and variations…
+        Loading listing…
       </div>
     );
   }
 
+  const backControl = onBack ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="-ml-2 text-muted-foreground"
+      onClick={onBack}
+    >
+      <ArrowLeft className="size-4" />
+      Listings
+    </Button>
+  ) : (
+    <Link
+      href="/amazon-listings"
+      className={cn(
+        buttonVariants({ variant: "ghost", size: "sm" }),
+        "-ml-2 text-muted-foreground",
+      )}
+    >
+      <ArrowLeft className="size-4" />
+      Listings
+    </Link>
+  );
+
   if (error && !active) {
     return (
-      <Card className="surface-card">
-        <CardHeader>
+      <Card className="surface-card max-w-lg">
+        <CardHeader className="space-y-2">
           <CardTitle>Could not open listing</CardTitle>
           <CardDescription>{error}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Link
-            href="/amazon-listings"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            <ArrowLeft className="size-4" />
-            Back to listings
-          </Link>
+          {onBack ? (
+            <Button type="button" variant="outline" onClick={onBack}>
+              <ArrowLeft className="size-4" />
+              Back
+            </Button>
+          ) : (
+            <Link
+              href="/amazon-listings"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              <ArrowLeft className="size-4" />
+              Back
+            </Link>
+          )}
           <Button type="button" onClick={() => void load()}>
             Retry
           </Button>
@@ -363,61 +413,98 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
     return null;
   }
 
+  const busy = saving || refreshing || uploadingSlot != null;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <Link
-          href="/amazon-listings"
-          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-        >
-          <ArrowLeft className="size-4" />
-          All listings
-        </Link>
-        <Badge variant="outline">{active.parentage}</Badge>
-        {active.asin ? (
-          <Badge variant="outline" className="font-mono">
-            {active.asin}
-          </Badge>
-        ) : null}
-        <Badge variant="secondary" className="font-mono">
-          {active.sku}
-        </Badge>
-        {source ? (
-          <Badge variant="outline">
-            {source === "supabase" ? "Cached" : "Live Amazon"}
-          </Badge>
-        ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={refreshing || saving || loading}
-          onClick={() => void load({ refresh: true })}
-        >
-          {refreshing ? (
-            <>
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      {/* Top bar: identity + primary actions */}
+      <div className="flex flex-col gap-4 border-b border-border/60 pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-3">
+          {backControl}
+          <div className="space-y-1.5">
+            <h1 className="truncate text-xl font-semibold tracking-tight text-foreground md:text-2xl">
+              {draft.title.trim() || "Untitled listing"}
+            </h1>
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span className="font-mono text-foreground/80">{active.sku}</span>
+              {active.asin ? (
+                <>
+                  <span aria-hidden className="text-border">
+                    ·
+                  </span>
+                  <span className="font-mono">{active.asin}</span>
+                </>
+              ) : null}
+              <span aria-hidden className="text-border">
+                ·
+              </span>
+              <span>{parentageLabel(active.parentage)}</span>
+              {source ? (
+                <>
+                  <span aria-hidden className="text-border">
+                    ·
+                  </span>
+                  <span>{source === "supabase" ? "Cached" : "Live"}</span>
+                </>
+              ) : null}
+              {active.productType ? (
+                <>
+                  <span aria-hidden className="text-border">
+                    ·
+                  </span>
+                  <span className="truncate">{active.productType}</span>
+                </>
+              ) : null}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:pt-8">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void load({ refresh: true })}
+          >
+            {refreshing ? (
               <Loader2 className="size-4 animate-spin" />
-              Refreshing…
-            </>
-          ) : (
-            <>
+            ) : (
               <RefreshCw className="size-4" />
-              Refresh from Amazon
-            </>
-          )}
-        </Button>
+            )}
+            Refresh
+          </Button>
+          <Button type="button" disabled={busy} onClick={() => void save()}>
+            {saving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            {saving ? "Saving…" : "Save to Amazon"}
+          </Button>
+        </div>
       </div>
 
+      {(error || message) && (
+        <div
+          role="status"
+          className={cn(
+            "rounded-lg border px-4 py-3 text-sm",
+            error
+              ? "border-destructive/30 bg-destructive/5 text-destructive"
+              : "border-emerald-500/25 bg-emerald-500/5 text-emerald-800 dark:text-emerald-300",
+          )}
+        >
+          {error || message}
+        </div>
+      )}
+
+      {/* Variation switcher — compact, only when needed */}
       {family.length > 1 ? (
-        <Card className="surface-card">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Variation family</CardTitle>
-            <CardDescription>
-              Pick a child to edit its own SEO search terms. Shared title,
-              description, and bullets can differ per SKU too.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Variations
+          </p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {family.map((member) => {
               const selected = member.sku === active.sku;
               return (
@@ -426,258 +513,277 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
                   type="button"
                   onClick={() => setActiveSku(member.sku)}
                   className={cn(
-                    "flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                    "flex shrink-0 items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-colors",
                     selected
-                      ? "border-foreground bg-muted"
-                      : "border-border hover:bg-muted/50",
+                      ? "border-foreground/20 bg-muted shadow-sm"
+                      : "border-transparent bg-muted/40 hover:bg-muted/70",
                   )}
                 >
                   <LineItemImage
                     src={member.images[0]?.url ?? null}
                     alt={member.title}
-                    className="size-8 rounded object-cover"
+                    className="size-9 rounded-md object-cover"
                   />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">
-                      {member.parentage === "parent"
-                        ? "Parent"
-                        : member.parentage === "child"
-                          ? "Variation"
-                          : "Listing"}
+                  <span className="min-w-0 pr-1">
+                    <span className="block text-sm font-medium leading-none">
+                      {parentageLabel(member.parentage)}
                     </span>
-                    <span className="block truncate font-mono text-xs text-muted-foreground">
+                    <span className="mt-1 block max-w-[9rem] truncate font-mono text-[11px] text-muted-foreground">
                       {member.sku}
                     </span>
                   </span>
                 </button>
               );
             })}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Warehouse className="size-5 text-amber-600 dark:text-amber-400" />
-              Edit listing
-            </CardTitle>
-            <CardDescription>
-              Changes save to Amazon for SKU {active.sku}. SEO keywords are
-              stored on this SKU only.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
+        {/* Main form */}
+        <div className="space-y-8">
+          <section className="space-y-5">
             <div className="space-y-2">
               <FieldLabel htmlFor="amazon-title">Title</FieldLabel>
               <Input
                 id="amazon-title"
                 value={draft.title}
                 onChange={(event) => updateDraft({ title: event.target.value })}
+                className="h-10 text-base md:text-sm"
               />
             </div>
 
             <div className="space-y-2">
-              <FieldLabel
-                htmlFor="amazon-description"
-                hint="Product description shown on the detail page"
-              >
-                Description
-              </FieldLabel>
+              <FieldLabel htmlFor="amazon-description">Description</FieldLabel>
               <textarea
                 id="amazon-description"
                 value={draft.description}
                 onChange={(event) =>
                   updateDraft({ description: event.target.value })
                 }
-                rows={8}
-                className="flex min-h-32 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                rows={7}
+                className={cn(textareaClassName, "min-h-36 resize-y")}
               />
             </div>
 
             <div className="space-y-3">
-              <p className="text-sm font-medium">Bullet points</p>
-              {draft.bulletPoints.map((bullet, index) => (
-                <Input
-                  key={`bullet-${index}`}
-                  value={bullet}
-                  placeholder={`Bullet ${index + 1}`}
+              <FieldLabel htmlFor="amazon-bullet-0">Bullet points</FieldLabel>
+              <div className="space-y-2">
+                {draft.bulletPoints.map((bullet, index) => (
+                  <div key={`bullet-${index}`} className="flex items-center gap-3">
+                    <span className="w-4 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <Input
+                      id={index === 0 ? "amazon-bullet-0" : undefined}
+                      value={bullet}
+                      placeholder={`Feature ${index + 1}`}
+                      onChange={(event) => {
+                        const bulletPoints = [...draft.bulletPoints];
+                        bulletPoints[index] = event.target.value;
+                        updateDraft({ bulletPoints });
+                      }}
+                      className="h-9"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3 border-t border-border/60 pt-8">
+            <FieldLabel
+              htmlFor="amazon-seo"
+              hint="Search terms for this SKU only."
+            >
+              SEO search terms
+            </FieldLabel>
+            <textarea
+              id="amazon-seo"
+              value={draft.genericKeywords}
+              onChange={(event) =>
+                updateDraft({ genericKeywords: event.target.value })
+              }
+              rows={2}
+              className={cn(textareaClassName, "min-h-16 resize-y")}
+              placeholder="keyword one, keyword two…"
+            />
+          </section>
+
+          <section className="space-y-4 border-t border-border/60 pt-8">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <FieldLabel htmlFor="amazon-image-0">
+                Images
+              </FieldLabel>
+              <label
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "sm" }),
+                  busy ? "pointer-events-none opacity-50" : "cursor-pointer",
+                )}
+              >
+                {uploadingSlot === "batch" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Upload className="size-4" />
+                )}
+                Upload
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  className="sr-only"
+                  disabled={busy}
                   onChange={(event) => {
-                    const bulletPoints = [...draft.bulletPoints];
-                    bulletPoints[index] = event.target.value;
-                    updateDraft({ bulletPoints });
+                    const files = event.target.files;
+                    if (files?.length) void uploadImages(files);
+                    event.target.value = "";
                   }}
                 />
-              ))}
+              </label>
             </div>
+            <p className="text-xs text-muted-foreground">
+              First slot is the main image. Upload a file or paste a URL.
+            </p>
 
-            <div className="space-y-2">
-              <FieldLabel
-                htmlFor="amazon-seo"
-                hint="Backend search terms for this SKU only — parent SEO does not rank children"
-              >
-                SEO search terms
-              </FieldLabel>
-              <textarea
-                id="amazon-seo"
-                value={draft.genericKeywords}
-                onChange={(event) =>
-                  updateDraft({ genericKeywords: event.target.value })
-                }
-                rows={3}
-                className="flex min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                placeholder="keyword one, keyword two, …"
-              />
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">Images</p>
-                  <p className="text-xs text-muted-foreground">
-                    Upload files or paste publicly reachable URLs. First is the
-                    main image. Uploaded files are hosted, then sent to Amazon
-                    on Save.
-                  </p>
-                </div>
-                <label
-                  className={cn(
-                    buttonVariants({ variant: "outline", size: "sm" }),
-                    uploadingSlot != null || saving
-                      ? "pointer-events-none opacity-50"
-                      : "cursor-pointer",
-                  )}
-                >
-                  {uploadingSlot === "batch" ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Upload className="size-4" />
-                  )}
-                  Upload images
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    multiple
-                    className="sr-only"
-                    disabled={uploadingSlot != null || saving}
-                    onChange={(event) => {
-                      const files = event.target.files;
-                      if (files?.length) void uploadImages(files);
-                      event.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {draft.imageUrls.map((url, index) => (
-                <div key={`image-${index}`} className="flex gap-2">
+                <div
+                  key={`image-${index}`}
+                  className="group flex flex-col overflow-hidden rounded-xl border border-border/70 bg-muted/20"
+                >
+                  <div className="relative aspect-square bg-muted/40">
+                    {url.trim() ? (
+                      <LineItemImage
+                        src={url}
+                        alt={
+                          index === 0
+                            ? "Main image"
+                            : `Image ${index + 1}`
+                        }
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+                        Empty
+                      </div>
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-gradient-to-t from-black/55 to-transparent px-2 pb-2 pt-6">
+                      <span className="text-[11px] font-medium text-white/95">
+                        {index === 0 ? "Main" : index + 1}
+                      </span>
+                      <label
+                        className={cn(
+                          "inline-flex size-7 cursor-pointer items-center justify-center rounded-md bg-white/90 text-foreground shadow-sm hover:bg-white",
+                          busy && "pointer-events-none opacity-50",
+                        )}
+                        title={
+                          index === 0
+                            ? "Upload main image"
+                            : `Upload image ${index + 1}`
+                        }
+                      >
+                        {uploadingSlot === index ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="size-3.5" />
+                        )}
+                        <span className="sr-only">
+                          Upload{" "}
+                          {index === 0 ? "main image" : `image ${index + 1}`}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          className="sr-only"
+                          disabled={busy}
+                          onChange={(event) => {
+                            const files = event.target.files;
+                            if (files?.length) {
+                              void uploadImages(files, { slot: index });
+                            }
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
                   <Input
+                    id={index === 0 ? "amazon-image-0" : undefined}
                     value={url}
-                    placeholder={
-                      index === 0
-                        ? "Main image URL"
-                        : `Other image ${index} URL`
-                    }
+                    placeholder="Image URL"
                     onChange={(event) => {
                       const imageUrls = [...draft.imageUrls];
                       imageUrls[index] = event.target.value;
                       updateDraft({ imageUrls });
                     }}
+                    className="h-8 rounded-none border-0 border-t border-border/60 bg-transparent px-2.5 text-xs shadow-none focus-visible:ring-0"
                   />
-                  <label
-                    className={cn(
-                      buttonVariants({ variant: "outline", size: "icon" }),
-                      "shrink-0",
-                      uploadingSlot != null || saving
-                        ? "pointer-events-none opacity-50"
-                        : "cursor-pointer",
-                    )}
-                    title={
-                      index === 0
-                        ? "Upload main image"
-                        : `Upload other image ${index}`
-                    }
-                  >
-                    {uploadingSlot === index ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Upload className="size-4" />
-                    )}
-                    <span className="sr-only">
-                      Upload{" "}
-                      {index === 0 ? "main image" : `other image ${index}`}
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      className="sr-only"
-                      disabled={uploadingSlot != null || saving}
-                      onChange={(event) => {
-                        const files = event.target.files;
-                        if (files?.length) {
-                          void uploadImages(files, { slot: index });
-                        }
-                        event.target.value = "";
-                      }}
-                    />
-                  </label>
                 </div>
               ))}
             </div>
+          </section>
 
-            {error ? (
-              <p className="text-sm text-destructive">{error}</p>
-            ) : null}
-            {message ? (
-              <p className="text-sm text-emerald-700 dark:text-emerald-400">
-                {message}
-              </p>
-            ) : null}
+          {/* Mobile / bottom save — mirrors top primary action */}
+          <div className="sticky bottom-3 z-10 flex items-center justify-end gap-2 rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur lg:hidden">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => void load({ refresh: true })}
+            >
+              {refreshing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Refresh
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy}
+              onClick={() => void save()}
+            >
+              {saving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save to Amazon
+            </Button>
+          </div>
+        </div>
 
-            <div className="sticky bottom-0 -mx-6 border-t border-border/60 bg-card/95 px-6 py-4 backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                  Saves title, description, bullets, SEO, and images for{" "}
-                  <span className="font-mono">{active.sku}</span> to Amazon.
-                </p>
-                <Button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="animate-spin" />
-                      Saving…
-                    </>
-                  ) : (
-                    <>
-                      <Save />
-                      Save to Amazon
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="surface-card h-fit">
-          <CardHeader>
-            <CardTitle className="text-base">Preview</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        {/* Sticky preview rail */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-6 space-y-3 rounded-2xl border border-border/70 bg-muted/15 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Preview
+            </p>
             <LineItemImage
               src={draft.imageUrls[0] || null}
               alt={draft.title}
-              className="aspect-square w-full rounded-lg object-cover"
+              className="aspect-square w-full rounded-xl object-cover"
             />
-            <p className="text-sm font-medium leading-snug">{draft.title}</p>
-            <p className="text-xs text-muted-foreground">
-              Product type: {active.productType}
+            <p className="line-clamp-4 text-sm font-medium leading-snug text-foreground">
+              {draft.title.trim() || "Untitled listing"}
             </p>
-          </CardContent>
-        </Card>
+            <ul className="space-y-1.5 border-t border-border/50 pt-3">
+              {draft.bulletPoints
+                .filter((b) => b.trim())
+                .slice(0, 3)
+                .map((bullet, index) => (
+                  <li
+                    key={`preview-bullet-${index}`}
+                    className="line-clamp-2 text-xs leading-relaxed text-muted-foreground"
+                  >
+                    · {bullet}
+                  </li>
+                ))}
+            </ul>
+          </div>
+        </aside>
       </div>
     </div>
   );
