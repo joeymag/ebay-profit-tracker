@@ -2,9 +2,16 @@ import { NextResponse } from "next/server";
 
 import { AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
-import { listAmazonListingFamilies } from "@/lib/amazon/listing-editor";
+import {
+  amazonListingsCacheCount,
+  groupStoredAmazonListings,
+  listStoredAmazonListings,
+  rowToAmazonListing,
+} from "@/lib/amazon/listings-store";
+import { syncAmazonListingsToSupabase } from "@/lib/amazon/sync-listings";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 import { getSkuCostSnapshots } from "@/lib/products/listing-costs";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const maxDuration = 120;
 
@@ -34,16 +41,38 @@ export async function GET(request: Request) {
     );
   }
 
+  if (!isSupabaseConfigured()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
+      },
+      { status: 400 },
+    );
+  }
+
   const url = new URL(request.url);
   const forceRefresh = url.searchParams.get("refresh") === "1";
-  const skipRelationships = url.searchParams.get("relationships") === "0";
 
   try {
-    const result = await listAmazonListingFamilies({
-      forceRefresh,
-      fast: !forceRefresh,
-      includeRelationships: !skipRelationships,
+    const existingCount = await amazonListingsCacheCount(config.marketplaceId);
+    let syncedAt: string | null = null;
+    let syncedFromAmazon = false;
+
+    if (forceRefresh || existingCount === 0) {
+      const synced = await syncAmazonListingsToSupabase({
+        forceRefresh,
+      });
+      syncedAt = synced.fetchedAt;
+      syncedFromAmazon = true;
+    }
+
+    const rows = await listStoredAmazonListings({
+      marketplaceId: config.marketplaceId,
     });
+    const listings = rows.map(rowToAmazonListing);
+    const families = groupStoredAmazonListings(rows);
 
     const costBySku = new Map<
       string,
@@ -51,10 +80,10 @@ export async function GET(request: Request) {
     >();
     try {
       const costs = await getSkuCostSnapshots(
-        result.listings.map((listing) => listing.sku),
+        listings.map((listing) => listing.sku),
         { inferPostageFromOrders: false },
       );
-      for (const listing of result.listings) {
+      for (const listing of listings) {
         if (!listing.sku) continue;
         costBySku.set(listing.sku, {
           unitCost: costs.get(listing.sku)?.unitCost ?? null,
@@ -71,24 +100,36 @@ export async function GET(request: Request) {
       defaultPostage: costBySku.get(row.sku)?.defaultPostage ?? null,
     });
 
-    const listings = result.listings.map(withCosts);
-    const families = result.families.map((family) => ({
+    const listingsWithCosts = listings.map(withCosts);
+    const familiesWithCosts = families.map((family) => ({
       ...family,
       members: family.members.map(withCosts),
     }));
+
+    const latestSynced = rows.reduce<string | null>((latest, row) => {
+      if (!latest || row.synced_at > latest) return row.synced_at;
+      return latest;
+    }, syncedAt);
 
     return NextResponse.json({
       ok: true,
       env: config.env,
       region: config.region,
-      marketplaceId: result.marketplaceId,
-      count: listings.length,
-      listings,
-      families,
-      familyCount: families.length,
-      relationshipsLoaded: result.relationshipsLoaded,
-      fetchedAt: result.fetchedAt,
-      cached: result.cached,
+      marketplaceId: config.marketplaceId,
+      count: listingsWithCosts.length,
+      listings: listingsWithCosts,
+      families: familiesWithCosts,
+      familyCount: familiesWithCosts.length,
+      relationshipsLoaded: familiesWithCosts.some((family) =>
+        family.members.some(
+          (member) =>
+            member.parentage === "parent" || member.parentage === "child",
+        ),
+      ),
+      fetchedAt: latestSynced || new Date().toISOString(),
+      cached: !syncedFromAmazon,
+      source: "supabase",
+      syncedFromAmazon,
     });
   } catch (error) {
     if (error instanceof AmazonApiError) {

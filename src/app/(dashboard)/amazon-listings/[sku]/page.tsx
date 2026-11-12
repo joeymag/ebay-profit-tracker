@@ -15,7 +15,7 @@ export default async function AmazonListingEditPage({
     <>
       <DashboardHeader
         title="Edit Amazon listing"
-        description="Update pictures, title, description, and per-variation SEO, then save to Amazon"
+        description="Edit from the Supabase cache. Refresh pulls live Amazon data into the cache; Save patches Amazon and updates the cache."
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <AmazonListingEditor sku={sku} />

@@ -84,9 +84,32 @@ function formatCondition(value: string | undefined): string | null {
   return map[raw] ?? raw;
 }
 
-function amazonImageFromAsin(asin: string | null): string | null {
-  if (!asin) return null;
-  return `https://m.media-amazon.com/images/P/${asin}.01._SCLZZZZZZZ_SX200_.jpg`;
+/**
+ * Constructed /images/P/{ASIN}… URLs usually resolve to a tiny transparent GIF
+ * nowadays, so they look like “missing” images in the grid. Prefer real report
+ * or Listings Items mainImage URLs instead.
+ */
+export function isPlaceholderAmazonImageUrl(
+  url: string | null | undefined,
+): boolean {
+  if (!url?.trim()) return true;
+  const trimmed = url.trim();
+  // Classic broken ASIN guess used by older cache rows.
+  if (/\/images\/P\/[A-Z0-9]{10}(\.|$)/i.test(trimmed)) return true;
+  return false;
+}
+
+function amazonImageFromAsin(_asin: string | null): string | null {
+  // Do not invent ASIN CDN URLs — they blank out the grid.
+  return null;
+}
+
+export function effectiveAmazonListingImageUrl(
+  url: string | null | undefined,
+): string | null {
+  const trimmed = url?.trim() || null;
+  if (!trimmed || isPlaceholderAmazonImageUrl(trimmed)) return null;
+  return trimmed;
 }
 
 function parseTsv(text: string): AmazonListing[] {
@@ -102,7 +125,14 @@ function parseTsv(text: string): AmazonListing[] {
   const iSku = idx("seller-sku");
   const iPrice = idx("price");
   const iQty = idx("quantity");
-  const iImage = idx("image-url");
+  const iImage = [
+    "image-url",
+    "image url",
+    "main-image-url",
+    "image-location",
+  ]
+    .map((name) => idx(name))
+    .find((index) => index >= 0) ?? -1;
   const iOpen = idx("open-date");
   const iAsin1 = idx("asin1");
   const iProductId = idx("product-id");
@@ -136,7 +166,9 @@ function parseTsv(text: string): AmazonListing[] {
       asin: asin || null,
       price: parseMoney(iPrice >= 0 ? cols[iPrice] : undefined),
       quantity: parseQty(iQty >= 0 ? cols[iQty] : undefined),
-      imageUrl: reportImage || amazonImageFromAsin(asin),
+      imageUrl:
+        effectiveAmazonListingImageUrl(reportImage) ||
+        amazonImageFromAsin(asin),
       openDate: (iOpen >= 0 ? cols[iOpen]?.trim() : "") || null,
       fulfillmentChannel:
         (iFulfillment >= 0 ? cols[iFulfillment]?.trim() : "") || null,

@@ -259,6 +259,60 @@ export type Database = {
         >;
         Relationships: [];
       };
+      amazon_listings: {
+        Row: {
+          sku: string;
+          marketplace_id: string;
+          asin: string | null;
+          listing_id: string | null;
+          parent_sku: string | null;
+          parentage: "parent" | "child" | "standalone";
+          child_skus: string[];
+          product_type: string | null;
+          title: string | null;
+          description: string | null;
+          bullet_points: string[];
+          generic_keywords: string | null;
+          image_urls: string[];
+          price: number | null;
+          quantity: number | null;
+          fulfillment_channel: string | null;
+          condition: string | null;
+          status: string | null;
+          product_url: string | null;
+          raw_attributes: Json;
+          updated_at: string;
+          synced_at: string;
+        };
+        Insert: {
+          sku: string;
+          marketplace_id: string;
+          asin?: string | null;
+          listing_id?: string | null;
+          parent_sku?: string | null;
+          parentage?: "parent" | "child" | "standalone";
+          child_skus?: string[];
+          product_type?: string | null;
+          title?: string | null;
+          description?: string | null;
+          bullet_points?: string[];
+          generic_keywords?: string | null;
+          image_urls?: string[];
+          price?: number | null;
+          quantity?: number | null;
+          fulfillment_channel?: string | null;
+          condition?: string | null;
+          status?: string | null;
+          product_url?: string | null;
+          raw_attributes?: Json;
+          updated_at?: string;
+          synced_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_listings"]["Insert"]
+        >;
+        Relationships: [];
+      };
       amazon_competitive_cache: {
         Row: {
           sku: string;

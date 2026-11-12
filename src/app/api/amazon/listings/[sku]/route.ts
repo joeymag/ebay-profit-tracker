@@ -3,18 +3,22 @@ import { NextResponse } from "next/server";
 import { AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
 import {
-  fetchAmazonListingContent,
-  fetchAmazonListingFamilyBySku,
   updateAmazonListingContent,
   updateAmazonListingFamilyContent,
   type AmazonListingContentUpdate,
 } from "@/lib/amazon/listing-editor";
+import {
+  applyLocalListingContentUpdate,
+  getStoredAmazonListingFamily,
+} from "@/lib/amazon/listings-store";
+import { refreshAmazonListingFamilyInSupabase } from "@/lib/amazon/sync-listings";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 import {
   ListingImageUploadError,
   listingImageFilesFromFormData,
   uploadListingImage,
 } from "@/lib/uploads/image-upload";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export const maxDuration = 120;
 
@@ -38,7 +42,7 @@ function notReadyResponse() {
   return null;
 }
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const blocked = notReadyResponse();
   if (blocked) return blocked;
 
@@ -63,41 +67,55 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
-  try {
-    const { content, familySkus } = await fetchAmazonListingFamilyBySku(sku);
-    const familyContents = await Promise.all(
-      familySkus.map(async (familySku) => {
-        if (familySku === content.sku) return content;
-        try {
-          return await fetchAmazonListingContent(familySku);
-        } catch {
-          return {
-            ...content,
-            sku: familySku,
-            title: familySku,
-            description: "",
-            bulletPoints: ["", "", "", "", ""],
-            genericKeywords: "",
-            images: [],
-            parentSku: content.parentage === "parent" ? content.sku : content.parentSku,
-            childSkus: [],
-            parentage:
-              familySku === content.parentSku
-                ? ("parent" as const)
-                : ("child" as const),
-            status: null,
-            asin: null,
-            productType: content.productType,
-          };
-        }
-      }),
-    );
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get("refresh") === "1";
 
+  try {
+    if (forceRefresh) {
+      if (!isSupabaseConfigured()) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
+          },
+          { status: 400 },
+        );
+      }
+      const refreshed = await refreshAmazonListingFamilyInSupabase(sku);
+      return NextResponse.json({
+        ok: true,
+        content: refreshed.content,
+        familySkus: refreshed.familySkus,
+        family: refreshed.family,
+        source: "amazon",
+        refreshed: true,
+      });
+    }
+
+    if (isSupabaseConfigured()) {
+      const stored = await getStoredAmazonListingFamily(sku);
+      if (stored.content && stored.family.length > 0) {
+        return NextResponse.json({
+          ok: true,
+          content: stored.content,
+          familySkus: stored.familySkus,
+          family: stored.family,
+          source: "supabase",
+          refreshed: false,
+        });
+      }
+    }
+
+    // Cold cache / missing row: live fetch and persist.
+    const refreshed = await refreshAmazonListingFamilyInSupabase(sku);
     return NextResponse.json({
       ok: true,
-      content,
-      familySkus,
-      family: familyContents,
+      content: refreshed.content,
+      familySkus: refreshed.familySkus,
+      family: refreshed.family,
+      source: "amazon",
+      refreshed: true,
     });
   } catch (error) {
     if (error instanceof AmazonApiError) {
@@ -274,6 +292,18 @@ export async function PATCH(request: Request, context: RouteContext) {
         update,
       );
       const failed = results.filter((row) => !row.ok);
+      if (isSupabaseConfigured()) {
+        for (const row of results.filter((entry) => entry.ok)) {
+          await applyLocalListingContentUpdate(row.sku, {
+            title: update.title,
+            description: update.description,
+            bulletPoints: update.bulletPoints,
+            genericKeywords: update.genericKeywords,
+            imageUrls: update.imageUrls,
+            status: row.status,
+          }).catch(() => undefined);
+        }
+      }
       return NextResponse.json({
         ok: failed.length === 0,
         mode: "family",
@@ -288,6 +318,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     const saved = await updateAmazonListingContent(sku, update, {
       productType: body.productType,
     });
+    if (isSupabaseConfigured()) {
+      await applyLocalListingContentUpdate(sku, {
+        title: update.title,
+        description: update.description,
+        bulletPoints: update.bulletPoints,
+        genericKeywords: update.genericKeywords,
+        imageUrls: update.imageUrls,
+        status: saved.status,
+      }).catch(() => undefined);
+    }
     return NextResponse.json({
       ok: true,
       mode: "single",

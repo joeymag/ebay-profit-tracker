@@ -33,7 +33,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AmazonListingFamily } from "@/lib/amazon/listing-editor";
-import type { AmazonListing } from "@/lib/amazon/listings";
+import {
+  effectiveAmazonListingImageUrl,
+  type AmazonListing,
+} from "@/lib/amazon/listings";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +62,7 @@ type ListingsResponse =
       relationshipsLoaded: boolean;
       fetchedAt: string;
       cached: boolean;
+      source?: "database" | "live" | "supabase";
       env?: string;
     }
   | {
@@ -95,6 +99,7 @@ export function AmazonListingsPanel() {
     setLoading(true);
     setError(null);
     try {
+      // GET /api/amazon/listings reads Supabase; ?refresh=1 re-runs full backfill.
       const res = await fetch(
         `/api/amazon/listings${forceRefresh ? "?refresh=1" : ""}`,
       );
@@ -215,6 +220,9 @@ export function AmazonListingsPanel() {
           ) : (
             <Badge variant="outline">Flat view</Badge>
           )}
+          {data?.source === "database" || data?.source === "supabase" ? (
+            <Badge variant="secondary">Supabase</Badge>
+          ) : null}
           {data?.env ? <Badge variant="outline">{data.env}</Badge> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -287,6 +295,19 @@ export function AmazonListingsPanel() {
                 );
                 const hasChildren = children.length > 0;
                 const isOpen = expanded.has(family.groupId);
+                const headImage =
+                  effectiveAmazonListingImageUrl(head.imageUrl) ||
+                  effectiveAmazonListingImageUrl(family.imageUrl) ||
+                  children
+                    .map((member) =>
+                      effectiveAmazonListingImageUrl(member.imageUrl),
+                    )
+                    .find(Boolean) ||
+                  null;
+                const headRow =
+                  headImage && headImage !== head.imageUrl
+                    ? { ...head, imageUrl: headImage }
+                    : { ...head, imageUrl: headImage };
 
                 return (
                   <Fragment key={family.groupId}>
@@ -313,7 +334,7 @@ export function AmazonListingsPanel() {
                         ) : null}
                       </TableCell>
                       <ListingCells
-                        row={head}
+                        row={headRow}
                         titleOverride={
                           hasChildren
                             ? `${family.title} · ${children.length} variation${children.length === 1 ? "" : "s"}`
@@ -379,7 +400,7 @@ function ListingCells({
     <>
       <TableCell>
         <LineItemImage
-          src={row.imageUrl}
+          src={effectiveAmazonListingImageUrl(row.imageUrl)}
           alt={row.title}
           className={cn(
             "rounded-md object-cover",

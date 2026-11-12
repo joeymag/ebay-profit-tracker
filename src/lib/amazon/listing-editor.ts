@@ -1,7 +1,9 @@
 import { amazonFetch, AmazonApiError } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import { loadAmazonListingsFromDb } from "@/lib/amazon/amazon-listings-store";
 import { resolveAmazonSellerId } from "@/lib/amazon/pricing";
 import {
+  effectiveAmazonListingImageUrl,
   fetchAmazonListings,
   type AmazonListing,
 } from "@/lib/amazon/listings";
@@ -328,6 +330,14 @@ function toContent(
   const bullets = allText(attributes.bullet_point);
   while (bullets.length < 5) bullets.push("");
 
+  const images = parseImages(attributes);
+  const summaryImage = summary?.mainImage?.link?.trim();
+  if (summaryImage && !images.some((image) => image.role === "main")) {
+    images.unshift({ role: "main", url: summaryImage });
+  } else if (summaryImage && images.length === 0) {
+    images.push({ role: "main", url: summaryImage });
+  }
+
   return {
     sku: item.sku?.trim() || "",
     asin: summary?.asin?.trim() || null,
@@ -336,7 +346,7 @@ function toContent(
     description: firstText(attributes.product_description),
     bulletPoints: bullets.slice(0, 5),
     genericKeywords: firstText(attributes.generic_keyword),
-    images: parseImages(attributes),
+    images,
     parentSku: meta.parentSku,
     childSkus: meta.childSkus,
     parentage: meta.parentage,
@@ -429,8 +439,16 @@ function mergeVariationMeta(
   }
 }
 
+function listingItemImageUrl(item: ListingsItemResponse): string | null {
+  const summaryLink = item.summaries?.[0]?.mainImage?.link?.trim() || null;
+  if (effectiveAmazonListingImageUrl(summaryLink)) return summaryLink;
+  const fromAttributes = mediaUrl(item.attributes?.main_product_image_locator);
+  return effectiveAmazonListingImageUrl(fromAttributes);
+}
+
 function applyItemToVariationMap(
   map: Map<string, VariationMeta>,
+  images: Map<string, string>,
   item: ListingsItemResponse,
 ): void {
   const sku = item.sku?.trim();
@@ -451,23 +469,31 @@ function applyItemToVariationMap(
       parentage: "parent",
     });
   }
+  const imageUrl = listingItemImageUrl(item);
+  if (imageUrl) {
+    images.set(sku, imageUrl);
+    images.set(normalizeSkuKey(sku), imageUrl);
+  }
 }
 
 /**
- * Parent/child map for the SKUs we actually show (inventory report), via
- * Listings Items search by SKU identifiers, then a paged catalog sweep.
+ * Parent/child map + real main-image URLs for inventory-report SKUs.
  */
 export async function fetchAmazonVariationParentMap(
   seedSku?: string,
   listingSkus: string[] = [],
-): Promise<Map<string, VariationMeta>> {
+): Promise<{
+  parentMap: Map<string, VariationMeta>;
+  imageBySku: Map<string, string>;
+}> {
   const map = new Map<string, VariationMeta>();
+  const images = new Map<string, string>();
   const { marketplaceId } = getAmazonConfig();
   let sellerId: string;
   try {
     sellerId = await resolveAmazonSellerId(seedSku || listingSkus[0]);
   } catch {
-    return map;
+    return { parentMap: map, imageBySku: images };
   }
 
   const wanted = [
@@ -488,7 +514,7 @@ export async function fetchAmazonVariationParentMap(
         },
       });
       for (const item of data.items ?? []) {
-        applyItemToVariationMap(map, item);
+        applyItemToVariationMap(map, images, item);
       }
     } catch {
       // Fall through to paged search / SKU heuristics.
@@ -510,7 +536,7 @@ export async function fetchAmazonVariationParentMap(
       });
 
       for (const item of data.items ?? []) {
-        applyItemToVariationMap(map, item);
+        applyItemToVariationMap(map, images, item);
       }
 
       pageToken = data.pagination?.nextToken;
@@ -544,7 +570,31 @@ export async function fetchAmazonVariationParentMap(
     }
   }
 
-  return map;
+  return { parentMap: map, imageBySku: images };
+}
+
+function applyImagesToListings(
+  listings: AmazonListing[],
+  imageBySku: Map<string, string>,
+): AmazonListing[] {
+  if (imageBySku.size === 0) {
+    return listings.map((listing) => ({
+      ...listing,
+      imageUrl: effectiveAmazonListingImageUrl(listing.imageUrl),
+    }));
+  }
+
+  return listings.map((listing) => {
+    const fromApi =
+      imageBySku.get(listing.sku) ||
+      imageBySku.get(normalizeSkuKey(listing.sku)) ||
+      null;
+    const current = effectiveAmazonListingImageUrl(listing.imageUrl);
+    return {
+      ...listing,
+      imageUrl: fromApi || current,
+    };
+  });
 }
 
 function resolveListingSku(
@@ -676,12 +726,22 @@ export function groupAmazonListings(
         }
       }
     }
+    const imageUrl =
+      effectiveAmazonListingImageUrl(anchor.imageUrl) ||
+      members
+        .map((member) => effectiveAmazonListingImageUrl(member.imageUrl))
+        .find(Boolean) ||
+      null;
+
     families.push({
       groupId,
       parentSku: parentSku,
       title: anchor.title,
-      imageUrl: anchor.imageUrl,
-      members,
+      imageUrl,
+      members: members.map((member) => ({
+        ...member,
+        imageUrl: effectiveAmazonListingImageUrl(member.imageUrl),
+      })),
     });
   };
 
@@ -741,6 +801,8 @@ export async function listAmazonListingFamilies(options?: {
   fast?: boolean;
   /** When false, skip SP-API relationship enrichment (flat groups only). */
   includeRelationships?: boolean;
+  /** Prefer rows already backfilled into public.amazon_listings. */
+  preferDatabase?: boolean;
 }): Promise<{
   families: AmazonListingFamily[];
   listings: AmazonListing[];
@@ -748,27 +810,86 @@ export async function listAmazonListingFamilies(options?: {
   cached: boolean;
   marketplaceId: string;
   relationshipsLoaded: boolean;
+  source: "database" | "live";
 }> {
   const forceRefresh = options?.forceRefresh === true;
-  const fast = options?.fast !== false && !forceRefresh;
+  const preferDatabase = options?.preferDatabase !== false && !forceRefresh;
   const includeRelationships = options?.includeRelationships !== false;
 
+  if (preferDatabase) {
+    try {
+      const fromDb = await loadAmazonListingsFromDb();
+      if (fromDb.listings.length > 0) {
+        const parentMap = new Map<string, VariationMeta>();
+        for (const listing of fromDb.listings) {
+          parentMap.set(listing.sku, {
+            parentSku: listing.parentSku,
+            parentage: listing.parentage,
+          });
+          if (listing.parentage === "parent") {
+            // child links are also on child rows; keep parent marker
+          }
+        }
+        // Reconstruct child→parent from stored parent_sku.
+        for (const listing of fromDb.listings) {
+          if (listing.parentage === "child" && listing.parentSku) {
+            parentMap.set(listing.sku, {
+              parentSku: listing.parentSku,
+              parentage: "child",
+            });
+            if (!parentMap.has(listing.parentSku)) {
+              parentMap.set(listing.parentSku, {
+                parentSku: null,
+                parentage: "parent",
+              });
+            }
+          }
+        }
+
+        const relationshipsLoaded = [...parentMap.values()].some(
+          (meta) => meta.parentage === "parent" || meta.parentage === "child",
+        );
+
+        return {
+          families: groupAmazonListings(fromDb.listings, parentMap),
+          listings: fromDb.listings,
+          fetchedAt: fromDb.fetchedAt || new Date().toISOString(),
+          cached: true,
+          marketplaceId: fromDb.marketplaceId,
+          relationshipsLoaded,
+          source: "database",
+        };
+      }
+    } catch (error) {
+      console.error(
+        "[listAmazonListingFamilies] database read failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  const fast = options?.fast !== false && !forceRefresh;
   const result = await fetchAmazonListings({ forceRefresh, fast });
   let parentMap = new Map<string, VariationMeta>();
+  let imageBySku = new Map<string, string>();
   let relationshipsLoaded = false;
   const listingSkus = result.listings.map((listing) => listing.sku);
-  if (includeRelationships) {
-    try {
-      parentMap = await fetchAmazonVariationParentMap(
-        result.listings[0]?.sku,
-        listingSkus,
-      );
-    } catch {
-      parentMap = new Map();
-    }
 
-    // Always try SKU-prefix grouping for anything still unlinked (also covers
-    // API/auth failures where the parent map came back empty).
+  try {
+    const enriched = await fetchAmazonVariationParentMap(
+      result.listings[0]?.sku,
+      listingSkus,
+    );
+    imageBySku = enriched.imageBySku;
+    if (includeRelationships) {
+      parentMap = enriched.parentMap;
+    }
+  } catch {
+    parentMap = new Map();
+    imageBySku = new Map();
+  }
+
+  if (includeRelationships) {
     const linked = new Set(
       [...parentMap.entries()]
         .filter(
@@ -796,13 +917,16 @@ export async function listAmazonListingFamilies(options?: {
     );
   }
 
+  const listings = applyImagesToListings(result.listings, imageBySku);
+
   return {
-    families: groupAmazonListings(result.listings, parentMap),
-    listings: result.listings,
+    families: groupAmazonListings(listings, parentMap),
+    listings,
     fetchedAt: result.fetchedAt,
     cached: result.cached,
     marketplaceId: result.marketplaceId,
     relationshipsLoaded,
+    source: "live",
   };
 }
 

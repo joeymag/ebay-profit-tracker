@@ -11,6 +11,7 @@ import {
 import {
   ArrowLeft,
   Loader2,
+  RefreshCw,
   Save,
   Upload,
   Warehouse,
@@ -36,6 +37,8 @@ type DetailResponse =
       content: AmazonListingContent;
       familySkus: string[];
       family: AmazonListingContent[];
+      source?: "supabase" | "amazon";
+      refreshed?: boolean;
     }
   | { ok: false; error: string; code?: string; details?: string };
 
@@ -121,22 +124,28 @@ type UploadResponse =
 export function AmazonListingEditor({ sku }: { sku: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [uploadingSlot, setUploadingSlot] = useState<number | "batch" | null>(
     null,
   );
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [source, setSource] = useState<"supabase" | "amazon" | null>(null);
   const [family, setFamily] = useState<AmazonListingContent[]>([]);
   const [activeSku, setActiveSku] = useState(sku);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (options?: { refresh?: boolean }) => {
+    const refresh = options?.refresh === true;
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
-    setMessage(null);
+    if (!refresh) setMessage(null);
     try {
       const res = await fetch(
-        `/api/amazon/listings/${encodeURIComponent(sku)}`,
+        `/api/amazon/listings/${encodeURIComponent(sku)}${
+          refresh ? "?refresh=1" : ""
+        }`,
       );
       const json = (await res.json()) as DetailResponse;
       if (!json.ok) {
@@ -151,10 +160,19 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
       setFamily(json.family);
       setDrafts(nextDrafts);
       setActiveSku(json.content.sku || sku);
+      setSource(json.source ?? null);
+      if (refresh) {
+        setMessage("Pulled live data from Amazon and updated the Supabase cache.");
+      }
     } catch {
-      setError("Could not load this Amazon listing.");
+      setError(
+        refresh
+          ? "Could not refresh this listing from Amazon."
+          : "Could not load this Amazon listing.",
+      );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [sku]);
 
@@ -364,6 +382,30 @@ export function AmazonListingEditor({ sku }: { sku: string }) {
         <Badge variant="secondary" className="font-mono">
           {active.sku}
         </Badge>
+        {source ? (
+          <Badge variant="outline">
+            {source === "supabase" ? "Cached" : "Live Amazon"}
+          </Badge>
+        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={refreshing || saving || loading}
+          onClick={() => void load({ refresh: true })}
+        >
+          {refreshing ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              Refreshing…
+            </>
+          ) : (
+            <>
+              <RefreshCw className="size-4" />
+              Refresh from Amazon
+            </>
+          )}
+        </Button>
       </div>
 
       {family.length > 1 ? (
