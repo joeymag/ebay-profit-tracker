@@ -1,3 +1,4 @@
+import { fetchBusinessOffer } from "@/lib/amazon/business-offer";
 import { amazonFetch } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
 import { fetchAmazonListings } from "@/lib/amazon/listings";
@@ -6,6 +7,14 @@ import {
   resolveAmazonSellerId,
   type AmazonCompetitiveSnapshot,
 } from "@/lib/amazon/pricing";
+import {
+  parseQuantityDiscountPlan,
+  quantityDiscountPlanToAmazonPatch,
+  quantityDiscountPlanToJson,
+  repriceAudience,
+  type AmazonRepriceChannel,
+  type QuantityDiscountPlan,
+} from "@/lib/amazon/reprice-channel";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
@@ -18,16 +27,19 @@ export type RepriceStrategy =
 
 export type AmazonRepriceRule = {
   sku: string;
+  channel: AmazonRepriceChannel;
   enabled: boolean;
   strategy: RepriceStrategy;
   minPrice: number | null;
   maxPrice: number | null;
   undercutAmount: number;
+  quantityDiscountPlan: QuantityDiscountPlan | null;
   updatedAt: string;
 };
 
 export type RepriceSuggestion = {
   sku: string;
+  channel: AmazonRepriceChannel;
   currentPrice: number | null;
   suggestedPrice: number | null;
   reason: string;
@@ -38,6 +50,7 @@ export type RepriceSuggestion = {
 export type AmazonRepriceEvent = {
   id: number;
   sku: string;
+  channel: AmazonRepriceChannel;
   fromPrice: number | null;
   toPrice: number;
   source: string;
@@ -63,10 +76,35 @@ function clampPrice(
   return roundMoney(next);
 }
 
+function mapRuleRow(row: {
+  sku: string;
+  channel?: string | null;
+  enabled: boolean;
+  strategy: string;
+  min_price: number | null;
+  max_price: number | null;
+  undercut_amount: number | null;
+  quantity_discount_plan?: unknown;
+  updated_at: string;
+}): AmazonRepriceRule {
+  return {
+    sku: row.sku,
+    channel: row.channel === "business" ? "business" : "standard",
+    enabled: row.enabled,
+    strategy: row.strategy as RepriceStrategy,
+    minPrice: row.min_price == null ? null : Number(row.min_price),
+    maxPrice: row.max_price == null ? null : Number(row.max_price),
+    undercutAmount: Number(row.undercut_amount ?? DEFAULT_UNDERCUT),
+    quantityDiscountPlan: parseQuantityDiscountPlan(row.quantity_discount_plan),
+    updatedAt: row.updated_at,
+  };
+}
+
 export function computeSuggestedPrice(input: {
   currentPrice: number | null;
   competitive: AmazonCompetitiveSnapshot | null;
   rule: AmazonRepriceRule | null;
+  channel?: AmazonRepriceChannel;
 }): { suggestedPrice: number | null; reason: string } {
   const rule = input.rule;
   if (!rule || !rule.enabled) {
@@ -78,7 +116,14 @@ export function computeSuggestedPrice(input: {
 
   const competitive = input.competitive;
   if (!competitive) {
-    return { suggestedPrice: null, reason: "No competitive data." };
+    const channel = input.channel ?? rule.channel;
+    return {
+      suggestedPrice: null,
+      reason:
+        channel === "business"
+          ? "No Business competitive data."
+          : "No competitive data.",
+    };
   }
 
   const undercut = rule.undercutAmount > 0 ? rule.undercutAmount : DEFAULT_UNDERCUT;
@@ -105,7 +150,6 @@ export function computeSuggestedPrice(input: {
     reason =
       target != null ? `Match lowest offer (£${target.toFixed(2)})` : "No lowest offer.";
   } else {
-    // undercut_lowest
     if (competitive.lowestPrice == null) {
       return { suggestedPrice: null, reason: "No lowest offer to undercut." };
     }
@@ -150,24 +194,17 @@ export function computeSuggestedPrice(input: {
   return { suggestedPrice: suggested, reason };
 }
 
-export async function listRepriceRules(): Promise<AmazonRepriceRule[]> {
+export async function listRepriceRules(
+  channel?: AmazonRepriceChannel,
+): Promise<AmazonRepriceRule[]> {
   if (!isSupabaseConfigured()) return [];
   try {
     const supabase = createSupabaseAdmin();
-    const { data, error } = await supabase
-      .from("amazon_reprice_rules")
-      .select("*")
-      .order("sku");
+    let query = supabase.from("amazon_reprice_rules").select("*").order("sku");
+    if (channel) query = query.eq("channel", channel);
+    const { data, error } = await query;
     if (error || !data) return [];
-    return data.map((row) => ({
-      sku: row.sku,
-      enabled: row.enabled,
-      strategy: row.strategy as RepriceStrategy,
-      minPrice: row.min_price == null ? null : Number(row.min_price),
-      maxPrice: row.max_price == null ? null : Number(row.max_price),
-      undercutAmount: Number(row.undercut_amount ?? DEFAULT_UNDERCUT),
-      updatedAt: row.updated_at,
-    }));
+    return data.map(mapRuleRow);
   } catch {
     return [];
   }
@@ -179,43 +216,50 @@ export async function upsertRepriceRule(
   if (!isSupabaseConfigured()) {
     throw new Error("Supabase is required to save reprice rules.");
   }
+  const channel = input.channel === "business" ? "business" : "standard";
+  const planJson =
+    channel === "business"
+      ? quantityDiscountPlanToJson(input.quantityDiscountPlan)
+      : null;
+
   const supabase = createSupabaseAdmin();
   const payload = {
     sku: input.sku.trim(),
+    channel,
     enabled: input.enabled,
     strategy: input.strategy,
     min_price: input.minPrice,
     max_price: input.maxPrice,
     undercut_amount: input.undercutAmount,
+    quantity_discount_plan: planJson,
     updated_at: new Date().toISOString(),
   };
   const { data, error } = await supabase
     .from("amazon_reprice_rules")
-    .upsert(payload, { onConflict: "sku" })
+    .upsert(payload, { onConflict: "sku,channel" })
     .select("*")
     .single();
   if (error || !data) {
     throw new Error(error?.message || "Failed to save reprice rule.");
   }
-  return {
-    sku: data.sku,
-    enabled: data.enabled,
-    strategy: data.strategy as RepriceStrategy,
-    minPrice: data.min_price == null ? null : Number(data.min_price),
-    maxPrice: data.max_price == null ? null : Number(data.max_price),
-    undercutAmount: Number(data.undercut_amount ?? DEFAULT_UNDERCUT),
-    updatedAt: data.updated_at,
-  };
+  return mapRuleRow(data);
 }
 
 export async function buildRepriceSuggestion(input: {
   sku: string;
   currentPrice: number | null;
   rule?: AmazonRepriceRule | null;
+  channel?: AmazonRepriceChannel;
 }): Promise<RepriceSuggestion> {
+  const channel =
+    input.channel ??
+    input.rule?.channel ??
+    ("standard" as AmazonRepriceChannel);
   let competitive: AmazonCompetitiveSnapshot | null = null;
   try {
-    competitive = await getCompetitiveSnapshot(input.sku, input.currentPrice);
+    competitive = await getCompetitiveSnapshot(input.sku, input.currentPrice, {
+      channel,
+    });
   } catch {
     competitive = null;
   }
@@ -224,9 +268,11 @@ export async function buildRepriceSuggestion(input: {
     currentPrice: input.currentPrice,
     competitive,
     rule,
+    channel,
   });
   return {
     sku: input.sku,
+    channel,
     currentPrice: input.currentPrice,
     suggestedPrice,
     reason,
@@ -237,6 +283,7 @@ export async function buildRepriceSuggestion(input: {
 
 export async function logRepriceEvent(input: {
   sku: string;
+  channel?: AmazonRepriceChannel;
   fromPrice?: number | null;
   toPrice: number;
   source?: string;
@@ -248,6 +295,7 @@ export async function logRepriceEvent(input: {
     const supabase = createSupabaseAdmin();
     await supabase.from("amazon_reprice_events").insert({
       sku: input.sku.trim(),
+      channel: input.channel ?? "standard",
       from_price: input.fromPrice ?? null,
       to_price: roundMoney(input.toPrice),
       source: input.source ?? "manual",
@@ -263,6 +311,7 @@ export async function listRepriceEvents(options?: {
   days?: number;
   limit?: number;
   sku?: string;
+  channel?: AmazonRepriceChannel;
 }): Promise<AmazonRepriceEvent[]> {
   if (!isSupabaseConfigured()) return [];
   try {
@@ -279,11 +328,15 @@ export async function listRepriceEvents(options?: {
     if (options?.sku?.trim()) {
       query = query.eq("sku", options.sku.trim());
     }
+    if (options?.channel) {
+      query = query.eq("channel", options.channel);
+    }
     const { data, error } = await query;
     if (error || !data) return [];
     return data.map((row) => ({
       id: Number(row.id),
       sku: row.sku,
+      channel: row.channel === "business" ? "business" : "standard",
       fromPrice: row.from_price == null ? null : Number(row.from_price),
       toPrice: Number(row.to_price),
       source: row.source,
@@ -299,20 +352,40 @@ export async function listRepriceEvents(options?: {
 export async function updateAmazonListingPrice(input: {
   sku: string;
   price: number;
+  channel?: AmazonRepriceChannel;
+  quantityDiscountPlan?: QuantityDiscountPlan | null;
   seedSkuForSellerId?: string;
   fromPrice?: number | null;
   reason?: string | null;
   source?: string;
-}): Promise<{ sku: string; price: number; status: string }> {
+}): Promise<{ sku: string; price: number; channel: AmazonRepriceChannel; status: string }> {
   const price = roundMoney(input.price);
   if (!(price > 0)) {
     throw new Error("Price must be greater than zero.");
   }
 
+  const channel = input.channel ?? "standard";
+  const audience = repriceAudience(channel);
   const { marketplaceId } = getAmazonConfig();
   const sellerId = await resolveAmazonSellerId(
     input.seedSkuForSellerId || input.sku,
   );
+
+  const offerValue: Record<string, unknown> = {
+    marketplace_id: marketplaceId,
+    currency: "GBP",
+    audience,
+    our_price: [{ schedule: [{ value_with_tax: price }] }],
+  };
+
+  if (channel === "business") {
+    const tierPatch = quantityDiscountPlanToAmazonPatch(
+      input.quantityDiscountPlan,
+    );
+    if (tierPatch) {
+      offerValue.quantity_discount_plan = tierPatch;
+    }
+  }
 
   const result = await amazonFetch<{ status?: string; sku?: string }>({
     method: "PATCH",
@@ -322,15 +395,9 @@ export async function updateAmazonListingPrice(input: {
       productType: "PRODUCT",
       patches: [
         {
-          op: "replace",
+          op: "merge",
           path: "/attributes/purchasable_offer",
-          value: [
-            {
-              marketplace_id: marketplaceId,
-              currency: "GBP",
-              our_price: [{ schedule: [{ value_with_tax: price }] }],
-            },
-          ],
+          value: [offerValue],
         },
       ],
     },
@@ -339,6 +406,7 @@ export async function updateAmazonListingPrice(input: {
   const status = result.status || "ACCEPTED";
   await logRepriceEvent({
     sku: input.sku,
+    channel,
     fromPrice: input.fromPrice,
     toPrice: price,
     source: input.source ?? "manual",
@@ -349,6 +417,7 @@ export async function updateAmazonListingPrice(input: {
   return {
     sku: input.sku,
     price,
+    channel,
     status,
   };
 }
@@ -360,6 +429,7 @@ export type AutoRepriceResult = {
   failed: number;
   results: Array<{
     sku: string;
+    channel: AmazonRepriceChannel;
     status: "applied" | "skipped" | "failed";
     reason: string;
     fromPrice?: number | null;
@@ -370,6 +440,7 @@ export type AutoRepriceResult = {
 /**
  * Check enabled non-manual rules against live offers and apply price updates.
  * Requires a min price on each rule before auto-applying (safety floor).
+ * Runs Standard and Business channels.
  */
 export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
   const rules = (await listRepriceRules()).filter(
@@ -377,7 +448,7 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
   );
 
   const listings = await fetchAmazonListings().catch(() => null);
-  const priceBySku = new Map(
+  const standardPriceBySku = new Map(
     (listings?.listings ?? []).map((listing) => [listing.sku, listing.price]),
   );
 
@@ -391,6 +462,7 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
       skipped += 1;
       results.push({
         sku: rule.sku,
+        channel: rule.channel,
         status: "skipped",
         reason: "Set a min price before auto-reprice will apply.",
       });
@@ -398,17 +470,26 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
     }
 
     try {
-      const currentPrice = priceBySku.get(rule.sku) ?? null;
+      let currentPrice: number | null = null;
+      if (rule.channel === "business") {
+        const offer = await fetchBusinessOffer(rule.sku);
+        currentPrice = offer.businessPrice;
+      } else {
+        currentPrice = standardPriceBySku.get(rule.sku) ?? null;
+      }
+
       const suggestion = await buildRepriceSuggestion({
         sku: rule.sku,
         currentPrice,
         rule,
+        channel: rule.channel,
       });
 
       if (suggestion.suggestedPrice == null) {
         skipped += 1;
         results.push({
           sku: rule.sku,
+          channel: rule.channel,
           status: "skipped",
           reason: suggestion.reason,
           fromPrice: currentPrice,
@@ -420,6 +501,7 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
         skipped += 1;
         results.push({
           sku: rule.sku,
+          channel: rule.channel,
           status: "skipped",
           reason: `Suggested £${suggestion.suggestedPrice.toFixed(2)} below min £${rule.minPrice.toFixed(2)}.`,
           fromPrice: currentPrice,
@@ -431,6 +513,8 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
       const update = await updateAmazonListingPrice({
         sku: rule.sku,
         price: suggestion.suggestedPrice,
+        channel: rule.channel,
+        quantityDiscountPlan: rule.quantityDiscountPlan,
         fromPrice: currentPrice,
         reason: suggestion.reason,
         source: "cron",
@@ -438,6 +522,7 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
       applied += 1;
       results.push({
         sku: rule.sku,
+        channel: rule.channel,
         status: "applied",
         reason: suggestion.reason,
         fromPrice: currentPrice,
@@ -447,6 +532,7 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
       failed += 1;
       results.push({
         sku: rule.sku,
+        channel: rule.channel,
         status: "failed",
         reason: error instanceof Error ? error.message : "Unknown error",
       });

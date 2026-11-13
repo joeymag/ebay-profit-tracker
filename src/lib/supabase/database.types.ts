@@ -316,11 +316,13 @@ export type Database = {
       amazon_competitive_cache: {
         Row: {
           sku: string;
+          channel: string;
           snapshot: unknown;
           fetched_at: string;
         };
         Insert: {
           sku: string;
+          channel?: string;
           snapshot: unknown;
           fetched_at?: string;
         };
@@ -365,6 +367,7 @@ export type Database = {
         Row: {
           id: number;
           sku: string;
+          channel: string;
           from_price: number | null;
           to_price: number;
           source: string;
@@ -375,6 +378,7 @@ export type Database = {
         Insert: {
           id?: number;
           sku: string;
+          channel?: string;
           from_price?: number | null;
           to_price: number;
           source?: string;
@@ -390,20 +394,24 @@ export type Database = {
       amazon_reprice_rules: {
         Row: {
           sku: string;
+          channel: string;
           enabled: boolean;
           strategy: string;
           min_price: number | null;
           max_price: number | null;
           undercut_amount: number;
+          quantity_discount_plan: unknown | null;
           updated_at: string;
         };
         Insert: {
           sku: string;
+          channel?: string;
           enabled?: boolean;
           strategy?: string;
           min_price?: number | null;
           max_price?: number | null;
           undercut_amount?: number;
+          quantity_discount_plan?: unknown | null;
           updated_at?: string;
         };
         Update: Partial<

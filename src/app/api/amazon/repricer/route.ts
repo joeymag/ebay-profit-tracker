@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { AmazonApiError } from "@/lib/amazon/client";
 import { fetchAmazonListings } from "@/lib/amazon/listings";
 import {
+  parseRepriceChannel,
+  type AmazonRepriceChannel,
+} from "@/lib/amazon/reprice-channel";
+import {
   computeSuggestedPrice,
   listRepriceRules,
 } from "@/lib/amazon/repricer";
@@ -10,7 +14,7 @@ import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(request: Request) {
   const refreshToken = await getStoredAmazonRefreshToken();
   if (!refreshToken) {
     return NextResponse.json(
@@ -23,41 +27,48 @@ export async function GET() {
     );
   }
 
+  const url = new URL(request.url);
+  const channel: AmazonRepriceChannel =
+    parseRepriceChannel(url.searchParams.get("channel")) ?? "standard";
+
   try {
     const [{ listings }, rules] = await Promise.all([
-      // Prefer Supabase / recent DONE report — never wait for a fresh report
-      // (that path routinely exceeds Vercel gateway timeouts).
       fetchAmazonListings({ fast: true }),
-      listRepriceRules(),
+      listRepriceRules(channel),
     ]);
-    const ruleBySku = new Map(
-      rules.map((rule) => [rule.sku.trim(), rule]),
-    );
+    const ruleBySku = new Map(rules.map((rule) => [rule.sku.trim(), rule]));
 
-    // Return listings + rules immediately. Competitive Buy Box data is loaded
-    // in smaller batches via /api/amazon/repricer/competitive so this stays
-    // under Vercel function timeouts.
     const rows = listings.map((listing) => {
       const rule = ruleBySku.get(listing.sku.trim()) ?? null;
+      // Business current price is filled during competitive enrich.
+      const currentPrice = channel === "standard" ? listing.price : null;
       const { suggestedPrice, reason } = computeSuggestedPrice({
-        currentPrice: listing.price,
+        currentPrice,
         competitive: null,
         rule,
+        channel,
       });
       return {
         ...listing,
+        price: currentPrice,
+        listPrice: listing.price,
+        channel,
         rule,
         competitive: null,
+        quantityDiscountPlan: rule?.quantityDiscountPlan ?? null,
         suggestedPrice,
         reason:
           rule?.enabled && rule.strategy !== "manual"
-            ? "Loading Buy Box…"
+            ? channel === "business"
+              ? "Loading Business pricing…"
+              : "Loading Buy Box…"
             : reason,
       };
     });
 
     return NextResponse.json({
       ok: true,
+      channel,
       count: rows.length,
       rows,
     });

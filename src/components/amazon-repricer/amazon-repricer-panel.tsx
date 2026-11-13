@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, Search } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -29,19 +29,26 @@ import type {
   RepriceStrategy,
 } from "@/lib/amazon/repricer";
 import type { AmazonCompetitiveSnapshot } from "@/lib/amazon/pricing";
+import type {
+  AmazonRepriceChannel,
+  QuantityDiscountPlan,
+} from "@/lib/amazon/reprice-channel";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
 type RepricerRow = AmazonListing & {
+  listPrice?: number | null;
+  channel: AmazonRepriceChannel;
   rule: AmazonRepriceRule | null;
   competitive: AmazonCompetitiveSnapshot | null;
   suggestedPrice: number | null;
   reason: string;
+  quantityDiscountPlan?: QuantityDiscountPlan | null;
 };
 
 type RepricerResponse =
-  | { ok: true; count: number; rows: RepricerRow[] }
+  | { ok: true; count: number; channel: AmazonRepriceChannel; rows: RepricerRow[] }
   | { ok: false; error: string; code?: string; details?: string };
 
 type HistoryResponse =
@@ -79,7 +86,13 @@ type DraftRule = {
   minPrice: string;
   maxPrice: string;
   undercutAmount: string;
+  discountType: "fixed" | "percent";
+  tiers: Array<{ lowerBound: string; value: string }>;
 };
+
+function draftKey(sku: string, channel: AmazonRepriceChannel): string {
+  return `${sku}::${channel}`;
+}
 
 function newerRule(
   current: AmazonRepriceRule | null,
@@ -95,7 +108,11 @@ function newerRule(
   return incoming;
 }
 
-function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
+function draftFromRule(
+  rule: AmazonRepriceRule | null,
+  listingPlan?: QuantityDiscountPlan | null,
+): DraftRule {
+  const plan = rule?.quantityDiscountPlan ?? listingPlan ?? null;
   return {
     enabled: rule?.enabled ?? true,
     strategy: rule?.strategy ?? "undercut_buybox",
@@ -103,6 +120,12 @@ function draftFromRule(rule: AmazonRepriceRule | null): DraftRule {
     maxPrice: rule?.maxPrice != null ? String(rule.maxPrice) : "",
     undercutAmount:
       rule?.undercutAmount != null ? String(rule.undercutAmount) : "0.01",
+    discountType: plan?.discountType ?? "fixed",
+    tiers:
+      plan?.levels.map((level) => ({
+        lowerBound: String(level.lowerBound),
+        value: String(level.value),
+      })) ?? [],
   };
 }
 
@@ -116,11 +139,37 @@ function parsePriceInput(value: string): number | null {
   return amount;
 }
 
+function parseTierFromDraft(
+  draft: DraftRule,
+): QuantityDiscountPlan | null {
+  if (draft.tiers.length === 0) return null;
+  const levels = [];
+  for (const tier of draft.tiers.slice(0, 5)) {
+    const lowerBound = Number(tier.lowerBound);
+    const value = Number(tier.value);
+    if (
+      !Number.isFinite(lowerBound) ||
+      lowerBound < 1 ||
+      !Number.isFinite(value) ||
+      value < 0
+    ) {
+      throw new Error("Each quantity tier needs a valid lower bound and value.");
+    }
+    levels.push({
+      lowerBound: Math.floor(lowerBound),
+      value: Math.round(value * 100) / 100,
+    });
+  }
+  return { discountType: draft.discountType, levels };
+}
+
 type CompetitiveBatchResponse =
   | {
       ok: true;
       suggestions: Array<{
         sku: string;
+        currentPrice?: number | null;
+        quantityDiscountPlan?: QuantityDiscountPlan | null;
         competitive: AmazonCompetitiveSnapshot | null;
         suggestedPrice: number | null;
         reason: string;
@@ -130,6 +179,7 @@ type CompetitiveBatchResponse =
   | { ok: false; error: string };
 
 export function AmazonRepricerPanel() {
+  const [channel, setChannel] = useState<AmazonRepriceChannel>("standard");
   const [rows, setRows] = useState<RepricerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [enriching, setEnriching] = useState(false);
@@ -149,19 +199,29 @@ export function AmazonRepricerPanel() {
   const [failedSkus, setFailedSkus] = useState<Record<string, string>>({});
   const rowsRef = useRef(rows);
   const draftsRef = useRef(drafts);
+  const channelRef = useRef(channel);
   const pagedRef = useRef<RepricerRow[]>([]);
   const failedSkusRef = useRef(failedSkus);
-  const competitiveCacheRef = useRef(new Map<string, AmazonCompetitiveSnapshot>());
+  const competitiveCacheRef = useRef(
+    new Map<string, AmazonCompetitiveSnapshot>(),
+  );
   const inflightSkusRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   rowsRef.current = rows;
   draftsRef.current = drafts;
+  channelRef.current = channel;
   failedSkusRef.current = failedSkus;
 
-  const loadHistory = useCallback(async () => {
+  const cacheKeyFor = useCallback(
+    (sku: string, activeChannel: AmazonRepriceChannel) =>
+      `${sku}::${activeChannel}`,
+    [],
+  );
+
+  const loadHistory = useCallback(async (activeChannel: AmazonRepriceChannel) => {
     try {
       const res = await fetch(
-        `/api/amazon/repricer/history?days=${historyDays}&limit=80`,
+        `/api/amazon/repricer/history?days=${historyDays}&limit=80&channel=${activeChannel}`,
       );
       const json = (await res.json()) as HistoryResponse;
       if (json.ok) setHistory(json.events);
@@ -180,14 +240,15 @@ export function AmazonRepricerPanel() {
 
   const enrichCompetitive = useCallback(async (
     listings: RepricerRow[],
-    options?: { bypassCache?: boolean },
+    options?: { bypassCache?: boolean; channel?: AmazonRepriceChannel },
   ) => {
+    const activeChannel = options?.channel ?? channelRef.current;
     const skus = listings
       .map((row) => row.sku)
       .filter((sku) => {
         if (!sku || inflightSkusRef.current.has(sku)) return false;
         if (options?.bypassCache) return true;
-        return !competitiveCacheRef.current.has(sku);
+        return !competitiveCacheRef.current.has(cacheKeyFor(sku, activeChannel));
       });
     if (skus.length === 0) return;
 
@@ -207,6 +268,7 @@ export function AmazonRepricerPanel() {
           body: JSON.stringify({
             skus: chunk,
             prices: priceBySku,
+            channel: activeChannel,
             bypassCache: options?.bypassCache === true,
           }),
         });
@@ -215,21 +277,22 @@ export function AmazonRepricerPanel() {
           json = (await res.json()) as CompetitiveBatchResponse;
         } catch {
           if (!mountedRef.current) return;
-          const message = `Buy Box check failed (HTTP ${res.status}).`;
+          const msg = `Buy Box check failed (HTTP ${res.status}).`;
           setFailedSkus((prev) => {
             const next = { ...prev };
-            for (const sku of chunk) next[sku] = message;
+            for (const sku of chunk) next[sku] = msg;
             return next;
           });
           setEnrichProgress({ done: i + chunk.length, total: skus.length });
           continue;
         }
         if (!mountedRef.current) return;
+        if (channelRef.current !== activeChannel) return;
         if (!json.ok) {
-          const message = json.error || "Could not load Buy Box data.";
+          const msg = json.error || "Could not load Buy Box data.";
           setFailedSkus((prev) => {
             const next = { ...prev };
-            for (const sku of chunk) next[sku] = message;
+            for (const sku of chunk) next[sku] = msg;
             return next;
           });
           setEnrichProgress({ done: i + chunk.length, total: skus.length });
@@ -239,23 +302,58 @@ export function AmazonRepricerPanel() {
         const bySku = new Map(json.suggestions.map((s) => [s.sku, s]));
         for (const suggestion of json.suggestions) {
           if (suggestion.competitive) {
-            competitiveCacheRef.current.set(suggestion.sku, suggestion.competitive);
+            competitiveCacheRef.current.set(
+              cacheKeyFor(suggestion.sku, activeChannel),
+              suggestion.competitive,
+            );
           }
         }
         setRows((prev) =>
           prev.map((row) => {
             const suggestion = bySku.get(row.sku);
-            const cached = competitiveCacheRef.current.get(row.sku) ?? null;
+            const cached =
+              competitiveCacheRef.current.get(
+                cacheKeyFor(row.sku, activeChannel),
+              ) ?? null;
             if (!suggestion && !cached) return row;
+            const nextPrice =
+              suggestion?.currentPrice !== undefined
+                ? suggestion.currentPrice
+                : row.price;
             return {
               ...row,
+              price: nextPrice,
               competitive: suggestion?.competitive ?? cached,
               suggestedPrice: suggestion?.suggestedPrice ?? row.suggestedPrice,
               reason: suggestion?.reason ?? row.reason,
+              quantityDiscountPlan:
+                suggestion?.quantityDiscountPlan ?? row.quantityDiscountPlan,
               rule: newerRule(row.rule, suggestion?.rule ?? null),
             };
           }),
         );
+        setDrafts((prev) => {
+          const next = { ...prev };
+          for (const suggestion of json.suggestions) {
+            const key = draftKey(suggestion.sku, activeChannel);
+            const existing = next[key];
+            if (
+              existing &&
+              existing.tiers.length === 0 &&
+              suggestion.quantityDiscountPlan
+            ) {
+              next[key] = {
+                ...existing,
+                discountType: suggestion.quantityDiscountPlan.discountType,
+                tiers: suggestion.quantityDiscountPlan.levels.map((level) => ({
+                  lowerBound: String(level.lowerBound),
+                  value: String(level.value),
+                })),
+              };
+            }
+          }
+          return next;
+        });
         setFailedSkus((prev) => {
           const next = { ...prev };
           for (const sku of chunk) {
@@ -272,7 +370,7 @@ export function AmazonRepricerPanel() {
       setFailedSkus((prev) => {
         const next = { ...prev };
         for (const sku of skus) {
-          if (!competitiveCacheRef.current.has(sku)) {
+          if (!competitiveCacheRef.current.has(cacheKeyFor(sku, activeChannel))) {
             next[sku] = "Could not load Buy Box data.";
           }
         }
@@ -284,9 +382,12 @@ export function AmazonRepricerPanel() {
         setEnriching(false);
       }
     }
-  }, []);
+  }, [cacheKeyFor]);
 
-  const load = useCallback(async (options?: { bypassCache?: boolean }) => {
+  const load = useCallback(async (
+    activeChannel: AmazonRepriceChannel,
+    options?: { bypassCache?: boolean },
+  ) => {
     setLoading(true);
     setError(null);
     setErrorCode(undefined);
@@ -295,9 +396,15 @@ export function AmazonRepricerPanel() {
     setEnrichProgress({ done: 0, total: 0 });
     setPage(1);
     setFailedSkus({});
-    if (options?.bypassCache) competitiveCacheRef.current.clear();
+    if (options?.bypassCache) {
+      for (const key of [...competitiveCacheRef.current.keys()]) {
+        if (key.endsWith(`::${activeChannel}`)) {
+          competitiveCacheRef.current.delete(key);
+        }
+      }
+    }
     try {
-      const res = await fetch("/api/amazon/repricer");
+      const res = await fetch(`/api/amazon/repricer?channel=${activeChannel}`);
       let json: RepricerResponse;
       try {
         json = (await res.json()) as RepricerResponse;
@@ -316,6 +423,8 @@ export function AmazonRepricerPanel() {
         setErrorCode(json.code);
         return;
       }
+      if (channelRef.current !== activeChannel) return;
+
       const previousBySku = new Map(
         rowsRef.current.map((row) => [row.sku, row]),
       );
@@ -323,32 +432,41 @@ export function AmazonRepricerPanel() {
         const existing = previousBySku.get(row.sku);
         const cached = options?.bypassCache
           ? null
-          : competitiveCacheRef.current.get(row.sku) ?? existing?.competitive ?? null;
+          : competitiveCacheRef.current.get(
+              cacheKeyFor(row.sku, activeChannel),
+            ) ??
+            (existing?.channel === activeChannel
+              ? existing.competitive
+              : null) ??
+            null;
         return {
           ...row,
+          channel: activeChannel,
           competitive: cached,
-          rule: newerRule(existing?.rule ?? null, row.rule),
+          rule: newerRule(
+            existing?.channel === activeChannel ? existing.rule : null,
+            row.rule,
+          ),
         };
       });
       setRows(merged);
-      setDrafts((prev) =>
-        Object.fromEntries(
-          merged.map((row) => {
-            const local = prev[row.sku];
-            const serverHasPrices =
-              row.rule?.minPrice != null || row.rule?.maxPrice != null;
-            const localHasPrices =
-              local != null &&
-              (local.minPrice.trim() !== "" || local.maxPrice.trim() !== "");
-            if (!serverHasPrices && localHasPrices) {
-              return [row.sku, local];
-            }
-            return [row.sku, draftFromRule(row.rule)];
-          }),
-        ),
-      );
+      setDrafts((prev) => {
+        const next = { ...prev };
+        for (const row of merged) {
+          const key = draftKey(row.sku, activeChannel);
+          const local = next[key];
+          const serverHasPrices =
+            row.rule?.minPrice != null || row.rule?.maxPrice != null;
+          const localHasPrices =
+            local != null &&
+            (local.minPrice.trim() !== "" || local.maxPrice.trim() !== "");
+          if (!serverHasPrices && localHasPrices) continue;
+          next[key] = draftFromRule(row.rule, row.quantityDiscountPlan);
+        }
+        return next;
+      });
       setLoading(false);
-      void loadHistory();
+      void loadHistory(activeChannel);
       return;
     } catch {
       setRows([]);
@@ -356,7 +474,7 @@ export function AmazonRepricerPanel() {
     } finally {
       setLoading(false);
     }
-  }, [enrichCompetitive, loadHistory]);
+  }, [cacheKeyFor, loadHistory]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -366,8 +484,8 @@ export function AmazonRepricerPanel() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(channel);
+  }, [channel, load]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -404,7 +522,7 @@ export function AmazonRepricerPanel() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, buyBoxFilter, changedFilter]);
+  }, [search, buyBoxFilter, changedFilter, channel]);
 
   const pageSkuKey = paged.map((row) => row.sku).join("\n");
   pagedRef.current = paged;
@@ -412,14 +530,20 @@ export function AmazonRepricerPanel() {
   useEffect(() => {
     if (loading) return;
     const pageRows = pagedRef.current;
+    const activeChannel = channelRef.current;
     const cachedOnPage = pageRows.some(
-      (row) => row.sku && row.competitive == null && competitiveCacheRef.current.has(row.sku),
+      (row) =>
+        row.sku &&
+        row.competitive == null &&
+        competitiveCacheRef.current.has(cacheKeyFor(row.sku, activeChannel)),
     );
     if (cachedOnPage) {
       setRows((prev) =>
         prev.map((row) => {
           if (row.competitive) return row;
-          const cached = competitiveCacheRef.current.get(row.sku);
+          const cached = competitiveCacheRef.current.get(
+            cacheKeyFor(row.sku, activeChannel),
+          );
           return cached ? { ...row, competitive: cached } : row;
         }),
       );
@@ -428,32 +552,38 @@ export function AmazonRepricerPanel() {
       (row) =>
         row.sku &&
         row.competitive == null &&
-        !competitiveCacheRef.current.has(row.sku) &&
+        !competitiveCacheRef.current.has(cacheKeyFor(row.sku, activeChannel)) &&
         !failedSkusRef.current[row.sku],
     );
     if (missing.length === 0) return;
-    void enrichCompetitive(missing);
-  }, [loading, pageSkuKey, enrichCompetitive]);
+    void enrichCompetitive(missing, { channel: activeChannel });
+  }, [loading, pageSkuKey, enrichCompetitive, cacheKeyFor]);
 
   function updateDraft(sku: string, patch: Partial<DraftRule>) {
+    const key = draftKey(sku, channel);
     setDrafts((prev) => ({
       ...prev,
-      [sku]: { ...(prev[sku] ?? draftFromRule(null)), ...patch },
+      [key]: { ...(prev[key] ?? draftFromRule(null)), ...patch },
     }));
   }
 
   async function saveRule(sku: string) {
     const row = rowsRef.current.find((item) => item.sku === sku);
-    const draft = draftsRef.current[sku] ?? draftFromRule(row?.rule ?? null);
+    const key = draftKey(sku, channel);
+    const draft = draftsRef.current[key] ?? draftFromRule(row?.rule ?? null);
     let minPrice: number | null;
     let maxPrice: number | null;
     let undercutAmount: number;
+    let quantityDiscountPlan: QuantityDiscountPlan | null = null;
     try {
       minPrice = parsePriceInput(draft.minPrice);
       maxPrice = parsePriceInput(draft.maxPrice);
       undercutAmount = parsePriceInput(draft.undercutAmount) ?? 0.01;
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Invalid price.");
+      if (channel === "business") {
+        quantityDiscountPlan = parseTierFromDraft(draft);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Invalid price.");
       return;
     }
     setBusySku(sku);
@@ -464,52 +594,55 @@ export function AmazonRepricerPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sku,
+          channel,
           enabled: draft.enabled,
           strategy: draft.strategy,
           minPrice,
           maxPrice,
           undercutAmount,
+          quantityDiscountPlan,
         }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
+      const json = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        rule?: AmazonRepriceRule;
+      };
       if (!json.ok) {
         setMessage(json.error || "Failed to save rule.");
         return;
       }
-      const saved = (
-        json as {
-          ok: boolean;
-          error?: string;
-          rule?: {
-            enabled: boolean;
-            strategy: RepriceStrategy;
-            minPrice: number | null;
-            maxPrice: number | null;
-            undercutAmount: number;
-            updatedAt: string;
-          };
-        }
-      ).rule;
-      if (saved) {
+      if (json.rule) {
         const nextRule = {
-          ...saved,
+          ...json.rule,
           sku,
-          minPrice: saved.minPrice ?? minPrice,
-          maxPrice: saved.maxPrice ?? maxPrice,
+          channel,
+          minPrice: json.rule.minPrice ?? minPrice,
+          maxPrice: json.rule.maxPrice ?? maxPrice,
+          quantityDiscountPlan:
+            json.rule.quantityDiscountPlan ?? quantityDiscountPlan,
         };
         setDrafts((prev) => ({
           ...prev,
-          [sku]: draftFromRule(nextRule),
+          [key]: draftFromRule(nextRule),
         }));
         setRows((prev) =>
-          prev.map((row) =>
-            row.sku === sku ? { ...row, rule: nextRule } : row,
+          prev.map((item) =>
+            item.sku === sku
+              ? {
+                  ...item,
+                  rule: nextRule,
+                  quantityDiscountPlan: nextRule.quantityDiscountPlan,
+                }
+              : item,
           ),
         );
       }
       const minLabel = minPrice != null ? formatMoney(minPrice) : "none";
       const maxLabel = maxPrice != null ? formatMoney(maxPrice) : "none";
-      setMessage(`Saved ${sku}. Min ${minLabel}, max ${maxLabel}.`);
+      setMessage(
+        `Saved ${sku} (${channel}). Min ${minLabel}, max ${maxLabel}.`,
+      );
     } finally {
       setBusySku(null);
     }
@@ -519,15 +652,29 @@ export function AmazonRepricerPanel() {
     setBusySku(sku);
     setMessage(null);
     const current = rows.find((row) => row.sku === sku);
+    const key = draftKey(sku, channel);
+    const draft = draftsRef.current[key] ?? draftFromRule(current?.rule ?? null);
+    let quantityDiscountPlan: QuantityDiscountPlan | null = null;
+    try {
+      if (channel === "business") {
+        quantityDiscountPlan = parseTierFromDraft(draft);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Invalid tiers.");
+      setBusySku(null);
+      return;
+    }
     try {
       const res = await fetch("/api/amazon/repricer/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sku,
+          channel,
           price,
           fromPrice: current?.price ?? null,
           reason: current?.reason || "Manual apply from Amazon repricer",
+          quantityDiscountPlan,
         }),
       });
       const json = (await res.json()) as {
@@ -541,7 +688,7 @@ export function AmazonRepricerPanel() {
         return;
       }
       setMessage(
-        `Updated ${sku} to ${formatMoney(json.price ?? price)} (${json.status || "OK"}).`,
+        `Updated ${sku} ${channel} to ${formatMoney(json.price ?? price)} (${json.status || "OK"}).`,
       );
       setRows((prev) =>
         prev.map((row) =>
@@ -550,7 +697,7 @@ export function AmazonRepricerPanel() {
             : row,
         ),
       );
-      void loadHistory();
+      void loadHistory(channel);
     } finally {
       setBusySku(null);
     }
@@ -577,7 +724,7 @@ export function AmazonRepricerPanel() {
             <p className="text-sm text-muted-foreground">{message}</p>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void load()}>
+            <Button type="button" onClick={() => void load(channel)}>
               Retry
             </Button>
             {errorCode === "NOT_CONNECTED" ? (
@@ -643,21 +790,46 @@ export function AmazonRepricerPanel() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant={channel === "standard" ? "default" : "outline"}
+          onClick={() => setChannel("standard")}
+        >
+          Standard
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={channel === "business" ? "default" : "outline"}
+          onClick={() => setChannel("business")}
+        >
+          Amazon Business
+        </Button>
+      </div>
+
       <p className="text-sm text-muted-foreground">
-        Set min and max for each SKU, then use Beat Buy Box by £0.01 to win the
-        Buy Box within your floor/ceiling. Auto-reprice runs every 15–30 minutes
-        for enabled rules with a min price (manual is skipped). Point cron-job.org
-        at <code className="text-xs">/api/cron/amazon-reprice</code> with{" "}
+        {channel === "standard"
+          ? "Standard attacks the consumer Buy Box. Set min/max per SKU, then beat or match competitors within your floor/ceiling."
+          : "Business attacks Amazon Business competitive pricing. Set a Business Price rule, optionally with quantity discount tiers (up to 5)."}{" "}
+        Auto-reprice runs every 15–30 minutes for enabled rules with a min price
+        (manual is skipped). Point cron-job.org at{" "}
+        <code className="text-xs">/api/cron/amazon-reprice</code> with{" "}
         <code className="text-xs">Authorization: Bearer CRON_SECRET</code>.
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{filtered.length} listings</Badge>
+          <Badge variant="secondary" className="capitalize">
+            {channel}
+          </Badge>
           {enriching ? (
             <Badge variant="secondary" className="gap-1.5">
               <Loader2 className="size-3 animate-spin" />
-              Buy Box {Math.min(enrichProgress.done, enrichProgress.total)}/
+              {channel === "business" ? "Business" : "Buy Box"}{" "}
+              {Math.min(enrichProgress.done, enrichProgress.total)}/
               {enrichProgress.total}
             </Badge>
           ) : null}
@@ -701,17 +873,17 @@ export function AmazonRepricerPanel() {
             type="button"
             variant="secondary"
             disabled={loading || enriching}
-            onClick={() => void load({ bypassCache: true })}
+            onClick={() => void load(channel, { bypassCache: true })}
           >
             {loading || enriching ? (
               <>
                 <Loader2 className="animate-spin" />
-                {loading ? "Refreshing…" : "Loading Buy Box…"}
+                {loading ? "Refreshing…" : "Loading…"}
               </>
             ) : (
               <>
                 <RefreshCw />
-                Refresh Buy Box
+                Refresh
               </>
             )}
           </Button>
@@ -727,7 +899,8 @@ export function AmazonRepricerPanel() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle className="text-base">
-                Price changes (last {historyDays} days)
+                {channel === "business" ? "Business" : "Standard"} price changes
+                (last {historyDays} days)
               </CardTitle>
               <CardDescription>
                 {history.length} logged · expands only when opened to keep the
@@ -748,7 +921,7 @@ export function AmazonRepricerPanel() {
           <CardContent>
             {history.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No price changes logged yet.
+                No price changes logged yet for this channel.
               </p>
             ) : (
               <div className="overflow-x-auto rounded-lg border">
@@ -835,22 +1008,28 @@ export function AmazonRepricerPanel() {
               <TableHead className="w-14">Image</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>SKU</TableHead>
-              <TableHead className="text-right">Yours</TableHead>
+              <TableHead className="text-right">
+                {channel === "business" ? "Business" : "Yours"}
+              </TableHead>
               <TableHead className="text-right">Buy Box</TableHead>
               <TableHead className="text-right">Lowest</TableHead>
               <TableHead>Last change</TableHead>
               <TableHead>Strategy</TableHead>
               <TableHead>Min / Max</TableHead>
+              {channel === "business" ? (
+                <TableHead>Qty tiers</TableHead>
+              ) : null}
               <TableHead className="text-right">Suggested</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {paged.map((row) => {
-              const draft = drafts[row.sku] ?? draftFromRule(row.rule);
+              const key = draftKey(row.sku, channel);
+              const draft = drafts[key] ?? draftFromRule(row.rule, row.quantityDiscountPlan);
               const busy = busySku === row.sku;
               return (
-                <TableRow key={row.sku}>
+                <TableRow key={`${channel}-${row.sku}`}>
                   <TableCell>
                     <LineItemImage
                       src={row.imageUrl}
@@ -859,7 +1038,7 @@ export function AmazonRepricerPanel() {
                     />
                   </TableCell>
                   <TableCell>
-                    <div className="min-w-[260px] max-w-[420px] space-y-1.5">
+                    <div className="min-w-[220px] max-w-[360px] space-y-1.5">
                       <p className="text-sm font-medium leading-snug whitespace-normal break-words">
                         {row.title}
                       </p>
@@ -873,24 +1052,8 @@ export function AmazonRepricerPanel() {
                       ) : null}
                       {row.competitive?.youHaveBuyBox ? (
                         <Badge className="bg-green-600">Buy Box</Badge>
-                      ) : row.competitive?.youHaveBuyBox === false &&
-                        row.price != null &&
-                        row.competitive.lowestPrice != null &&
-                        Math.abs(row.price - row.competitive.lowestPrice) <
-                          0.015 ? (
-                        <Badge
-                          variant="outline"
-                          title="Lowest price, but Amazon Featured Offer is another seller"
-                        >
-                          Lowest · no Buy Box
-                        </Badge>
                       ) : row.competitive?.youHaveBuyBox === false ? (
-                        <Badge
-                          variant="outline"
-                          title="Amazon Featured Offer is another seller"
-                        >
-                          No Buy Box
-                        </Badge>
+                        <Badge variant="outline">No Buy Box</Badge>
                       ) : row.competitive == null ? (
                         <span
                           className="text-[10px] text-muted-foreground"
@@ -988,19 +1151,94 @@ export function AmazonRepricerPanel() {
                         }
                       />
                     </div>
-                    {row.rule?.minPrice != null || row.rule?.maxPrice != null ? (
-                      <p className="mt-1 text-[10px] text-muted-foreground">
-                        Saved{" "}
-                        {row.rule?.minPrice != null
-                          ? formatMoney(row.rule.minPrice)
-                          : "—"}
-                        {" – "}
-                        {row.rule?.maxPrice != null
-                          ? formatMoney(row.rule.maxPrice)
-                          : "—"}
-                      </p>
-                    ) : null}
                   </TableCell>
+                  {channel === "business" ? (
+                    <TableCell>
+                      <div className="min-w-[180px] space-y-1.5">
+                        <select
+                          className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                          value={draft.discountType}
+                          onChange={(event) =>
+                            updateDraft(row.sku, {
+                              discountType: event.target.value as
+                                | "fixed"
+                                | "percent",
+                            })
+                          }
+                        >
+                          <option value="fixed">Fixed £ tiers</option>
+                          <option value="percent">Percent tiers</option>
+                        </select>
+                        {draft.tiers.map((tier, index) => (
+                          <div key={index} className="flex items-center gap-1">
+                            <Input
+                              className="h-7 w-14 text-xs"
+                              inputMode="numeric"
+                              placeholder="Qty"
+                              value={tier.lowerBound}
+                              onChange={(event) => {
+                                const tiers = [...draft.tiers];
+                                tiers[index] = {
+                                  ...tier,
+                                  lowerBound: event.target.value,
+                                };
+                                updateDraft(row.sku, { tiers });
+                              }}
+                            />
+                            <Input
+                              className="h-7 w-16 text-xs"
+                              inputMode="decimal"
+                              placeholder={
+                                draft.discountType === "percent" ? "%" : "£"
+                              }
+                              value={tier.value}
+                              onChange={(event) => {
+                                const tiers = [...draft.tiers];
+                                tiers[index] = {
+                                  ...tier,
+                                  value: event.target.value,
+                                };
+                                updateDraft(row.sku, { tiers });
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0"
+                              onClick={() => {
+                                const tiers = draft.tiers.filter(
+                                  (_, i) => i !== index,
+                                );
+                                updateDraft(row.sku, { tiers });
+                              }}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                        {draft.tiers.length < 5 ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 gap-1 text-xs"
+                            onClick={() =>
+                              updateDraft(row.sku, {
+                                tiers: [
+                                  ...draft.tiers,
+                                  { lowerBound: "", value: "" },
+                                ],
+                              })
+                            }
+                          >
+                            <Plus className="size-3" />
+                            Tier
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  ) : null}
                   <TableCell className="text-right">
                     <div className="space-y-1">
                       <p className="tabular-nums font-medium">

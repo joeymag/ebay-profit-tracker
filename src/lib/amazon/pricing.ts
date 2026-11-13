@@ -1,5 +1,7 @@
 import { amazonFetch } from "@/lib/amazon/client";
 import { getAmazonConfig } from "@/lib/amazon/config";
+import type { AmazonRepriceChannel } from "@/lib/amazon/reprice-channel";
+import { repriceCustomerType } from "@/lib/amazon/reprice-channel";
 import {
   getStoredAmazonSellerId,
   saveAmazonSellerId,
@@ -40,6 +42,7 @@ type ListingOffersResponse = {
 
 export type AmazonCompetitiveSnapshot = {
   sku: string;
+  channel: AmazonRepriceChannel;
   buyBoxPrice: number | null;
   lowestPrice: number | null;
   offerCount: number;
@@ -69,19 +72,24 @@ async function resolveStoredSellerId(): Promise<string | null> {
   return cachedSellerId;
 }
 
-export async function fetchListingOffers(sku: string) {
+export async function fetchListingOffers(
+  sku: string,
+  channel: AmazonRepriceChannel = "standard",
+) {
   const { marketplaceId } = getAmazonConfig();
   return amazonFetch<ListingOffersResponse>({
     path: `/products/pricing/v0/listings/${encodeURIComponent(sku)}/offers`,
     query: {
       MarketplaceId: marketplaceId,
       ItemCondition: "New",
+      CustomerType: repriceCustomerType(channel),
     },
   });
 }
 
 function snapshotFromOffers(
   sku: string,
+  channel: AmazonRepriceChannel,
   data: ListingOffersResponse,
   yourListedPrice: number | null | undefined,
   storedSellerId: string | null,
@@ -107,7 +115,6 @@ function snapshotFromOffers(
     ? offers.filter((o) => o.SellerId === storedSellerId)
     : [];
 
-  // Never treat another seller's Buy Box offer as "ours".
   let yourOffer: Offer | undefined =
     ourOffers.find((o) => o.IsBuyBoxWinner) ?? ourOffers[0];
 
@@ -143,15 +150,14 @@ function snapshotFromOffers(
   ) {
     youHaveBuyBox = Boolean(yourOffer.IsBuyBoxWinner);
   } else if (yourOffer && !storedSellerId) {
-    // Without a known seller ID, only trust an offer that Amazon marks as winner.
     youHaveBuyBox = yourOffer.IsBuyBoxWinner === true;
   } else if (offerCount <= 1 && buyBoxPrice != null && offers.length <= 1) {
-    // Sole offer on the listing: that offer is ours, even if Amazon omits the winner flag.
     youHaveBuyBox = true;
   }
 
   return {
     sku,
+    channel,
     buyBoxPrice,
     lowestPrice,
     offerCount,
@@ -168,6 +174,7 @@ function snapshotFromOffers(
 
 export async function readCompetitiveCache(
   skus: string[],
+  channel: AmazonRepriceChannel = "standard",
 ): Promise<Map<string, AmazonCompetitiveSnapshot>> {
   const map = new Map<string, AmazonCompetitiveSnapshot>();
   if (!isSupabaseConfigured() || skus.length === 0) return map;
@@ -176,14 +183,15 @@ export async function readCompetitiveCache(
     const cutoff = new Date(Date.now() - COMPETITIVE_CACHE_TTL_MS).toISOString();
     const { data, error } = await supabase
       .from("amazon_competitive_cache")
-      .select("sku, snapshot, fetched_at")
+      .select("sku, channel, snapshot, fetched_at")
+      .eq("channel", channel)
       .in("sku", skus)
       .gte("fetched_at", cutoff);
     if (error || !data) return map;
     for (const row of data) {
       const snap = row.snapshot as AmazonCompetitiveSnapshot | null;
       if (snap && typeof snap === "object") {
-        map.set(row.sku, { ...snap, sku: row.sku });
+        map.set(row.sku, { ...snap, sku: row.sku, channel });
       }
     }
   } catch {
@@ -202,10 +210,11 @@ export async function writeCompetitiveCache(
     await supabase.from("amazon_competitive_cache").upsert(
       snapshots.map((snapshot) => ({
         sku: snapshot.sku,
+        channel: snapshot.channel,
         snapshot,
         fetched_at: now,
       })),
-      { onConflict: "sku" },
+      { onConflict: "sku,channel" },
     );
   } catch {
     // Ignore cache write failures.
@@ -214,11 +223,13 @@ export async function writeCompetitiveCache(
 
 async function fetchListingOffersBatch(
   skus: string[],
+  channel: AmazonRepriceChannel,
 ): Promise<Map<string, ListingOffersResponse | null>> {
   const map = new Map<string, ListingOffersResponse | null>();
   if (skus.length === 0) return map;
 
   const { marketplaceId } = getAmazonConfig();
+  const customerType = repriceCustomerType(channel);
   const data = await amazonFetch<{
     responses?: Array<{
       status?: { statusCode?: number };
@@ -233,6 +244,7 @@ async function fetchListingOffersBatch(
         method: "GET",
         MarketplaceId: marketplaceId,
         ItemCondition: "New",
+        CustomerType: customerType,
       })),
     },
   });
@@ -241,7 +253,10 @@ async function fetchListingOffersBatch(
   skus.forEach((sku, index) => {
     const response = responses[index];
     const status = response?.status?.statusCode ?? 0;
-    map.set(sku, status >= 200 && status < 300 && response?.body ? response.body : null);
+    map.set(
+      sku,
+      status >= 200 && status < 300 && response?.body ? response.body : null,
+    );
   });
   return map;
 }
@@ -249,18 +264,20 @@ async function fetchListingOffersBatch(
 export async function getCompetitiveSnapshot(
   sku: string,
   yourListedPrice?: number | null,
-  options?: { bypassCache?: boolean },
+  options?: { bypassCache?: boolean; channel?: AmazonRepriceChannel },
 ): Promise<AmazonCompetitiveSnapshot> {
+  const channel = options?.channel ?? "standard";
   if (!options?.bypassCache) {
-    const cached = await readCompetitiveCache([sku]);
+    const cached = await readCompetitiveCache([sku], channel);
     const hit = cached.get(sku);
     if (hit) return hit;
   }
 
-  const data = await fetchListingOffers(sku);
+  const data = await fetchListingOffers(sku, channel);
   const storedSellerId = await resolveStoredSellerId();
   const snapshot = snapshotFromOffers(
     sku,
+    channel,
     data,
     yourListedPrice,
     storedSellerId,
@@ -280,17 +297,19 @@ export async function getCompetitiveSnapshot(
  */
 export async function getCompetitiveSnapshotsBatch(input: {
   skus: string[];
+  channel?: AmazonRepriceChannel;
   priceBySku?: Map<string, number | null>;
   concurrency?: number;
   bypassCache?: boolean;
 }): Promise<Map<string, AmazonCompetitiveSnapshot | null>> {
+  const channel = input.channel ?? "standard";
   const result = new Map<string, AmazonCompetitiveSnapshot | null>();
   const unique = [...new Set(input.skus.map((s) => s.trim()).filter(Boolean))];
   if (unique.length === 0) return result;
 
   const cached = input.bypassCache
     ? new Map<string, AmazonCompetitiveSnapshot>()
-    : await readCompetitiveCache(unique);
+    : await readCompetitiveCache(unique, channel);
   const missing: string[] = [];
   for (const sku of unique) {
     const hit = cached.get(sku);
@@ -305,7 +324,7 @@ export async function getCompetitiveSnapshotsBatch(input: {
     const chunk = missing.slice(i, i + 20);
     let offersBySku = new Map<string, ListingOffersResponse | null>();
     try {
-      offersBySku = await fetchListingOffersBatch(chunk);
+      offersBySku = await fetchListingOffersBatch(chunk, channel);
     } catch {
       offersBySku = new Map(chunk.map((sku) => [sku, null]));
     }
@@ -317,10 +336,21 @@ export async function getCompetitiveSnapshotsBatch(input: {
       }
       const snapshot = snapshotFromOffers(
         sku,
+        channel,
         data,
         input.priceBySku?.get(sku) ?? null,
         storedSellerId,
       );
+      // Business channel: do not invent competitive data when Amazon returns empty.
+      if (
+        channel === "business" &&
+        snapshot.buyBoxPrice == null &&
+        snapshot.lowestPrice == null &&
+        snapshot.offerCount === 0
+      ) {
+        result.set(sku, null);
+        continue;
+      }
       result.set(sku, snapshot);
       fresh.push(snapshot);
     }
@@ -353,6 +383,7 @@ export async function resolveAmazonSellerId(seedSku?: string): Promise<string> {
 
   const snapshot = await getCompetitiveSnapshot(seedSku, null, {
     bypassCache: true,
+    channel: "standard",
   });
   if (!snapshot.sellerIdGuess) {
     throw new Error(

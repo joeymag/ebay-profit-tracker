@@ -47,6 +47,12 @@ export async function GET(request: Request) {
           applied: result.applied,
           skipped: result.skipped,
           failed: result.failed,
+          byChannel: {
+            standard: result.results.filter((r) => r.channel === "standard")
+              .length,
+            business: result.results.filter((r) => r.channel === "business")
+              .length,
+          },
         }),
       );
       for (const row of result.results) {

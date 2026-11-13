@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { fetchBusinessOffersBatch } from "@/lib/amazon/business-offer";
 import { AmazonApiError } from "@/lib/amazon/client";
 import { getCompetitiveSnapshotsBatch } from "@/lib/amazon/pricing";
+import {
+  parseRepriceChannel,
+  type AmazonRepriceChannel,
+} from "@/lib/amazon/reprice-channel";
 import {
   computeSuggestedPrice,
   listRepriceRules,
@@ -26,19 +31,23 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { skus?: unknown; prices?: unknown; bypassCache?: unknown };
+  let body: {
+    skus?: unknown;
+    prices?: unknown;
+    bypassCache?: unknown;
+    channel?: unknown;
+  };
   try {
-    body = (await request.json()) as {
-      skus?: unknown;
-      prices?: unknown;
-      bypassCache?: unknown;
-    };
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json(
       { ok: false, error: "Invalid JSON body." },
       { status: 400 },
     );
   }
+
+  const channel: AmazonRepriceChannel =
+    parseRepriceChannel(body.channel) ?? "standard";
 
   const skus = Array.isArray(body.skus)
     ? body.skus
@@ -68,10 +77,23 @@ export async function POST(request: Request) {
   }
 
   try {
+    const businessOffers =
+      channel === "business"
+        ? await fetchBusinessOffersBatch(skus)
+        : new Map();
+
+    if (channel === "business") {
+      for (const sku of skus) {
+        const offer = businessOffers.get(sku);
+        if (offer) priceBySku.set(sku, offer.businessPrice);
+      }
+    }
+
     const [rules, competitiveBySku] = await Promise.all([
-      listRepriceRules(),
+      listRepriceRules(channel),
       getCompetitiveSnapshotsBatch({
         skus,
+        channel,
         priceBySku,
         concurrency: 4,
         bypassCache: body.bypassCache === true,
@@ -84,19 +106,34 @@ export async function POST(request: Request) {
     const suggestions = skus.map((sku) => {
       const rule = ruleBySku.get(sku.trim()) ?? null;
       const competitive = competitiveBySku.get(sku) ?? null;
-      const currentPrice = priceBySku.has(sku) ? priceBySku.get(sku)! : null;
+      const businessOffer = businessOffers.get(sku);
+      const currentPrice =
+        channel === "business"
+          ? (businessOffer?.businessPrice ?? null)
+          : priceBySku.has(sku)
+            ? priceBySku.get(sku)!
+            : null;
       const { suggestedPrice, reason } = computeSuggestedPrice({
         currentPrice,
         competitive,
         rule,
+        channel,
       });
       return {
         sku,
+        channel,
+        currentPrice,
+        quantityDiscountPlan:
+          rule?.quantityDiscountPlan ??
+          businessOffer?.quantityDiscountPlan ??
+          null,
         competitive,
         suggestedPrice,
         reason:
           competitive == null
-            ? "Could not load Buy Box data."
+            ? channel === "business"
+              ? "No Business competitive data."
+              : "Could not load Buy Box data."
             : reason,
         rule,
       };
@@ -104,6 +141,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
+      channel,
       suggestions,
     });
   } catch (error) {
