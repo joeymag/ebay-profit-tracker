@@ -6,7 +6,7 @@ export default function AmazonRepricerPage() {
     <>
       <DashboardHeader
         title="Amazon repricer"
-        description="Rule-based pricing against Buy Box and lowest offers"
+        description="Separate Standard and Amazon Business prices — attack both Buy Boxes"
       />
       <div className="flex flex-1 flex-col gap-6 p-5 md:p-10">
         <AmazonRepricerPanel />

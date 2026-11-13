@@ -39,6 +39,8 @@ import Link from "next/link";
 
 type RepricerRow = AmazonListing & {
   listPrice?: number | null;
+  standardPrice?: number | null;
+  businessPrice?: number | null;
   channel: AmazonRepriceChannel;
   rule: AmazonRepriceRule | null;
   competitive: AmazonCompetitiveSnapshot | null;
@@ -169,6 +171,8 @@ type CompetitiveBatchResponse =
       suggestions: Array<{
         sku: string;
         currentPrice?: number | null;
+        standardPrice?: number | null;
+        businessPrice?: number | null;
         quantityDiscountPlan?: QuantityDiscountPlan | null;
         competitive: AmazonCompetitiveSnapshot | null;
         suggestedPrice: number | null;
@@ -256,7 +260,10 @@ export function AmazonRepricerPanel() {
     setEnriching(true);
     setEnrichProgress({ done: 0, total: skus.length });
     const priceBySku = Object.fromEntries(
-      listings.map((row) => [row.sku, row.price]),
+      listings.map((row) => [
+        row.sku,
+        row.standardPrice ?? row.listPrice ?? row.price,
+      ]),
     );
 
     try {
@@ -316,13 +323,25 @@ export function AmazonRepricerPanel() {
                 cacheKeyFor(row.sku, activeChannel),
               ) ?? null;
             if (!suggestion && !cached) return row;
+            const standardPrice =
+              suggestion?.standardPrice !== undefined
+                ? suggestion.standardPrice
+                : (row.standardPrice ?? row.listPrice ?? row.price);
+            const businessPrice =
+              suggestion?.businessPrice !== undefined
+                ? suggestion.businessPrice
+                : (row.businessPrice ?? null);
             const nextPrice =
               suggestion?.currentPrice !== undefined
                 ? suggestion.currentPrice
-                : row.price;
+                : activeChannel === "business"
+                  ? businessPrice
+                  : standardPrice;
             return {
               ...row,
               price: nextPrice,
+              standardPrice,
+              businessPrice,
               competitive: suggestion?.competitive ?? cached,
               suggestedPrice: suggestion?.suggestedPrice ?? row.suggestedPrice,
               reason: suggestion?.reason ?? row.reason,
@@ -691,11 +710,18 @@ export function AmazonRepricerPanel() {
         `Updated ${sku} ${channel} to ${formatMoney(json.price ?? price)} (${json.status || "OK"}).`,
       );
       setRows((prev) =>
-        prev.map((row) =>
-          row.sku === sku
-            ? { ...row, price: json.price ?? price, suggestedPrice: null }
-            : row,
-        ),
+        prev.map((row) => {
+          if (row.sku !== sku) return row;
+          const nextPrice = json.price ?? price;
+          return {
+            ...row,
+            price: nextPrice,
+            suggestedPrice: null,
+            ...(channel === "business"
+              ? { businessPrice: nextPrice }
+              : { standardPrice: nextPrice }),
+          };
+        }),
       );
       void loadHistory(channel);
     } finally {
@@ -790,34 +816,36 @@ export function AmazonRepricerPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant={channel === "standard" ? "default" : "outline"}
-          onClick={() => setChannel("standard")}
-        >
-          Standard
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={channel === "business" ? "default" : "outline"}
-          onClick={() => setChannel("business")}
-        >
-          Amazon Business
-        </Button>
+      <div className="rounded-lg border bg-muted/30 p-3">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Reprice channel
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={channel === "standard" ? "default" : "outline"}
+            onClick={() => setChannel("standard")}
+          >
+            Standard (consumer)
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={channel === "business" ? "default" : "outline"}
+            onClick={() => setChannel("business")}
+          >
+            Amazon Business (B2B)
+          </Button>
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Both prices show on every row. The active tab controls which price
+          rules, Buy Box data, and Apply updates.{" "}
+          {channel === "standard"
+            ? "Editing Standard / consumer Buy Box."
+            : "Editing Amazon Business price and optional quantity tiers."}
+        </p>
       </div>
-
-      <p className="text-sm text-muted-foreground">
-        {channel === "standard"
-          ? "Standard attacks the consumer Buy Box. Set min/max per SKU, then beat or match competitors within your floor/ceiling."
-          : "Business attacks Amazon Business competitive pricing. Set a Business Price rule, optionally with quantity discount tiers (up to 5)."}{" "}
-        Auto-reprice runs every 15–30 minutes for enabled rules with a min price
-        (manual is skipped). Point cron-job.org at{" "}
-        <code className="text-xs">/api/cron/amazon-reprice</code> with{" "}
-        <code className="text-xs">Authorization: Bearer CRON_SECRET</code>.
-      </p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
@@ -1008,10 +1036,11 @@ export function AmazonRepricerPanel() {
               <TableHead className="w-14">Image</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>SKU</TableHead>
+              <TableHead className="text-right">Standard</TableHead>
+              <TableHead className="text-right">Business</TableHead>
               <TableHead className="text-right">
-                {channel === "business" ? "Business" : "Yours"}
+                {channel === "business" ? "Biz Buy Box" : "Buy Box"}
               </TableHead>
-              <TableHead className="text-right">Buy Box</TableHead>
               <TableHead className="text-right">Lowest</TableHead>
               <TableHead>Last change</TableHead>
               <TableHead>Strategy</TableHead>
@@ -1077,8 +1106,29 @@ export function AmazonRepricerPanel() {
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {row.price != null ? formatMoney(row.price) : "—"}
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums",
+                      channel === "standard" && "font-semibold",
+                    )}
+                  >
+                    {(() => {
+                      const standard =
+                        row.standardPrice ?? row.listPrice ?? row.price;
+                      return standard != null ? formatMoney(standard) : "—";
+                    })()}
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums",
+                      channel === "business" && "font-semibold",
+                    )}
+                  >
+                    {row.businessPrice != null
+                      ? formatMoney(row.businessPrice)
+                      : enriching || row.competitive == null
+                        ? "…"
+                        : "—"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {row.competitive?.buyBoxPrice != null

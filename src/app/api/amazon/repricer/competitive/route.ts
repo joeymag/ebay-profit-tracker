@@ -77,15 +77,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const businessOffers =
-      channel === "business"
-        ? await fetchBusinessOffersBatch(skus)
-        : new Map();
+    // Always load Business offer prices so the table can show Standard + Business
+    // side by side, regardless of which channel tab is active.
+    const businessOffers = await fetchBusinessOffersBatch(skus);
 
+    const competitivePriceBySku = new Map(priceBySku);
     if (channel === "business") {
       for (const sku of skus) {
         const offer = businessOffers.get(sku);
-        if (offer) priceBySku.set(sku, offer.businessPrice);
+        competitivePriceBySku.set(sku, offer?.businessPrice ?? null);
       }
     }
 
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       getCompetitiveSnapshotsBatch({
         skus,
         channel,
-        priceBySku,
+        priceBySku: competitivePriceBySku,
         concurrency: 4,
         bypassCache: body.bypassCache === true,
       }),
@@ -107,12 +107,10 @@ export async function POST(request: Request) {
       const rule = ruleBySku.get(sku.trim()) ?? null;
       const competitive = competitiveBySku.get(sku) ?? null;
       const businessOffer = businessOffers.get(sku);
+      const standardPrice = priceBySku.has(sku) ? priceBySku.get(sku)! : null;
+      const businessPrice = businessOffer?.businessPrice ?? null;
       const currentPrice =
-        channel === "business"
-          ? (businessOffer?.businessPrice ?? null)
-          : priceBySku.has(sku)
-            ? priceBySku.get(sku)!
-            : null;
+        channel === "business" ? businessPrice : standardPrice;
       const { suggestedPrice, reason } = computeSuggestedPrice({
         currentPrice,
         competitive,
@@ -123,6 +121,8 @@ export async function POST(request: Request) {
         sku,
         channel,
         currentPrice,
+        standardPrice,
+        businessPrice,
         quantityDiscountPlan:
           rule?.quantityDiscountPlan ??
           businessOffer?.quantityDiscountPlan ??

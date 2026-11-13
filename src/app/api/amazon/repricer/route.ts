@@ -40,8 +40,11 @@ export async function GET(request: Request) {
 
     const rows = listings.map((listing) => {
       const rule = ruleBySku.get(listing.sku.trim()) ?? null;
+      const standardPrice = listing.price;
       // Business current price is filled during competitive enrich.
-      const currentPrice = channel === "standard" ? listing.price : null;
+      const businessPrice = null as number | null;
+      const currentPrice =
+        channel === "business" ? businessPrice : standardPrice;
       const { suggestedPrice, reason } = computeSuggestedPrice({
         currentPrice,
         competitive: null,
@@ -51,6 +54,8 @@ export async function GET(request: Request) {
       return {
         ...listing,
         price: currentPrice,
+        standardPrice,
+        businessPrice,
         listPrice: listing.price,
         channel,
         rule,
