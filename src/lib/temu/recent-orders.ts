@@ -274,13 +274,28 @@ async function toSale(
   const status = parent?.parentOrderStatus;
   if (!orderId || status == null || !IMPORT_STATUSES.has(status)) return null;
 
-  const [shipping, amount, shipment] = await Promise.all([
-    temuCallFlat<TemuShipping>(credentials, "bg.order.shippinginfo.v2.get", {
-      parentOrderSn: orderId,
-    }),
-    loadOrderAmount(credentials, orderId),
-    fetchTemuShipmentTracking(credentials, orderId).catch(() => null),
-  ]);
+  let shipping: TemuShipping;
+  let amount: TemuAmount | null;
+  let shipment: Awaited<ReturnType<typeof fetchTemuShipmentTracking>> | null;
+  try {
+    [shipping, amount, shipment] = await Promise.all([
+      temuCallFlat<TemuShipping>(credentials, "bg.order.shippinginfo.v2.get", {
+        parentOrderSn: orderId,
+      }),
+      loadOrderAmount(credentials, orderId),
+      fetchTemuShipmentTracking(credentials, orderId).catch(() => null),
+    ]);
+  } catch (error) {
+    const message =
+      error instanceof TemuApiError || error instanceof Error
+        ? error.message
+        : "";
+    // After Temu "signs"/ships, shippinginfo often refuses further viewing.
+    if (/signed and is no longer available|no longer available for viewing/i.test(message)) {
+      return null;
+    }
+    throw error;
+  }
 
   const amountBySn = new Map(
     (amount?.orderList ?? []).map((line) => [line.orderSn?.trim() ?? "", line]),
@@ -442,10 +457,26 @@ export async function fetchRecentTemuSales(days: number): Promise<MarketplaceSal
   });
 
   const sales: MarketplaceSale[] = [];
+  const failures: string[] = [];
   for (const item of ranked) {
     if (sales.length >= 25) break;
-    const sale = await toSale(credentials, item, catalog);
-    if (sale) sales.push(sale);
+    const orderId = item.parentOrderMap?.parentOrderSn?.trim() || "unknown";
+    try {
+      const sale = await toSale(credentials, item, catalog);
+      if (sale) sales.push(sale);
+    } catch (error) {
+      // Temu locks shipping/PII on some shipped ("signed") orders. Skip those
+      // so one locked order cannot abort the whole import batch.
+      const message =
+        error instanceof TemuApiError || error instanceof Error
+          ? error.message
+          : "Temu order detail failed.";
+      failures.push(`${orderId}: ${message}`);
+      console.warn("[temu/recent-orders] skipped order", orderId, message);
+    }
+  }
+  if (sales.length === 0 && failures.length > 0) {
+    throw new TemuApiError(failures[0] ?? "Could not load Temu orders.");
   }
   return sales;
 }
