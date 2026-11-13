@@ -700,6 +700,10 @@ export function AmazonListingEditor({
             bulletPoints={draft.bulletPoints}
             description={draft.description}
             backendSearchTerms={draft.genericKeywords}
+            onApplyTitle={(nextTitle) => updateDraft({ title: nextTitle })}
+            onApplyBackendSearchTerms={(value) =>
+              updateDraft({ genericKeywords: value })
+            }
           />
 
           <section className="space-y-4 border-t border-border/60 pt-8">

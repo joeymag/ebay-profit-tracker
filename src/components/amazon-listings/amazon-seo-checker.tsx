@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Sparkles, X } from "lucide-react";
+import { Loader2, Plus, Sparkles, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   AMAZON_BACKEND_SEARCH_MAX_BYTES,
+  AMAZON_TITLE_SOFT_MAX,
   analyseAmazonListingSeo,
   highlightExactMatches,
   seoSectionLabel,
@@ -24,7 +25,28 @@ type AmazonSeoCheckerProps = {
   bulletPoints: string[];
   description: string;
   backendSearchTerms: string;
+  onApplyTitle?: (title: string) => void;
+  onApplyBackendSearchTerms?: (value: string) => void;
 };
+
+type RewriteField = "title" | "backend";
+
+type RewriteResponse =
+  | { ok: true; field: RewriteField; rewrittenText: string; bytesUsed?: number }
+  | { ok: false; error: string; code?: string; details?: string };
+
+function rewriteFieldForIssue(issueId: string): RewriteField | null {
+  if (issueId.startsWith("primary-title-")) return "title";
+  if (
+    issueId === "backend-over" ||
+    issueId === "backend-dupes" ||
+    issueId === "backend-overlap" ||
+    issueId === "backend-under"
+  ) {
+    return "backend";
+  }
+  return null;
+}
 
 const TIER_OPTIONS: Array<{ value: SeoKeywordTier; label: string }> = [
   { value: "primary", label: "Primary" },
@@ -107,11 +129,15 @@ export function AmazonSeoChecker({
   bulletPoints,
   description,
   backendSearchTerms,
+  onApplyTitle,
+  onApplyBackendSearchTerms,
 }: AmazonSeoCheckerProps) {
   const [keywords, setKeywords] = useState<SeoTargetKeyword[]>([]);
   const [draftPhrase, setDraftPhrase] = useState("");
   const [draftTier, setDraftTier] = useState<SeoKeywordTier>("primary");
   const [pasteBuffer, setPasteBuffer] = useState("");
+  const [rewritingId, setRewritingId] = useState<string | null>(null);
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
 
   useEffect(() => {
     setKeywords(loadKeywords(sku));
@@ -169,7 +195,59 @@ export function AmazonSeoChecker({
     setPasteBuffer("");
   };
 
+  const rewriteField = async (
+    field: RewriteField,
+    issueId: string,
+    issueMessage: string,
+  ) => {
+    const text = field === "title" ? title : backendSearchTerms;
+    if (!text.trim()) {
+      setRewriteError(`Nothing to rewrite — ${field} is empty.`);
+      return;
+    }
+    if (field === "title" && !onApplyTitle) return;
+    if (field === "backend" && !onApplyBackendSearchTerms) return;
+
+    setRewritingId(issueId);
+    setRewriteError(null);
+    try {
+      const relatedIssues = analysis.recommendations.filter(
+        (row) => rewriteFieldForIssue(row.id) === field,
+      );
+      const res = await fetch("/api/amazon/seo/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          field,
+          text,
+          issueIds: relatedIssues.map((row) => row.id),
+          issues: relatedIssues.map((row) => row.message),
+          keywords: keywords.map((row) => ({
+            phrase: row.phrase,
+            tier: row.tier,
+          })),
+          context:
+            field === "backend"
+              ? { title, bullets: bulletPoints, description }
+              : undefined,
+        }),
+      });
+      const json = (await res.json()) as RewriteResponse;
+      if (!json.ok) {
+        setRewriteError(json.error || "Rewrite failed.");
+        return;
+      }
+      if (json.field === "title") onApplyTitle?.(json.rewrittenText);
+      else onApplyBackendSearchTerms?.(json.rewrittenText);
+    } catch {
+      setRewriteError("Could not reach the SEO rewrite API.");
+    } finally {
+      setRewritingId(null);
+    }
+  };
+
   const backendBytes = utf8ByteLength(backendSearchTerms);
+  const titleOverLimit = title.length > AMAZON_TITLE_SOFT_MAX;
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4">
@@ -507,25 +585,86 @@ export function AmazonSeoChecker({
       {/* Recommendations */}
       <div className="space-y-2">
         <p className="text-xs font-medium">Recommendations</p>
+        {rewriteError ? (
+          <p className="text-xs font-medium text-destructive">{rewriteError}</p>
+        ) : null}
         <ul className="space-y-1.5">
-          {analysis.recommendations.map((item) => (
-            <li
-              key={item.id}
-              className="flex items-start gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2 text-xs leading-snug"
-            >
-              <Dot light={item.severity} />
-              <span>{item.message}</span>
+          {titleOverLimit ? (
+            <li className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2 text-xs leading-snug">
+              <div className="flex min-w-0 items-start gap-2">
+                <Dot light="red" />
+                <span>
+                  Title exceeds {AMAZON_TITLE_SOFT_MAX} characters (
+                  {title.length}).
+                </span>
+              </div>
+              {onApplyTitle ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0"
+                  disabled={rewritingId != null}
+                  onClick={() =>
+                    void rewriteField(
+                      "title",
+                      "title-over-length",
+                      `Title exceeds ${AMAZON_TITLE_SOFT_MAX} characters.`,
+                    )
+                  }
+                >
+                  {rewritingId === "title-over-length" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-3.5" />
+                  )}
+                  Rewrite title
+                </Button>
+              ) : null}
             </li>
-          ))}
+          ) : null}
+          {analysis.recommendations.map((item) => {
+            const field = rewriteFieldForIssue(item.id);
+            const canRewrite =
+              (field === "title" && onApplyTitle) ||
+              (field === "backend" && onApplyBackendSearchTerms);
+            return (
+              <li
+                key={item.id}
+                className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2 text-xs leading-snug"
+              >
+                <div className="flex min-w-0 items-start gap-2">
+                  <Dot light={item.severity} />
+                  <span>{item.message}</span>
+                </div>
+                {canRewrite && field ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0"
+                    disabled={rewritingId != null}
+                    onClick={() => void rewriteField(field, item.id, item.message)}
+                  >
+                    {rewritingId === item.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-3.5" />
+                    )}
+                    Rewrite {field === "title" ? "title" : "backend"}
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       </div>
 
-      {/* AI unavailable */}
       <div className="flex items-start gap-2 rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-xs text-muted-foreground">
         <Sparkles className="mt-0.5 size-3.5 shrink-0" />
         <p>
-          AI rewrite suggestions are unavailable — this app has no AI provider
-          configured. Analysis above runs fully on your current listing text.
+          Rewrite with Claude applies into the editor draft only — use Save to
+          Amazon when you are happy. Requires ANTHROPIC_API_KEY on the server.
         </p>
       </div>
     </section>
