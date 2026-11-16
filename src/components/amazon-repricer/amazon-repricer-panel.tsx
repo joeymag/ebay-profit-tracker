@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from "lucide-react";
 
 import { LineItemImage } from "@/components/orders/line-item-image";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +88,32 @@ function formatWhen(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function PriceDirectionArrow({
+  fromPrice,
+  toPrice,
+}: {
+  fromPrice: number | null;
+  toPrice: number;
+}) {
+  if (fromPrice == null || !Number.isFinite(fromPrice)) return null;
+  const delta = toPrice - fromPrice;
+  if (Math.abs(delta) < 0.005) return null;
+  if (delta > 0) {
+    return (
+      <ArrowUp
+        className="inline size-3.5 shrink-0 text-emerald-600"
+        aria-label="Price increased"
+      />
+    );
+  }
+  return (
+    <ArrowDown
+      className="inline size-3.5 shrink-0 text-red-600"
+      aria-label="Price decreased"
+    />
+  );
 }
 
 type DraftRule = {
@@ -995,7 +1029,15 @@ export function AmazonRepricerPanel() {
                             : "—"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums font-medium">
-                          {formatMoney(event.toPrice)}
+                          <span className="inline-flex items-center justify-end gap-1">
+                            {channel === "standard" ? (
+                              <PriceDirectionArrow
+                                fromPrice={event.fromPrice}
+                                toPrice={event.toPrice}
+                              />
+                            ) : null}
+                            {formatMoney(event.toPrice)}
+                          </span>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className="capitalize">
