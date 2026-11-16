@@ -94,3 +94,17 @@ export const REPRICE_STRATEGIES = [
   "undercut_lowest",
   "undercut_buybox",
 ] as const satisfies readonly RepriceStrategy[];
+
+/** Standard beat-Buy-Box / undercut default (£0.10). */
+export const STANDARD_DEFAULT_UNDERCUT = 0.1;
+
+/** Business undercut default (£0.01). */
+export const BUSINESS_DEFAULT_UNDERCUT = 0.01;
+
+export function defaultUndercutForChannel(
+  channel: AmazonRepriceChannel,
+): number {
+  return channel === "business"
+    ? BUSINESS_DEFAULT_UNDERCUT
+    : STANDARD_DEFAULT_UNDERCUT;
+}

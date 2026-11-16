@@ -3,8 +3,7 @@ import type {
   AmazonRepriceChannel,
   AmazonRepriceRule,
 } from "@/lib/amazon/reprice/shared/types";
-
-const DEFAULT_UNDERCUT = 0.01;
+import { defaultUndercutForChannel } from "@/lib/amazon/reprice/shared/types";
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
@@ -112,7 +111,11 @@ export function computeSuggestedPrice(input: {
     };
   }
 
-  const undercut = rule.undercutAmount > 0 ? rule.undercutAmount : DEFAULT_UNDERCUT;
+  const channel = input.channel ?? rule.channel ?? "standard";
+  const undercut =
+    rule.undercutAmount > 0
+      ? rule.undercutAmount
+      : defaultUndercutForChannel(channel);
   let target: number | null = null;
   let reason = "";
 
@@ -123,32 +126,8 @@ export function computeSuggestedPrice(input: {
     if (competitive.buyBoxPrice == null) {
       return { suggestedPrice: null, reason: "No Buy Box price to beat." };
     }
-    // Standard: mid-gap + tunable offset. Business keeps a fixed undercut.
-    if (input.channel === "standard" && input.currentPrice != null) {
-      const offsets = resolveStandardGapOffsets({
-        rule,
-        gapOffsetAmount: input.gapOffsetAmount,
-        gapOffsetPercent: input.gapOffsetPercent,
-      });
-      const { target: midTarget, mid, amount, percent } =
-        computeStandardMidGapTarget({
-          currentPrice: input.currentPrice,
-          buyBoxPrice: competitive.buyBoxPrice,
-          gapOffsetAmount: offsets.amount,
-          gapOffsetPercent: offsets.percent,
-        });
-      target = midTarget;
-      reason = `Mid-gap £${mid.toFixed(2)} between our £${input.currentPrice.toFixed(2)} and Buy Box £${competitive.buyBoxPrice.toFixed(2)}`;
-      if (Math.abs(amount) >= 0.0005) {
-        reason += ` · offset £${amount >= 0 ? "+" : ""}${amount.toFixed(2)}`;
-      }
-      if (Math.abs(percent) >= 0.00005) {
-        reason += ` · gap% ${(percent * 100).toFixed(1)}%`;
-      }
-    } else {
-      target = competitive.buyBoxPrice - undercut;
-      reason = `Beat Buy Box (£${competitive.buyBoxPrice.toFixed(2)}) by £${undercut.toFixed(2)}`;
-    }
+    target = competitive.buyBoxPrice - undercut;
+    reason = `Beat Buy Box (£${competitive.buyBoxPrice.toFixed(2)}) by £${undercut.toFixed(2)}`;
   } else if (rule.strategy === "match_buybox") {
     target = competitive.buyBoxPrice;
     reason = target != null ? `Match Buy Box (£${target.toFixed(2)})` : "No Buy Box price.";

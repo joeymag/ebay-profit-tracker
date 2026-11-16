@@ -48,7 +48,9 @@ export async function POST(request: Request) {
         : Number(body.maxPrice),
     undercutAmount:
       body.undercutAmount == null || Number.isNaN(Number(body.undercutAmount))
-        ? 0.01
+        ? channel === "business"
+          ? 0.01
+          : 0.1
         : Math.max(0, Number(body.undercutAmount)),
   };
 

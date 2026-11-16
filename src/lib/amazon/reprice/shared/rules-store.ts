@@ -8,10 +8,9 @@ import type {
   QuantityDiscountPlan,
   RepriceStrategy,
 } from "@/lib/amazon/reprice/shared/types";
+import { defaultUndercutForChannel } from "@/lib/amazon/reprice/shared/types";
 import { createSupabaseAdmin } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-
-const DEFAULT_UNDERCUT = 0.01;
 
 function mapRuleRow(row: {
   sku: string;
@@ -33,7 +32,12 @@ function mapRuleRow(row: {
     strategy: row.strategy as RepriceStrategy,
     minPrice: row.min_price == null ? null : Number(row.min_price),
     maxPrice: row.max_price == null ? null : Number(row.max_price),
-    undercutAmount: Number(row.undercut_amount ?? DEFAULT_UNDERCUT),
+    undercutAmount: Number(
+      row.undercut_amount ??
+        defaultUndercutForChannel(
+          row.channel === "business" ? "business" : "standard",
+        ),
+    ),
     gapOffsetAmount: Number(row.gap_offset_amount ?? 0),
     gapOffsetPercent: Number(row.gap_offset_percent ?? 0),
     quantityDiscountPlan: parseQuantityDiscountPlan(row.quantity_discount_plan),

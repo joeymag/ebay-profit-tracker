@@ -58,7 +58,7 @@ type HistoryResponse =
   | { ok: false; error: string };
 
 const STRATEGIES: Array<{ value: RepriceStrategy; label: string }> = [
-  { value: "undercut_buybox", label: "Beat Buy Box by £0.01" },
+  { value: "undercut_buybox", label: "Beat Buy Box" },
   { value: "undercut_lowest", label: "Undercut lowest" },
   { value: "match_lowest", label: "Match lowest" },
   { value: "match_buybox", label: "Match Buy Box" },
@@ -113,15 +113,19 @@ function newerRule(
 function draftFromRule(
   rule: AmazonRepriceRule | null,
   listingPlan?: QuantityDiscountPlan | null,
+  channel: AmazonRepriceChannel = "standard",
 ): DraftRule {
   const plan = rule?.quantityDiscountPlan ?? listingPlan ?? null;
+  const defaultUndercut = channel === "business" ? "0.01" : "0.10";
   return {
     enabled: rule?.enabled ?? true,
     strategy: rule?.strategy ?? "undercut_buybox",
     minPrice: rule?.minPrice != null ? String(rule.minPrice) : "",
     maxPrice: rule?.maxPrice != null ? String(rule.maxPrice) : "",
     undercutAmount:
-      rule?.undercutAmount != null ? String(rule.undercutAmount) : "0.01",
+      rule?.undercutAmount != null
+        ? String(rule.undercutAmount)
+        : defaultUndercut,
     discountType: plan?.discountType ?? "fixed",
     tiers:
       plan?.levels.map((level) => ({
@@ -480,7 +484,11 @@ export function AmazonRepricerPanel() {
             local != null &&
             (local.minPrice.trim() !== "" || local.maxPrice.trim() !== "");
           if (!serverHasPrices && localHasPrices) continue;
-          next[key] = draftFromRule(row.rule, row.quantityDiscountPlan);
+          next[key] = draftFromRule(
+            row.rule,
+            row.quantityDiscountPlan,
+            channel,
+          );
         }
         return next;
       });
@@ -582,14 +590,18 @@ export function AmazonRepricerPanel() {
     const key = draftKey(sku, channel);
     setDrafts((prev) => ({
       ...prev,
-      [key]: { ...(prev[key] ?? draftFromRule(null)), ...patch },
+      [key]: {
+        ...(prev[key] ?? draftFromRule(null, null, channel)),
+        ...patch,
+      },
     }));
   }
 
   async function saveRule(sku: string) {
     const row = rowsRef.current.find((item) => item.sku === sku);
     const key = draftKey(sku, channel);
-    const draft = draftsRef.current[key] ?? draftFromRule(row?.rule ?? null);
+    const draft =
+      draftsRef.current[key] ?? draftFromRule(row?.rule ?? null, null, channel);
     let minPrice: number | null;
     let maxPrice: number | null;
     let undercutAmount: number;
@@ -597,7 +609,9 @@ export function AmazonRepricerPanel() {
     try {
       minPrice = parsePriceInput(draft.minPrice);
       maxPrice = parsePriceInput(draft.maxPrice);
-      undercutAmount = parsePriceInput(draft.undercutAmount) ?? 0.01;
+      undercutAmount =
+        parsePriceInput(draft.undercutAmount) ??
+        (channel === "business" ? 0.01 : 0.1);
       if (channel === "business") {
         quantityDiscountPlan = parseTierFromDraft(draft);
       }
@@ -643,7 +657,7 @@ export function AmazonRepricerPanel() {
         };
         setDrafts((prev) => ({
           ...prev,
-          [key]: draftFromRule(nextRule),
+          [key]: draftFromRule(nextRule, null, channel),
         }));
         setRows((prev) =>
           prev.map((item) =>
@@ -672,7 +686,9 @@ export function AmazonRepricerPanel() {
     setMessage(null);
     const current = rows.find((row) => row.sku === sku);
     const key = draftKey(sku, channel);
-    const draft = draftsRef.current[key] ?? draftFromRule(current?.rule ?? null);
+    const draft =
+      draftsRef.current[key] ??
+      draftFromRule(current?.rule ?? null, null, channel);
     let quantityDiscountPlan: QuantityDiscountPlan | null = null;
     try {
       if (channel === "business") {
@@ -1055,7 +1071,9 @@ export function AmazonRepricerPanel() {
           <TableBody>
             {paged.map((row) => {
               const key = draftKey(row.sku, channel);
-              const draft = drafts[key] ?? draftFromRule(row.rule, row.quantityDiscountPlan);
+              const draft =
+                drafts[key] ??
+                draftFromRule(row.rule, row.quantityDiscountPlan, channel);
               const busy = busySku === row.sku;
               return (
                 <TableRow key={`${channel}-${row.sku}`}>
