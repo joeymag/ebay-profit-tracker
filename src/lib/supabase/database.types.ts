@@ -400,6 +400,8 @@ export type Database = {
           min_price: number | null;
           max_price: number | null;
           undercut_amount: number;
+          gap_offset_amount: number;
+          gap_offset_percent: number;
           quantity_discount_plan: unknown | null;
           updated_at: string;
         };
@@ -411,6 +413,8 @@ export type Database = {
           min_price?: number | null;
           max_price?: number | null;
           undercut_amount?: number;
+          gap_offset_amount?: number;
+          gap_offset_percent?: number;
           quantity_discount_plan?: unknown | null;
           updated_at?: string;
         };
