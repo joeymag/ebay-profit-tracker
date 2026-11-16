@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { fetchBusinessOffersBatch } from "@/lib/amazon/business-offer";
 import { AmazonApiError } from "@/lib/amazon/client";
-import { getCompetitiveSnapshotsBatch } from "@/lib/amazon/pricing";
-import {
-  parseRepriceChannel,
-  type AmazonRepriceChannel,
-} from "@/lib/amazon/reprice-channel";
-import {
-  computeSuggestedPrice,
-  listRepriceRules,
-  type AmazonRepriceRule,
-} from "@/lib/amazon/repricer";
+import { enrichBusinessCompetitive } from "@/lib/amazon/reprice/business";
+import { parseRepriceChannel } from "@/lib/amazon/reprice-channel";
+import { enrichStandardCompetitive } from "@/lib/amazon/reprice/standard";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 
 export const maxDuration = 60;
-
 const MAX_SKUS = 20;
 
 export async function POST(request: Request) {
@@ -40,22 +31,16 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as typeof body;
   } catch {
-    return NextResponse.json(
-      { ok: false, error: "Invalid JSON body." },
-      { status: 400 },
-    );
+    return NextResponse.json({ ok: false, error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const channel: AmazonRepriceChannel =
-    parseRepriceChannel(body.channel) ?? "standard";
-
+  const channel = parseRepriceChannel(body.channel) ?? "standard";
   const skus = Array.isArray(body.skus)
     ? body.skus
         .filter((sku): sku is string => typeof sku === "string" && sku.trim() !== "")
         .map((sku) => sku.trim())
         .slice(0, MAX_SKUS)
     : [];
-
   if (skus.length === 0) {
     return NextResponse.json(
       { ok: false, error: "Provide at least one SKU." },
@@ -63,87 +48,28 @@ export async function POST(request: Request) {
     );
   }
 
-  const priceBySku = new Map<string, number | null>();
+  const prices: Record<string, number | null> = {};
   if (body.prices && typeof body.prices === "object" && !Array.isArray(body.prices)) {
-    for (const [sku, value] of Object.entries(
-      body.prices as Record<string, unknown>,
-    )) {
-      if (typeof value === "number" && Number.isFinite(value)) {
-        priceBySku.set(sku, value);
-      } else if (value === null) {
-        priceBySku.set(sku, null);
-      }
+    for (const [sku, value] of Object.entries(body.prices as Record<string, unknown>)) {
+      if (typeof value === "number" && Number.isFinite(value)) prices[sku] = value;
+      else if (value === null) prices[sku] = null;
     }
   }
 
   try {
-    // Always load Business offer prices so the table can show Standard + Business
-    // side by side, regardless of which channel tab is active.
-    const businessOffers = await fetchBusinessOffersBatch(skus);
-
-    const competitivePriceBySku = new Map(priceBySku);
-    if (channel === "business") {
-      for (const sku of skus) {
-        const offer = businessOffers.get(sku);
-        competitivePriceBySku.set(sku, offer?.businessPrice ?? null);
-      }
-    }
-
-    const [rules, competitiveBySku] = await Promise.all([
-      listRepriceRules(channel),
-      getCompetitiveSnapshotsBatch({
-        skus,
-        channel,
-        priceBySku: competitivePriceBySku,
-        concurrency: 4,
-        bypassCache: body.bypassCache === true,
-      }),
-    ]);
-    const ruleBySku = new Map<string, AmazonRepriceRule>(
-      rules.map((rule) => [rule.sku.trim(), rule]),
-    );
-
-    const suggestions = skus.map((sku) => {
-      const rule = ruleBySku.get(sku.trim()) ?? null;
-      const competitive = competitiveBySku.get(sku) ?? null;
-      const businessOffer = businessOffers.get(sku);
-      const standardPrice = priceBySku.has(sku) ? priceBySku.get(sku)! : null;
-      const businessPrice = businessOffer?.businessPrice ?? null;
-      const currentPrice =
-        channel === "business" ? businessPrice : standardPrice;
-      const { suggestedPrice, reason } = computeSuggestedPrice({
-        currentPrice,
-        competitive,
-        rule,
-        channel,
-      });
-      return {
-        sku,
-        channel,
-        currentPrice,
-        standardPrice,
-        businessPrice,
-        quantityDiscountPlan:
-          rule?.quantityDiscountPlan ??
-          businessOffer?.quantityDiscountPlan ??
-          null,
-        competitive,
-        suggestedPrice,
-        reason:
-          competitive == null
-            ? channel === "business"
-              ? "No Business competitive data."
-              : "Could not load Buy Box data."
-            : reason,
-        rule,
-      };
-    });
-
-    return NextResponse.json({
-      ok: true,
-      channel,
-      suggestions,
-    });
+    const suggestions =
+      channel === "business"
+        ? await enrichBusinessCompetitive({
+            skus,
+            standardPrices: prices,
+            bypassCache: body.bypassCache === true,
+          })
+        : await enrichStandardCompetitive({
+            skus,
+            prices,
+            bypassCache: body.bypassCache === true,
+          });
+    return NextResponse.json({ ok: true, channel, suggestions });
   } catch (error) {
     if (error instanceof AmazonApiError) {
       return NextResponse.json(
@@ -152,9 +78,7 @@ export async function POST(request: Request) {
       );
     }
     const message =
-      error instanceof Error
-        ? error.message
-        : "Failed to load competitive prices.";
+      error instanceof Error ? error.message : "Failed to load competitive prices.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

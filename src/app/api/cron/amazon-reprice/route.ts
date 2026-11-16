@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { getAmazonConfig } from "@/lib/amazon/config";
-import { runAmazonAutoReprice } from "@/lib/amazon/repricer";
+import { runAmazonAutoReprice } from "@/lib/amazon/reprice";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 
 export const maxDuration = 300;
@@ -55,19 +55,6 @@ export async function GET(request: Request) {
           },
         }),
       );
-      for (const row of result.results) {
-        if (row.status === "applied" || row.status === "failed") {
-          console.info(
-            "[cron/amazon-reprice]",
-            row.status,
-            row.sku,
-            row.reason,
-            row.fromPrice,
-            "->",
-            row.toPrice,
-          );
-        }
-      }
     } catch (error) {
       console.error(
         "[cron/amazon-reprice] failed:",
@@ -80,6 +67,6 @@ export async function GET(request: Request) {
     ok: true,
     status: "started",
     message:
-      "Amazon auto-reprice started. Call every 15–30 minutes with Authorization: Bearer CRON_SECRET.",
+      "Amazon auto-reprice started (Standard + Business modules). Call every 15–30 minutes with Authorization: Bearer CRON_SECRET.",
   });
 }

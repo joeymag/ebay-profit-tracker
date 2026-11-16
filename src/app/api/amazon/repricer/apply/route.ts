@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { AmazonApiError } from "@/lib/amazon/client";
-import {
-  parseQuantityDiscountPlan,
-  parseRepriceChannel,
-  type AmazonRepriceChannel,
-} from "@/lib/amazon/reprice-channel";
-import { updateAmazonListingPrice } from "@/lib/amazon/repricer";
+import { parseQuantityDiscountPlan } from "@/lib/amazon/reprice";
+import { updateBusinessListingPrice } from "@/lib/amazon/reprice/business";
+import { parseRepriceChannel } from "@/lib/amazon/reprice-channel";
+import { updateStandardListingPrice } from "@/lib/amazon/reprice/standard";
 
 export async function POST(request: Request) {
   let body: {
@@ -20,17 +18,12 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as typeof body;
   } catch {
-    return NextResponse.json(
-      { ok: false, error: "Expected JSON body." },
-      { status: 400 },
-    );
+    return NextResponse.json({ ok: false, error: "Expected JSON body." }, { status: 400 });
   }
 
   const sku = body.sku?.trim();
   const price = Number(body.price);
-  const channel: AmazonRepriceChannel =
-    parseRepriceChannel(body.channel) ?? "standard";
-
+  const channel = parseRepriceChannel(body.channel) ?? "standard";
   if (!sku || !(price > 0)) {
     return NextResponse.json(
       { ok: false, error: "sku and a price greater than 0 are required." },
@@ -38,28 +31,30 @@ export async function POST(request: Request) {
     );
   }
 
-  const quantityDiscountPlan =
-    channel === "business"
-      ? parseQuantityDiscountPlan(body.quantityDiscountPlan)
-      : null;
-
   try {
-    const result = await updateAmazonListingPrice({
-      sku,
-      channel,
-      price,
-      quantityDiscountPlan,
-      fromPrice:
-        body.fromPrice == null || Number.isNaN(Number(body.fromPrice))
-          ? null
-          : Number(body.fromPrice),
-      reason:
-        body.reason?.trim() ||
-        (channel === "business"
-          ? "Manual apply from Amazon Business repricer"
-          : "Manual apply from Amazon repricer"),
-      source: "manual",
-    });
+    const result =
+      channel === "business"
+        ? await updateBusinessListingPrice({
+            sku,
+            price,
+            quantityDiscountPlan: parseQuantityDiscountPlan(body.quantityDiscountPlan),
+            fromPrice:
+              body.fromPrice == null || Number.isNaN(Number(body.fromPrice))
+                ? null
+                : Number(body.fromPrice),
+            reason: body.reason?.trim() || "Manual apply from Business Amazon repricer",
+            source: "manual",
+          })
+        : await updateStandardListingPrice({
+            sku,
+            price,
+            fromPrice:
+              body.fromPrice == null || Number.isNaN(Number(body.fromPrice))
+                ? null
+                : Number(body.fromPrice),
+            reason: body.reason?.trim() || "Manual apply from Standard Amazon repricer",
+            source: "manual",
+          });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof AmazonApiError) {

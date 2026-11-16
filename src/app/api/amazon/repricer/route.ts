@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { AmazonApiError } from "@/lib/amazon/client";
-import { fetchAmazonListings } from "@/lib/amazon/listings";
-import {
-  parseRepriceChannel,
-  type AmazonRepriceChannel,
-} from "@/lib/amazon/reprice-channel";
-import {
-  computeSuggestedPrice,
-  listRepriceRules,
-} from "@/lib/amazon/repricer";
+import { loadBusinessRepricerRows } from "@/lib/amazon/reprice/business";
+import { parseRepriceChannel } from "@/lib/amazon/reprice-channel";
+import { loadStandardRepricerRows } from "@/lib/amazon/reprice/standard";
 import { getStoredAmazonRefreshToken } from "@/lib/amazon/token-store";
 
 export const maxDuration = 60;
@@ -27,50 +21,15 @@ export async function GET(request: Request) {
     );
   }
 
-  const url = new URL(request.url);
-  const channel: AmazonRepriceChannel =
-    parseRepriceChannel(url.searchParams.get("channel")) ?? "standard";
+  const channel =
+    parseRepriceChannel(new URL(request.url).searchParams.get("channel")) ??
+    "standard";
 
   try {
-    const [{ listings }, rules] = await Promise.all([
-      fetchAmazonListings({ fast: true }),
-      listRepriceRules(channel),
-    ]);
-    const ruleBySku = new Map(rules.map((rule) => [rule.sku.trim(), rule]));
-
-    const rows = listings.map((listing) => {
-      const rule = ruleBySku.get(listing.sku.trim()) ?? null;
-      const standardPrice = listing.price;
-      // Business current price is filled during competitive enrich.
-      const businessPrice = null as number | null;
-      const currentPrice =
-        channel === "business" ? businessPrice : standardPrice;
-      const { suggestedPrice, reason } = computeSuggestedPrice({
-        currentPrice,
-        competitive: null,
-        rule,
-        channel,
-      });
-      return {
-        ...listing,
-        price: currentPrice,
-        standardPrice,
-        businessPrice,
-        listPrice: listing.price,
-        channel,
-        rule,
-        competitive: null,
-        quantityDiscountPlan: rule?.quantityDiscountPlan ?? null,
-        suggestedPrice,
-        reason:
-          rule?.enabled && rule.strategy !== "manual"
-            ? channel === "business"
-              ? "Loading Business pricing…"
-              : "Loading Buy Box…"
-            : reason,
-      };
-    });
-
+    const rows =
+      channel === "business"
+        ? await loadBusinessRepricerRows()
+        : await loadStandardRepricerRows();
     return NextResponse.json({
       ok: true,
       channel,
