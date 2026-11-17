@@ -11,6 +11,7 @@ import type {
   QuantityDiscountPlan,
   RepriceStrategy,
   RepriceSuggestion,
+  RunAutoRepriceOptions,
 } from "@/lib/amazon/reprice/shared/types";
 import { updateStandardListingPrice } from "@/lib/amazon/reprice/standard/apply-price";
 import {
@@ -19,6 +20,17 @@ import {
 } from "@/lib/amazon/reprice/standard/competitive";
 
 const CHANNEL = "standard" as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeSkuFilter(skus: string[] | undefined): Set<string> | null {
+  if (skus == null) return null;
+  return new Set(
+    skus.map((sku) => sku.trim()).filter((sku) => sku.length > 0),
+  );
+}
 
 export async function listStandardRepriceRules(): Promise<AmazonRepriceRule[]> {
   return listRepriceRulesForChannel(CHANNEL);
@@ -170,10 +182,24 @@ export async function loadStandardRepricerRows() {
   });
 }
 
-export async function runStandardAutoReprice(): Promise<AutoRepriceResult> {
-  const rules = (await listStandardRepriceRules()).filter(
-    (rule) => rule.enabled && rule.strategy !== "manual",
-  );
+export async function runStandardAutoReprice(
+  options?: RunAutoRepriceOptions,
+): Promise<AutoRepriceResult> {
+  const skuFilter = normalizeSkuFilter(options?.skus);
+  if (skuFilter && skuFilter.size === 0) {
+    return { checked: 0, applied: 0, skipped: 0, failed: 0, results: [] };
+  }
+
+  const source = options?.source?.trim() || "cron";
+  const pauseBetweenSkusMs = options?.pauseBetweenSkusMs ?? 300;
+  const batchSize = options?.batchSize ?? 0;
+  const pauseBetweenBatchesMs = options?.pauseBetweenBatchesMs ?? 0;
+
+  const rules = (await listStandardRepriceRules()).filter((rule) => {
+    if (!rule.enabled || rule.strategy === "manual") return false;
+    if (skuFilter && !skuFilter.has(rule.sku.trim())) return false;
+    return true;
+  });
   const listings = await fetchAmazonListings().catch(() => null);
   const priceBySku = new Map(
     (listings?.listings ?? []).map((listing) => [listing.sku, listing.price]),
@@ -184,7 +210,8 @@ export async function runStandardAutoReprice(): Promise<AutoRepriceResult> {
   let skipped = 0;
   let failed = 0;
 
-  for (const rule of rules) {
+  for (let index = 0; index < rules.length; index += 1) {
+    const rule = rules[index]!;
     if (rule.minPrice == null) {
       skipped += 1;
       results.push({
@@ -193,69 +220,73 @@ export async function runStandardAutoReprice(): Promise<AutoRepriceResult> {
         status: "skipped",
         reason: "Set a min price before auto-reprice will apply.",
       });
-      continue;
-    }
+    } else {
+      try {
+        const currentPrice = priceBySku.get(rule.sku) ?? null;
+        const suggestion = await buildStandardRepriceSuggestion({
+          sku: rule.sku,
+          currentPrice,
+          rule,
+        });
 
-    try {
-      const currentPrice = priceBySku.get(rule.sku) ?? null;
-      const suggestion = await buildStandardRepriceSuggestion({
-        sku: rule.sku,
-        currentPrice,
-        rule,
-      });
-
-      if (suggestion.suggestedPrice == null) {
-        skipped += 1;
+        if (suggestion.suggestedPrice == null) {
+          skipped += 1;
+          results.push({
+            sku: rule.sku,
+            channel: CHANNEL,
+            status: "skipped",
+            reason: suggestion.reason,
+            fromPrice: currentPrice,
+          });
+        } else if (suggestion.suggestedPrice < rule.minPrice) {
+          skipped += 1;
+          results.push({
+            sku: rule.sku,
+            channel: CHANNEL,
+            status: "skipped",
+            reason: `Suggested £${suggestion.suggestedPrice.toFixed(2)} below min £${rule.minPrice.toFixed(2)}.`,
+            fromPrice: currentPrice,
+            toPrice: suggestion.suggestedPrice,
+          });
+        } else {
+          const update = await updateStandardListingPrice({
+            sku: rule.sku,
+            price: suggestion.suggestedPrice,
+            fromPrice: currentPrice,
+            reason: suggestion.reason,
+            source,
+          });
+          applied += 1;
+          results.push({
+            sku: rule.sku,
+            channel: CHANNEL,
+            status: "applied",
+            reason: suggestion.reason,
+            fromPrice: currentPrice,
+            toPrice: update.price,
+          });
+        }
+      } catch (error) {
+        failed += 1;
         results.push({
           sku: rule.sku,
           channel: CHANNEL,
-          status: "skipped",
-          reason: suggestion.reason,
-          fromPrice: currentPrice,
+          status: "failed",
+          reason: error instanceof Error ? error.message : "Unknown error",
         });
-        continue;
       }
-
-      if (suggestion.suggestedPrice < rule.minPrice) {
-        skipped += 1;
-        results.push({
-          sku: rule.sku,
-          channel: CHANNEL,
-          status: "skipped",
-          reason: `Suggested £${suggestion.suggestedPrice.toFixed(2)} below min £${rule.minPrice.toFixed(2)}.`,
-          fromPrice: currentPrice,
-          toPrice: suggestion.suggestedPrice,
-        });
-        continue;
-      }
-
-      const update = await updateStandardListingPrice({
-        sku: rule.sku,
-        price: suggestion.suggestedPrice,
-        fromPrice: currentPrice,
-        reason: suggestion.reason,
-        source: "cron",
-      });
-      applied += 1;
-      results.push({
-        sku: rule.sku,
-        channel: CHANNEL,
-        status: "applied",
-        reason: suggestion.reason,
-        fromPrice: currentPrice,
-        toPrice: update.price,
-      });
-    } catch (error) {
-      failed += 1;
-      results.push({
-        sku: rule.sku,
-        channel: CHANNEL,
-        status: "failed",
-        reason: error instanceof Error ? error.message : "Unknown error",
-      });
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (index + 1 < rules.length) {
+      if (pauseBetweenSkusMs > 0) await sleep(pauseBetweenSkusMs);
+      if (
+        batchSize > 0 &&
+        pauseBetweenBatchesMs > 0 &&
+        (index + 1) % batchSize === 0
+      ) {
+        await sleep(pauseBetweenBatchesMs);
+      }
+    }
   }
 
   return { checked: rules.length, applied, skipped, failed, results };

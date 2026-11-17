@@ -87,6 +87,24 @@ export type AutoRepriceResult = {
   }>;
 };
 
+/** Options for channel auto-reprice runs (full cron or SKU-filtered handoff). */
+export type RunAutoRepriceOptions = {
+  /** If set, only these SKUs are considered (still need enabled non-manual rules). */
+  skus?: string[];
+  /** Written to amazon_reprice_events.source. Default "cron". */
+  source?: string;
+  /** Pause after each SKU. Default 300. */
+  pauseBetweenSkusMs?: number;
+  /** When > 0, pause between batches of this size. Default 0 (no batch pause). */
+  batchSize?: number;
+  /** Extra pause after each full batch. Default 0. */
+  pauseBetweenBatchesMs?: number;
+};
+
+export function emptyAutoRepriceResult(): AutoRepriceResult {
+  return { checked: 0, applied: 0, skipped: 0, failed: 0, results: [] };
+}
+
 export const REPRICE_STRATEGIES = [
   "manual",
   "match_buybox",

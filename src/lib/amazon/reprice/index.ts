@@ -1,11 +1,17 @@
 import { runBusinessAutoReprice } from "@/lib/amazon/reprice/business";
+import { repriceSkusThatLostBuyBox } from "@/lib/amazon/reprice/from-buybox-loss";
 import { runStandardAutoReprice } from "@/lib/amazon/reprice/standard";
-import type { AutoRepriceResult } from "@/lib/amazon/reprice/shared/types";
+import type {
+  AutoRepriceResult,
+  RunAutoRepriceOptions,
+} from "@/lib/amazon/reprice/shared/types";
 
 /** Run Standard then Business auto-reprice as independent modules. */
-export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
-  const standard = await runStandardAutoReprice();
-  const business = await runBusinessAutoReprice();
+export async function runAmazonAutoReprice(
+  options?: RunAutoRepriceOptions,
+): Promise<AutoRepriceResult> {
+  const standard = await runStandardAutoReprice(options);
+  const business = await runBusinessAutoReprice(options);
   return {
     checked: standard.checked + business.checked,
     applied: standard.applied + business.applied,
@@ -14,6 +20,8 @@ export async function runAmazonAutoReprice(): Promise<AutoRepriceResult> {
     results: [...standard.results, ...business.results],
   };
 }
+
+export { repriceSkusThatLostBuyBox };
 
 export type {
   AmazonRepriceChannel,
@@ -24,7 +32,10 @@ export type {
   RepriceSuggestion,
   QuantityDiscountPlan,
   AutoRepriceResult,
+  RunAutoRepriceOptions,
 } from "@/lib/amazon/reprice/shared/types";
+
+export { emptyAutoRepriceResult } from "@/lib/amazon/reprice/shared/types";
 
 export {
   computeSuggestedPrice,
