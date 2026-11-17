@@ -20,13 +20,38 @@ type AmazonFetchOptions = {
   body?: unknown;
   /** Restricted Data Token, when the call needs buyer address data. */
   accessToken?: string;
+  /** Override default 429 retry count (default 4). */
+  maxRetries?: number;
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryAfterMs(response: Response, attempt: number): number {
+  const header = response.headers.get("retry-after");
+  if (header) {
+    const asSeconds = Number(header);
+    if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+      return Math.min(60_000, Math.max(250, asSeconds * 1000));
+    }
+    const asDate = Date.parse(header);
+    if (Number.isFinite(asDate)) {
+      return Math.min(60_000, Math.max(250, asDate - Date.now()));
+    }
+  }
+  // Exponential backoff with jitter: 500ms, 1s, 2s, 4s…
+  const base = Math.min(30_000, 500 * 2 ** attempt);
+  const jitter = Math.floor(Math.random() * 250);
+  return base + jitter;
+}
 
 export async function amazonFetch<T = unknown>(
   options: AmazonFetchOptions,
 ): Promise<T> {
   const config = getAmazonConfig();
-  const accessToken = options.accessToken ?? (await getAmazonAccessToken());
+  const maxRetries = options.maxRetries ?? 4;
+  let accessToken = options.accessToken ?? (await getAmazonAccessToken());
 
   const url = new URL(options.path, config.apiBaseUrl);
   if (options.query) {
@@ -39,31 +64,52 @@ export async function amazonFetch<T = unknown>(
 
   const method = options.method ?? "GET";
   const hasBody = options.body != null;
-  const response = await fetch(url, {
-    method,
-    headers: {
-      "x-amz-access-token": accessToken,
-      "User-Agent": config.userAgent,
-      // Amazon can 400 GET requests that include Content-Type / Content-Length.
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-    },
-    body: hasBody ? JSON.stringify(options.body) : undefined,
-  });
 
-  const text = await response.text();
-  if (!response.ok) {
-    throw new AmazonApiError(
+  let lastError: AmazonApiError | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "x-amz-access-token": accessToken,
+        "User-Agent": config.userAgent,
+        // Amazon can 400 GET requests that include Content-Type / Content-Length.
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      },
+      body: hasBody ? JSON.stringify(options.body) : undefined,
+    });
+
+    const text = await response.text();
+    if (response.ok) {
+      if (!text) {
+        return undefined as T;
+      }
+      return JSON.parse(text) as T;
+    }
+
+    lastError = new AmazonApiError(
       `Amazon SP-API ${options.path} failed (${response.status})`,
       response.status,
       text.slice(0, 800),
     );
+
+    const retriable =
+      response.status === 429 ||
+      response.status === 500 ||
+      response.status === 502 ||
+      response.status === 503 ||
+      response.status === 504;
+    if (!retriable || attempt >= maxRetries) {
+      throw lastError;
+    }
+
+    await sleep(retryAfterMs(response, attempt));
+    // Refresh token in case a long backoff crossed expiry.
+    if (!options.accessToken) {
+      accessToken = await getAmazonAccessToken();
+    }
   }
 
-  if (!text) {
-    return undefined as T;
-  }
-
-  return JSON.parse(text) as T;
+  throw lastError ?? new AmazonApiError(`Amazon SP-API ${options.path} failed`, 0, "");
 }
 
 type MarketplaceParticipation = {

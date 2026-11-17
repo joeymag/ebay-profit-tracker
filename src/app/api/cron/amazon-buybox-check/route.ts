@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { runAmazonBuyBoxMonitor } from "@/lib/amazon/buybox-monitor";
 import { getAmazonConfig } from "@/lib/amazon/config";
@@ -18,8 +18,8 @@ function isAuthorizedCron(request: Request): boolean {
 }
 
 /**
- * Buy Box monitoring — rechecks seeded lost SKUs, then immediately hands
- * Consumer Buy Box losers to Standard auto-reprice (enabled rules + min price).
+ * Buy Box monitoring — rechecks seeded lost SKUs, then hands Consumer Buy Box
+ * losers to Standard auto-reprice in the background (enabled rules + min price).
  */
 export async function GET(request: Request) {
   if (!isAuthorizedCron(request)) {
@@ -50,17 +50,51 @@ export async function GET(request: Request) {
         {
           ok: false,
           error:
-            "No lost-Buy-Box SKUs found. Seed with scripts/debug-post-10p-buybox-check.out.json (or a prior debug-amazon-buybox-check-*.out.json).",
+            "No Amazon listings found to check. Sync amazon_listings (or warm the listings cache), then retry.",
           sourceFile: result.sourceFile,
         },
         { status: 404 },
       );
     }
 
-    const reprice = await repriceSkusThatLostBuyBox(result.lost);
+    const lostForHandoff = result.lost;
+
+    after(async () => {
+      try {
+        const reprice = await repriceSkusThatLostBuyBox(lostForHandoff);
+        console.info(
+          "[cron/amazon-buybox-check] reprice handoff completed",
+          JSON.stringify({
+            lost: lostForHandoff.length,
+            checked: reprice.checked,
+            applied: reprice.applied,
+            skipped: reprice.skipped,
+            failed: reprice.failed,
+          }),
+        );
+        for (const row of reprice.results) {
+          if (row.status === "applied" || row.status === "failed") {
+            console.info(
+              "[cron/amazon-buybox-check] reprice",
+              row.status,
+              row.sku,
+              row.reason,
+              row.fromPrice,
+              "->",
+              row.toPrice,
+            );
+          }
+        }
+      } catch (error) {
+        console.error(
+          "[cron/amazon-buybox-check] reprice handoff failed:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    });
 
     console.info(
-      "[cron/amazon-buybox-check] completed",
+      "[cron/amazon-buybox-check] monitor completed; reprice started",
       JSON.stringify({
         pulledAt: result.pulledAt,
         sourceFile: result.sourceFile,
@@ -69,20 +103,14 @@ export async function GET(request: Request) {
         won: result.wonCount,
         lost: result.lostCount,
         failed: result.failedCount,
-        reprice: {
-          checked: reprice.checked,
-          applied: reprice.applied,
-          skipped: reprice.skipped,
-          failed: reprice.failed,
-        },
       }),
     );
 
     return NextResponse.json({
       ok: true,
-      status: "completed",
+      status: "started",
       message:
-        "Buy Box monitor finished; lost SKUs handed to Standard reprice when rules allow. Call every 30–60 minutes with Authorization: Bearer CRON_SECRET.",
+        "Buy Box monitor finished; Standard reprice of lost SKUs started in background. Call every 30–60 minutes with Authorization: Bearer CRON_SECRET.",
       pulledAt: result.pulledAt,
       sourceFile: result.sourceFile,
       outputFile: result.outputFile,
@@ -90,15 +118,12 @@ export async function GET(request: Request) {
       wonCount: result.wonCount,
       lostCount: result.lostCount,
       failedCount: result.failedCount,
-      won: result.won,
-      lost: result.lost,
-      failed: result.failed,
+      won: result.won.map(({ competitive: _c, ...rest }) => rest),
+      lost: result.lost.map(({ competitive: _c, ...rest }) => rest),
+      failed: result.failed.map(({ competitive: _c, ...rest }) => rest),
       reprice: {
-        checked: reprice.checked,
-        applied: reprice.applied,
-        skipped: reprice.skipped,
-        failed: reprice.failed,
-        results: reprice.results,
+        status: "started",
+        lostQueued: lostForHandoff.length,
       },
     });
   } catch (error) {

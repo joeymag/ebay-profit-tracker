@@ -5,6 +5,7 @@ import {
   upsertRepriceRuleForChannel,
 } from "@/lib/amazon/reprice/shared/rules-store";
 import { computeSuggestedPrice } from "@/lib/amazon/reprice/shared/suggest";
+import { withStandardRepriceLock } from "@/lib/amazon/reprice/shared/sku-lock";
 import type {
   AmazonRepriceRule,
   AutoRepriceResult,
@@ -47,7 +48,14 @@ export async function upsertStandardRepriceRule(input: {
   gapOffsetPercent?: number;
 }): Promise<AmazonRepriceRule> {
   return upsertRepriceRuleForChannel(CHANNEL, {
-    ...input,
+    sku: input.sku,
+    enabled: input.enabled,
+    strategy: input.strategy,
+    minPrice: input.minPrice,
+    maxPrice: input.maxPrice,
+    undercutAmount: input.undercutAmount,
+    gapOffsetAmount: input.gapOffsetAmount,
+    gapOffsetPercent: input.gapOffsetPercent,
     quantityDiscountPlan: null,
   });
 }
@@ -238,33 +246,42 @@ export async function runStandardAutoReprice(
             reason: suggestion.reason,
             fromPrice: currentPrice,
           });
-        } else if (suggestion.suggestedPrice < rule.minPrice) {
-          skipped += 1;
-          results.push({
-            sku: rule.sku,
-            channel: CHANNEL,
-            status: "skipped",
-            reason: `Suggested £${suggestion.suggestedPrice.toFixed(2)} below min £${rule.minPrice.toFixed(2)}.`,
-            fromPrice: currentPrice,
-            toPrice: suggestion.suggestedPrice,
-          });
         } else {
-          const update = await updateStandardListingPrice({
+          // Min/max no-win skips are enforced inside computeSuggestedPrice.
+          // Lock shared with buybox-check handoff to avoid concurrent PATCHes.
+          const locked = await withStandardRepriceLock({
             sku: rule.sku,
-            price: suggestion.suggestedPrice,
-            fromPrice: currentPrice,
-            reason: suggestion.reason,
-            source,
+            holder: source,
+            fn: () =>
+              updateStandardListingPrice({
+                sku: rule.sku,
+                price: suggestion.suggestedPrice!,
+                fromPrice: currentPrice,
+                reason: suggestion.reason,
+                source,
+              }),
           });
-          applied += 1;
-          results.push({
-            sku: rule.sku,
-            channel: CHANNEL,
-            status: "applied",
-            reason: suggestion.reason,
-            fromPrice: currentPrice,
-            toPrice: update.price,
-          });
+          if (!locked.acquired) {
+            skipped += 1;
+            results.push({
+              sku: rule.sku,
+              channel: CHANNEL,
+              status: "skipped",
+              reason: locked.reason,
+              fromPrice: currentPrice,
+              toPrice: suggestion.suggestedPrice,
+            });
+          } else {
+            applied += 1;
+            results.push({
+              sku: rule.sku,
+              channel: CHANNEL,
+              status: "applied",
+              reason: suggestion.reason,
+              fromPrice: currentPrice,
+              toPrice: locked.value.price,
+            });
+          }
         }
       } catch (error) {
         failed += 1;

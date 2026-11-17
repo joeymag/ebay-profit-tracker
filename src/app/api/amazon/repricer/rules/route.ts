@@ -15,6 +15,8 @@ export async function POST(request: Request) {
     minPrice?: number | null;
     maxPrice?: number | null;
     undercutAmount?: number;
+    gapOffsetAmount?: number | null;
+    gapOffsetPercent?: number | null;
     quantityDiscountPlan?: unknown;
   };
   try {
@@ -73,7 +75,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, rule });
     }
 
-    const rule = await upsertStandardRepriceRule(base);
+    const rule = await upsertStandardRepriceRule({
+      ...base,
+      gapOffsetAmount:
+        body.gapOffsetAmount == null || Number.isNaN(Number(body.gapOffsetAmount))
+          ? 0
+          : Number(body.gapOffsetAmount),
+      gapOffsetPercent:
+        body.gapOffsetPercent == null ||
+        Number.isNaN(Number(body.gapOffsetPercent))
+          ? 0
+          : Number(body.gapOffsetPercent),
+    });
     return NextResponse.json({ ok: true, rule });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to save rule.";

@@ -208,8 +208,8 @@ export async function runBusinessAutoReprice(
   let skipped = 0;
   let failed = 0;
 
-  for (let index = 0; index < rules.length; index += 1) {
-    const rule = rules[index]!;
+  const actionable = rules.filter((rule) => rule.minPrice != null);
+  for (const rule of rules) {
     if (rule.minPrice == null) {
       skipped += 1;
       results.push({
@@ -218,66 +218,76 @@ export async function runBusinessAutoReprice(
         status: "skipped",
         reason: "Set a min price before auto-reprice will apply.",
       });
-    } else {
-      try {
-        const offer = await fetchBusinessOffer(rule.sku);
-        const currentPrice = offer.businessPrice;
-        const suggestion = await buildBusinessRepriceSuggestion({
-          sku: rule.sku,
-          currentPrice,
-          rule,
-        });
+    }
+  }
 
-        if (suggestion.suggestedPrice == null) {
-          skipped += 1;
-          results.push({
-            sku: rule.sku,
-            channel: CHANNEL,
-            status: "skipped",
-            reason: suggestion.reason,
-            fromPrice: currentPrice,
-          });
-        } else if (suggestion.suggestedPrice < rule.minPrice) {
-          skipped += 1;
-          results.push({
-            sku: rule.sku,
-            channel: CHANNEL,
-            status: "skipped",
-            reason: `Suggested £${suggestion.suggestedPrice.toFixed(2)} below min £${rule.minPrice.toFixed(2)}.`,
-            fromPrice: currentPrice,
-            toPrice: suggestion.suggestedPrice,
-          });
-        } else {
-          const update = await updateBusinessListingPrice({
-            sku: rule.sku,
-            price: suggestion.suggestedPrice,
-            quantityDiscountPlan: rule.quantityDiscountPlan,
-            fromPrice: currentPrice,
-            reason: suggestion.reason,
-            source,
-          });
-          applied += 1;
-          results.push({
-            sku: rule.sku,
-            channel: CHANNEL,
-            status: "applied",
-            reason: suggestion.reason,
-            fromPrice: currentPrice,
-            toPrice: update.price,
-          });
-        }
-      } catch (error) {
-        failed += 1;
+  // Prefetch Business offers (limited concurrency) + competitive batch (SP-API batch).
+  const skus = actionable.map((rule) => rule.sku.trim());
+  const offersBySku = await fetchBusinessOffersBatch(skus, { concurrency: 5 });
+  const priceBySku = new Map<string, number | null>();
+  for (const sku of skus) {
+    priceBySku.set(sku, offersBySku.get(sku)?.businessPrice ?? null);
+  }
+  const competitiveBySku = await getBusinessCompetitiveSnapshotsBatch({
+    skus,
+    priceBySku,
+    bypassCache: true,
+  });
+
+  for (let index = 0; index < actionable.length; index += 1) {
+    const rule = actionable[index]!;
+    try {
+      const offer = offersBySku.get(rule.sku.trim());
+      const currentPrice = offer?.businessPrice ?? null;
+      const competitive = competitiveBySku.get(rule.sku.trim()) ?? null;
+      const { suggestedPrice, reason } = computeSuggestedPrice({
+        currentPrice,
+        competitive,
+        rule,
+        channel: CHANNEL,
+        emptyCompetitiveReason: "No Business competitive data.",
+      });
+
+      if (suggestedPrice == null) {
+        skipped += 1;
         results.push({
           sku: rule.sku,
           channel: CHANNEL,
-          status: "failed",
-          reason: error instanceof Error ? error.message : "Unknown error",
+          status: "skipped",
+          reason,
+          fromPrice: currentPrice,
+        });
+      } else {
+        const update = await updateBusinessListingPrice({
+          sku: rule.sku,
+          price: suggestedPrice,
+          quantityDiscountPlan:
+            rule.quantityDiscountPlan ?? offer?.quantityDiscountPlan ?? null,
+          fromPrice: currentPrice,
+          reason,
+          source,
+        });
+        applied += 1;
+        results.push({
+          sku: rule.sku,
+          channel: CHANNEL,
+          status: "applied",
+          reason,
+          fromPrice: currentPrice,
+          toPrice: update.price,
         });
       }
+    } catch (error) {
+      failed += 1;
+      results.push({
+        sku: rule.sku,
+        channel: CHANNEL,
+        status: "failed",
+        reason: error instanceof Error ? error.message : "Unknown error",
+      });
     }
 
-    if (index + 1 < rules.length) {
+    if (index + 1 < actionable.length) {
       if (pauseBetweenSkusMs > 0) await sleep(pauseBetweenSkusMs);
       if (
         batchSize > 0 &&

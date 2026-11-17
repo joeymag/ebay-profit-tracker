@@ -22,6 +22,8 @@
 
 # local order data
 /data
+# Buy Box watch/debug output (also covered by /data above)
+data/amazon-buybox/
 
 # misc
 .DS_Store

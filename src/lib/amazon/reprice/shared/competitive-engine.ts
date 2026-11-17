@@ -198,6 +198,10 @@ export async function fetchListingOffersForCustomerType(
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function fetchListingOffersBatchForCustomerType(
   skus: string[],
   customerType: "Consumer" | "Business",
@@ -206,34 +210,71 @@ export async function fetchListingOffersBatchForCustomerType(
   if (skus.length === 0) return map;
 
   const { marketplaceId } = getAmazonConfig();
-  const data = await amazonFetch<{
-    responses?: Array<{
-      status?: { statusCode?: number };
-      body?: ListingOffersResponse;
-    }>;
-  }>({
-    method: "POST",
-    path: "/batches/products/pricing/v0/listingOffers",
-    body: {
-      requests: skus.map((sku) => ({
-        uri: `/products/pricing/v0/listings/${encodeURIComponent(sku)}/offers`,
-        method: "GET",
-        MarketplaceId: marketplaceId,
-        ItemCondition: "New",
-        CustomerType: customerType,
-      })),
-    },
-  });
+  const maxAttempts = 4;
+  let pending = [...skus];
 
-  const responses = data.responses ?? [];
-  skus.forEach((sku, index) => {
-    const response = responses[index];
-    const status = response?.status?.statusCode ?? 0;
-    map.set(
-      sku,
-      status >= 200 && status < 300 && response?.body ? response.body : null,
-    );
-  });
+  for (let attempt = 0; attempt < maxAttempts && pending.length > 0; attempt += 1) {
+    let data: {
+      responses?: Array<{
+        status?: { statusCode?: number };
+        body?: ListingOffersResponse;
+      }>;
+    };
+    try {
+      data = await amazonFetch({
+        method: "POST",
+        path: "/batches/products/pricing/v0/listingOffers",
+        body: {
+          requests: pending.map((sku) => ({
+            uri: `/products/pricing/v0/listings/${encodeURIComponent(sku)}/offers`,
+            method: "GET",
+            MarketplaceId: marketplaceId,
+            ItemCondition: "New",
+            CustomerType: customerType,
+          })),
+        },
+      });
+    } catch {
+      if (attempt + 1 >= maxAttempts) {
+        for (const sku of pending) map.set(sku, null);
+        break;
+      }
+      await sleep(500 * 2 ** attempt + Math.floor(Math.random() * 250));
+      continue;
+    }
+
+    const responses = data.responses ?? [];
+    const retrySkus: string[] = [];
+    pending.forEach((sku, index) => {
+      const response = responses[index];
+      const status = response?.status?.statusCode ?? 0;
+      if (status >= 200 && status < 300 && response?.body) {
+        map.set(sku, response.body);
+        return;
+      }
+      const retriable =
+        status === 0 ||
+        status === 429 ||
+        status === 500 ||
+        status === 502 ||
+        status === 503 ||
+        status === 504;
+      if (retriable && attempt + 1 < maxAttempts) {
+        retrySkus.push(sku);
+      } else {
+        map.set(sku, null);
+      }
+    });
+
+    pending = retrySkus;
+    if (pending.length > 0) {
+      await sleep(500 * 2 ** attempt + Math.floor(Math.random() * 250));
+    }
+  }
+
+  for (const sku of skus) {
+    if (!map.has(sku)) map.set(sku, null);
+  }
   return map;
 }
 
@@ -265,15 +306,11 @@ export async function loadCompetitiveSnapshots(input: {
 
   for (let i = 0; i < missing.length; i += 20) {
     const chunk = missing.slice(i, i + 20);
-    let offersBySku = new Map<string, ListingOffersResponse | null>();
-    try {
-      offersBySku = await fetchListingOffersBatchForCustomerType(
-        chunk,
-        input.customerType,
-      );
-    } catch {
-      offersBySku = new Map(chunk.map((sku) => [sku, null]));
-    }
+    // Retries for 429 / transient failures happen inside the batch helper.
+    const offersBySku = await fetchListingOffersBatchForCustomerType(
+      chunk,
+      input.customerType,
+    );
     for (const sku of chunk) {
       const data = offersBySku.get(sku);
       if (!data) {

@@ -423,6 +423,40 @@ export type Database = {
         >;
         Relationships: [];
       };
+      amazon_reprice_sku_locks: {
+        Row: {
+          sku: string;
+          holder: string;
+          locked_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          sku: string;
+          holder: string;
+          locked_at?: string;
+          expires_at: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_reprice_sku_locks"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      amazon_buybox_watch_latest: {
+        Row: {
+          id: string;
+          payload: unknown;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          payload: unknown;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["amazon_buybox_watch_latest"]["Insert"]
+        >;
+        Relationships: [];
+      };
       quickbooks_oauth: {
         Row: {
           id: string;

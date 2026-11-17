@@ -122,6 +122,10 @@ type DraftRule = {
   minPrice: string;
   maxPrice: string;
   undercutAmount: string;
+  /** Standard mid-gap: fixed £ from midpoint (0 = use undercut beat). */
+  gapOffsetAmount: string;
+  /** Standard mid-gap: fraction of (buyBox − current); e.g. 0.25. */
+  gapOffsetPercent: string;
   discountType: "fixed" | "percent";
   tiers: Array<{ lowerBound: string; value: string }>;
 };
@@ -160,6 +164,10 @@ function draftFromRule(
       rule?.undercutAmount != null
         ? String(rule.undercutAmount)
         : defaultUndercut,
+    gapOffsetAmount:
+      rule?.gapOffsetAmount != null ? String(rule.gapOffsetAmount) : "0",
+    gapOffsetPercent:
+      rule?.gapOffsetPercent != null ? String(rule.gapOffsetPercent) : "0",
     discountType: plan?.discountType ?? "fixed",
     tiers:
       plan?.levels.map((level) => ({
@@ -639,6 +647,8 @@ export function AmazonRepricerPanel() {
     let minPrice: number | null;
     let maxPrice: number | null;
     let undercutAmount: number;
+    let gapOffsetAmount = 0;
+    let gapOffsetPercent = 0;
     let quantityDiscountPlan: QuantityDiscountPlan | null = null;
     try {
       minPrice = parsePriceInput(draft.minPrice);
@@ -646,6 +656,10 @@ export function AmazonRepricerPanel() {
       undercutAmount =
         parsePriceInput(draft.undercutAmount) ??
         (channel === "business" ? 0.01 : 0.1);
+      if (channel === "standard") {
+        gapOffsetAmount = parsePriceInput(draft.gapOffsetAmount) ?? 0;
+        gapOffsetPercent = parsePriceInput(draft.gapOffsetPercent) ?? 0;
+      }
       if (channel === "business") {
         quantityDiscountPlan = parseTierFromDraft(draft);
       }
@@ -667,6 +681,9 @@ export function AmazonRepricerPanel() {
           minPrice,
           maxPrice,
           undercutAmount,
+          ...(channel === "standard"
+            ? { gapOffsetAmount, gapOffsetPercent }
+            : {}),
           quantityDiscountPlan,
         }),
       });
@@ -1101,7 +1118,9 @@ export function AmazonRepricerPanel() {
               </TableHead>
               <TableHead className="text-right">Lowest</TableHead>
               <TableHead>Last change</TableHead>
+              <TableHead>On</TableHead>
               <TableHead>Strategy</TableHead>
+              <TableHead>Undercut</TableHead>
               <TableHead>Min / Max</TableHead>
               {channel === "business" ? (
                 <TableHead>Qty tiers</TableHead>
@@ -1224,6 +1243,23 @@ export function AmazonRepricerPanel() {
                     })()}
                   </TableCell>
                   <TableCell>
+                    <label className="flex items-center gap-1.5 text-xs">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border"
+                        checked={draft.enabled}
+                        onChange={(event) =>
+                          updateDraft(row.sku, {
+                            enabled: event.target.checked,
+                          })
+                        }
+                      />
+                      <span className="text-muted-foreground">
+                        {draft.enabled ? "On" : "Off"}
+                      </span>
+                    </label>
+                  </TableCell>
+                  <TableCell>
                     <select
                       className="h-8 rounded-md border bg-background px-2 text-xs"
                       value={draft.strategy}
@@ -1241,25 +1277,73 @@ export function AmazonRepricerPanel() {
                     </select>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        className="h-8 w-20 text-xs"
-                        inputMode="decimal"
-                        placeholder="Min"
-                        value={draft.minPrice}
-                        onChange={(event) =>
-                          updateDraft(row.sku, { minPrice: event.target.value })
-                        }
-                      />
-                      <Input
-                        className="h-8 w-20 text-xs"
-                        inputMode="decimal"
-                        placeholder="Max"
-                        value={draft.maxPrice}
-                        onChange={(event) =>
-                          updateDraft(row.sku, { maxPrice: event.target.value })
-                        }
-                      />
+                    <Input
+                      className="h-8 w-20 text-xs"
+                      inputMode="decimal"
+                      title="Undercut amount (£) when beating Buy Box / lowest"
+                      placeholder="£0.10"
+                      value={draft.undercutAmount}
+                      onChange={(event) =>
+                        updateDraft(row.sku, {
+                          undercutAmount: event.target.value,
+                        })
+                      }
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          className="h-8 w-20 text-xs"
+                          inputMode="decimal"
+                          placeholder="Min"
+                          value={draft.minPrice}
+                          onChange={(event) =>
+                            updateDraft(row.sku, {
+                              minPrice: event.target.value,
+                            })
+                          }
+                        />
+                        <Input
+                          className="h-8 w-20 text-xs"
+                          inputMode="decimal"
+                          placeholder="Max"
+                          value={draft.maxPrice}
+                          onChange={(event) =>
+                            updateDraft(row.sku, {
+                              maxPrice: event.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                      {channel === "standard" ? (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            className="h-8 w-20 text-xs"
+                            inputMode="decimal"
+                            title="Mid-gap £ offset (0 = beat Buy Box by undercut)"
+                            placeholder="Gap £"
+                            value={draft.gapOffsetAmount}
+                            onChange={(event) =>
+                              updateDraft(row.sku, {
+                                gapOffsetAmount: event.target.value,
+                              })
+                            }
+                          />
+                          <Input
+                            className="h-8 w-20 text-xs"
+                            inputMode="decimal"
+                            title="Mid-gap % of (Buy Box − current), e.g. 0.25"
+                            placeholder="Gap %"
+                            value={draft.gapOffsetPercent}
+                            onChange={(event) =>
+                              updateDraft(row.sku, {
+                                gapOffsetPercent: event.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   </TableCell>
                   {channel === "business" ? (

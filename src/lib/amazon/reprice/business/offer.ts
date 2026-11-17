@@ -72,9 +72,11 @@ async function resolveSeller(seedSku: string): Promise<string> {
 export async function fetchBusinessOffer(
   sku: string,
   seedSkuForSellerId?: string,
+  sellerIdOverride?: string,
 ): Promise<AmazonBusinessOffer> {
   const { marketplaceId } = getAmazonConfig();
-  const sellerId = await resolveSeller(seedSkuForSellerId || sku);
+  const sellerId =
+    sellerIdOverride ?? (await resolveSeller(seedSkuForSellerId || sku));
   const item = await amazonFetch<ListingsItemAttributes>({
     path: `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku)}`,
     query: {
@@ -95,27 +97,42 @@ export async function fetchBusinessOffer(
   };
 }
 
+/**
+ * Fetch Business offers for many SKUs with limited concurrency.
+ * Listings Items has no multi-SKU GET batch; we parallelize carefully.
+ */
 export async function fetchBusinessOffersBatch(
   skus: string[],
+  options?: { concurrency?: number },
 ): Promise<Map<string, AmazonBusinessOffer>> {
   const map = new Map<string, AmazonBusinessOffer>();
   const unique = [...new Set(skus.map((sku) => sku.trim()).filter(Boolean))];
   if (unique.length === 0) return map;
 
-  let sellerSeed = unique[0]!;
-  for (const sku of unique) {
-    try {
-      const offer = await fetchBusinessOffer(sku, sellerSeed);
-      map.set(sku, offer);
-      sellerSeed = sku;
-    } catch {
-      map.set(sku, {
-        sku,
-        businessPrice: null,
-        quantityDiscountPlan: null,
-      });
+  const concurrency = Math.max(1, Math.min(options?.concurrency ?? 5, 8));
+  const sellerId = await resolveSeller(unique[0]!);
+
+  let cursor = 0;
+  async function worker() {
+    while (cursor < unique.length) {
+      const index = cursor;
+      cursor += 1;
+      const sku = unique[index]!;
+      try {
+        const offer = await fetchBusinessOffer(sku, sku, sellerId);
+        map.set(sku, offer);
+      } catch {
+        map.set(sku, {
+          sku,
+          businessPrice: null,
+          quantityDiscountPlan: null,
+        });
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 120));
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, unique.length) }, () => worker()),
+  );
   return map;
 }

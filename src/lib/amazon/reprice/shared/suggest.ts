@@ -80,6 +80,10 @@ export function computeStandardMidGapTarget(input: {
   return { target, mid, amount, percent };
 }
 
+function offsetsAreSet(amount: number, percent: number): boolean {
+  return Math.abs(amount) > 1e-9 || Math.abs(percent) > 1e-9;
+}
+
 export function computeSuggestedPrice(input: {
   currentPrice: number | null;
   competitive: AmazonCompetitiveSnapshot | null;
@@ -118,6 +122,10 @@ export function computeSuggestedPrice(input: {
       : defaultUndercutForChannel(channel);
   let target: number | null = null;
   let reason = "";
+  /** When set, clamp must still allow beating (undercut) or matching this Buy Box. */
+  let requireBeatBuyBox: number | null = null;
+  let requireMatchBuyBox: number | null = null;
+  let usedMidGap = false;
 
   if (rule.strategy === "undercut_buybox") {
     if (competitive.youHaveBuyBox) {
@@ -126,10 +134,34 @@ export function computeSuggestedPrice(input: {
     if (competitive.buyBoxPrice == null) {
       return { suggestedPrice: null, reason: "No Buy Box price to beat." };
     }
-    target = competitive.buyBoxPrice - undercut;
-    reason = `Beat Buy Box (£${competitive.buyBoxPrice.toFixed(2)}) by £${undercut.toFixed(2)}`;
+    const offsets = resolveStandardGapOffsets({
+      rule,
+      gapOffsetAmount: input.gapOffsetAmount,
+      gapOffsetPercent: input.gapOffsetPercent,
+    });
+    if (
+      channel === "standard" &&
+      offsetsAreSet(offsets.amount, offsets.percent) &&
+      input.currentPrice != null &&
+      Number.isFinite(input.currentPrice)
+    ) {
+      const midGap = computeStandardMidGapTarget({
+        currentPrice: input.currentPrice,
+        buyBoxPrice: competitive.buyBoxPrice,
+        gapOffsetAmount: offsets.amount,
+        gapOffsetPercent: offsets.percent,
+      });
+      target = midGap.target;
+      usedMidGap = true;
+      reason = `Mid-gap Buy Box (£${competitive.buyBoxPrice.toFixed(2)}; mid £${midGap.mid.toFixed(2)}; offset £${offsets.amount.toFixed(2)} / ${(offsets.percent * 100).toFixed(0)}%)`;
+    } else {
+      target = competitive.buyBoxPrice - undercut;
+      requireBeatBuyBox = competitive.buyBoxPrice;
+      reason = `Beat Buy Box (£${competitive.buyBoxPrice.toFixed(2)}) by £${undercut.toFixed(2)}`;
+    }
   } else if (rule.strategy === "match_buybox") {
     target = competitive.buyBoxPrice;
+    requireMatchBuyBox = competitive.buyBoxPrice;
     reason = target != null ? `Match Buy Box (£${target.toFixed(2)})` : "No Buy Box price.";
   } else if (rule.strategy === "match_lowest") {
     target = competitive.lowestPrice;
@@ -168,6 +200,24 @@ export function computeSuggestedPrice(input: {
   }
   if (rule.maxPrice != null && target > rule.maxPrice) {
     reason += ` · capped at max £${rule.maxPrice.toFixed(2)}`;
+  }
+
+  // After min/max clamp: skip PATCHes that cannot achieve beat/match goals.
+  // Mid-gap intentionally sits between our price and Buy Box — not subject to beat check.
+  if (!usedMidGap && requireBeatBuyBox != null && suggested >= requireBeatBuyBox - 0.001) {
+    return {
+      suggestedPrice: null,
+      reason: `${reason} · skipped: min/max leaves £${suggested.toFixed(2)} which cannot beat Buy Box £${requireBeatBuyBox.toFixed(2)}.`,
+    };
+  }
+  if (
+    requireMatchBuyBox != null &&
+    Math.abs(suggested - requireMatchBuyBox) >= 0.005
+  ) {
+    return {
+      suggestedPrice: null,
+      reason: `${reason} · skipped: min/max leaves £${suggested.toFixed(2)} which cannot match Buy Box £${requireMatchBuyBox.toFixed(2)}.`,
+    };
   }
 
   if (
